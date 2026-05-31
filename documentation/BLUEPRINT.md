@@ -6,17 +6,21 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 4 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 5 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
 > "checks every input" obligation, static fees, ADA triple-role accounting,
 > first-LP inflation guard, `k`-not-stored, solve-cost honesty, generalized the
 > oracle-mortality argument, axiom mapping; §3.2 malformed inputs → strict
-> default-deny.)
+> default-deny. **Rev 5: §13.1 ex-unit spike MEASURED — ~40–50 orders/settlement
+> with mandatory O(N) positional binding; memory-bound; naive O(N²) caps at ~24;
+> withdraw-0 deferral confirmed negligible. Report: `documentation/spec/ex-unit-spike.md`.**)
 >
-> **⚠ Make-or-break risk:** on-chain verification cost per order (§13.1) bounds the
-> whole thesis. Measure it before committing to the architecture.
+> **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
+> order bounds the whole thesis. The spike says it is **viable** — **~40–50
+> orders/settlement** with **mandatory O(N) positional binding** (naive O(N²) caps at
+> ~24), **memory-bound**. Report: `documentation/spec/ex-unit-spike.md`.
 
 ---
 
@@ -419,14 +423,23 @@ stored; malformed inputs strictly rejected (no `True` branch).
 
 ## 13. Known risks & limitations (to measure / accept, not decide)
 
-1. **⚠ On-chain verification cost — existential.** If verifying §5.2 fits only a few
-   orders per settlement within ~14M mem / ~10B steps / ~16KB, the contention &
-   netting benefits collapse toward sequential. **Estimate:** each filled order costs
-   an **input *plus* its owner-output** (+ remainder + min-ADA + datums for partials),
-   so size budget ≈ input + output(s) per order — the realistic ceiling is **single-
-   to low-tens of orders**, lower than an input-only count, and requiring full
-   equilibrium (§5.2.7) lowers it further. Still beats the sequential baseline of 1.
-   **Action: spike-measure before committing.**
+1. **⚠ On-chain verification cost — existential. MEASURED (2026-05-31).** Spike run
+   in `contracts/`; full report at
+   [`documentation/spec/ex-unit-spike.md`](spec/ex-unit-spike.md). Result: the thesis
+   is **viable, but only with O(N) order→output binding**, and the budget is
+   **memory-bound** (mem binds ~2× before CPU and before tx size in every case).
+   - **Indexed/positional O(N) binding** (canonical output order; the *required*
+     design): **~40–50 orders per settlement** (conservative planning ceiling N≈47;
+     CPU allows ~105, size ~100). **~40–50× the sequential baseline of 1.**
+   - **Naive O(N²) "scan all outputs per order" binding collapses at ~24 orders** —
+     so canonical-ordering / positional binding is now a **hard requirement**, not an
+     option.
+   - The **withdraw-0 deferral works**: per-order order-spend cost is negligible (it
+     only reads `withdrawals`); the single once-per-tx settlement validator dominates.
+   - Caveat: typed-value tests under-count `ScriptContext` `Data`-decoding, so confirm
+     with an emulator/full-tx run before mainnet. **Full-equilibrium (§5.2.7) not yet
+     measured** — expected to lower N to ~30–40; needs its own spike. The §5.2.5
+     floor-only path supports the full ~40–50.
 2. **Solver-solution theft at scale.** Moot for v1's cheap solve; if heavier scope is
    added (multi-asset, equilibrium), the public-witness copy attack becomes real and
    would need addressing (commit-reveal was rejected; alternatives TBD).

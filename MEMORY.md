@@ -8,17 +8,20 @@ append-only-ish; don't restate blueprint content (it would drift).
 
 ## Current phase
 
-**Pre-implementation / design locked.** Blueprint is at **Rev 4** (full design,
-threat model, risks). No production code yet; repo skeleton exists (`app/`,
-`batcher/`, `contracts/`, `documentation/`).
+**Ex-unit spike done; thesis validated.** Blueprint is at **Rev 5**. Throwaway
+measurement code lives in `contracts/` (settlement/order validators + spike tests) —
+**not production**; real implementation has not started.
 
 ## Immediate next step
 
-**The make-or-break ex-unit spike — BLUEPRINT §13.1.** Build a minimal Aiken
-withdraw-0 settlement validator that checks the §5.2 rules over a synthetic batch of
-N orders, and measure mem/step/tx-size usage to find the real **orders-per-settlement
-ceiling**. This number bounds the contention win, the netting benefit, and whether
-full-equilibrium surplus (§5.2.7) is affordable. Decide architecture *after* this.
+**Ex-unit spike DONE (2026-05-31) — thesis viable.** ~40–50 orders/settlement with
+**mandatory O(N) positional binding**; memory-bound; naive O(N²) caps at ~24. See
+[`documentation/spec/ex-unit-spike.md`](documentation/spec/ex-unit-spike.md) and
+BLUEPRINT §13.1. **Next:** (1) spike the **true-equilibrium** verification cost
+(§5.2.7/§12.2) — it gates surplus distribution; (2) re-measure under an emulator with
+a real `Data` ScriptContext to confirm the planning N (typed-value tests under-count
+decoding); (3) then start real on-chain implementation, keeping the O(N) binding as a
+hard requirement.
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -37,8 +40,10 @@ High-signal pointers only:
 
 ## Open / unresolved (authority: BLUEPRINT §12 + §13)
 
-- Ex-unit feasibility (§13.1) — *existential, measure first*.
-- Surplus-distribution rule & its verification cost (§12.2 / §5.2.7).
+- ~~Ex-unit feasibility (§13.1)~~ — **resolved 2026-05-31: viable, ~40–50 orders/
+  settlement, O(N) binding mandatory, memory-bound.** (Equilibrium variant still TBD.)
+- Surplus-distribution rule & its verification cost (§12.2 / §5.2.7) — needs its own
+  spike (est. lowers N to ~30–40).
 - Solver tip mechanics; batch-size bounds; partial-fill min-ADA funding; rational
   clearing-price encoding; `λ`/fee defaults; sharding defaults; data provider choice.
 
@@ -49,4 +54,13 @@ High-signal pointers only:
   Key review outcomes folded in: double-satisfaction rule, withdraw-0 "checks every
   input", static fees, ADA triple-role accounting, first-LP inflation guard,
   `k`-not-stored, solve-cost honesty (v1 solve is cheap), malformed→reject.
+- **2026-05-31** — **Ex-unit spike (§13.1) measured → Blueprint Rev 5.** Built a
+  minimal withdraw-0 settlement validator (both naive O(N²) and indexed O(N) binding),
+  an O(1) order-spend deferral, and a synthetic N-sweep (N=1…100) in `contracts/`.
+  Result: **memory-bound** in every case; **indexed O(N) → ~40–50 orders/settlement**
+  (conservative N≈47, CPU ~105, size ~100), **naive O(N²) collapses at ~24** →
+  canonical/positional binding is now a hard requirement. Withdraw-0 deferral cost is
+  negligible (confirms §5.4). Caveat: typed-value tests under-count `Data` decoding —
+  confirm via emulator before mainnet. Report:
+  `documentation/spec/ex-unit-spike.md`. Code is throwaway (measurement only).
 </content>
