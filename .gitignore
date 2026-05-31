@@ -1,0 +1,11 @@
+# Local-only Claude / editor config (see CLAUDE.md "Local vs shared")
+CLAUDE.local.md
+.claude/settings.local.json
+
+# OS / editor cruft
+.DS_Store
+*.swp
+
+# Local env
+.env.local
+*.local.env

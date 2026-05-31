@@ -1,0 +1,23 @@
+name = "logicalmechanism/contracts"
+version = "0.0.0"
+compiler = "v1.1.22"
+plutus = "v3"
+license = "Apache-2.0"
+description = "Aiken contracts for project 'logicalmechanism/contracts'"
+
+[repository]
+user = "logicalmechanism"
+project = "contracts"
+platform = "github"
+
+[[dependencies]]
+name = "aiken-lang/stdlib"
+version = "v3.1.0"
+source = "github"
+
+[[dependencies]]
+name = "aiken-lang/fuzz"
+version = "v2"
+source = "github"
+
+[config]
