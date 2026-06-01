@@ -66,6 +66,21 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Fee handling verified with a separate USER key (not batcher-vs-itself).**
+  Added a distinct trader wallet (`testnets/keys/user.skey`, OUTSIDE the repo; guarded
+  exports in `env.sh`; scripts `happy_path/u1-setup-user.sh` gen+fund, `u2-post-user-order.sh`
+  user-owned/-signed order) so tests reflect prod: users post orders, the solver batches.
+  **Audited settlement `2ad42544…` on-chain** (user order, settled by the solver): inputs =
+  {order (script-spent via `Settle`, NO user sig), pool, **solver funding**} — **no user-wallet
+  UTXO is an input**; fee **446,694 paid entirely from the solver side**; settlement signed
+  ONLY by the solver. Split: **user** receives +37,000,000 (floor 35M + min-ADA 2M), pays
+  nothing for settlement (only their order-creation fee + the 2 ADA tip locked in the order);
+  **solver** net = tip 2,000,000 − fee 446,694 = **+1,553,306**. Confirms the invariant:
+  solver reward = tips, solver pays the settlement fee, user is floor-protected and posts
+  offline (no settlement signature needed). Bonus: the user's first order (floor 45M) went
+  **unsettled** because pool1's price had drifted below it — per-order floor protection,
+  live (the batcher refuses to settle below floor). Keys stay out of the repo; scripts +
+  env guard committed.
 - **2026-06-01** — **🎉 Batcher generalized to ANY number of pools (zero-config) + real
   logging.** The reference solver is now turnkey for the protocol's arbitrary-pairs design:
   deploy, send ADA to the solver address, run — it discovers everything. **Multi-pool:**

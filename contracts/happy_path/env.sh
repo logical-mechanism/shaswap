@@ -31,6 +31,15 @@ export SOLVER_VKEY="$KEYS_DIR/solver.vkey"
 export SOLVER_ADDR="$(cat "$KEYS_DIR/solver.addr")"
 export SOLVER_PKH="$(cardano-cli latest address key-hash --payment-verification-key-file "$SOLVER_VKEY")"
 
+# --- a separate USER wallet (a trader, distinct from the solver) --------------
+# Created by u1-setup-user.sh. Exports are guarded so sourcing works before it
+# exists. Lets tests run with the realistic split: users post orders + pay only
+# their order-creation fee; the solver settles + pays the settlement fee + earns tips.
+export USER_SKEY="$KEYS_DIR/user.skey"
+export USER_VKEY="$KEYS_DIR/user.vkey"
+[ -f "$KEYS_DIR/user.addr" ] && export USER_ADDR="$(cat "$KEYS_DIR/user.addr")" || true
+[ -f "$USER_VKEY" ] && export USER_PKH="$(cardano-cli latest address key-hash --payment-verification-key-file "$USER_VKEY")" || true
+
 # --- scripts (settlement is unparameterised; order/pool parameterised by S) ----
 export SETTLEMENT_SCRIPT="$SCRIPTS/settlement.plutus"
 export ORDER_SCRIPT="$SCRIPTS/order.plutus"
