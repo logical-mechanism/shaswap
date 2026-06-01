@@ -992,6 +992,109 @@ test settlement_redeemer_wrong_pool_nft() fail {
   )
 }
 
+// ---- output perimeter: stake-cred + reference-script pins (M-01 / L-01) ------
+// Owner payouts pin payment-cred + stake=None + no ref script; the recreated pool
+// and re-locked remainders pin their full address + no ref script. These block a
+// solver hijacking payout staking rewards (M-01) or bloating outputs with an
+// attached reference script (L-01).
+
+const some_script = #"abababababababababababababababababababababababababababab"
+
+// (M-01) owner payout carrying a solver-chosen stake credential: rejected (the
+// payout's stake credential is pinned to None).
+test settlement_owner_stake_hijack() fail {
+  let owner_out = Output {
+    address: Address {
+      payment_credential: VerificationKey(owner_vkh),
+      stake_credential: Some(Inline(Script(s_hash))),
+    },
+    value: assets.from_lovelace(owner_out_ada),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [
+      owner_out,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (L-01) owner payout with an attached reference script: rejected.
+test settlement_owner_ref_script() fail {
+  let owner_out = Output {
+    address: plain(VerificationKey(owner_vkh)),
+    value: assets.from_lovelace(owner_out_ada),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: Some(some_script),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [
+      owner_out,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (L-01) recreated pool output with an attached reference script: rejected.
+test settlement_pool_ref_script() fail {
+  let bad_pool = Output {
+    address: tagged(Script(p_hash)),
+    value: pool_val(pool_ada_in - received, pool_tok_in + sell),
+    datum: InlineDatum(pool_datum()),
+    reference_script: Some(some_script),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [owner_output(0, owner_out_ada), bad_pool, solver_output(tip)],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (L-01) re-locked partial-fill remainder with an attached reference script:
+// rejected.
+test settlement_remainder_ref_script() fail {
+  let bad_rem = Output {
+    address: tagged(Script(o_hash)),
+    value: tok_val(3_200_000, 600_000),
+    datum: InlineDatum(
+      OrderDatum {
+        ..order_datum(),
+        sell_a: True,
+        sell_amount: 600_000,
+        limit: 240_000,
+        tip: 1_200_000,
+        partial: False,
+      },
+    ),
+    reference_script: Some(some_script),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      bad_rem,
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
 // ---- token/token pair (neither side is ADA) -------------------------------
 // asset_a = tok, asset_b = tokb; the pool's lovelace is pure min-ADA overhead.
 // Order sells 1000 tok for tokb at price 3 (tokb per tok) -> 3000 tokb.

@@ -151,8 +151,10 @@ pub fn lp_action(tx: Transaction, utxo: OutputReference, d: PoolDatum) -> Bool {
     tx.outputs,
     fn(o) { o.address == in_addr && utils.asset_qty(o.value, d.nft) == 1 },
   )
-  // pool identity/params unchanged (nft, token, fee)
+  // pool identity/params unchanged (nft, token, fee); no attached reference script
+  // (audit L-01 — this is the standalone path, not pinned by the settlement anchor)
   expect out.datum == own.output.datum
+  expect out.reference_script == None
 
   let lp = AssetId { policy: d.nft.policy, name: lp_name }
 

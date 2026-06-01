@@ -80,7 +80,9 @@ fn consume_remainder(
   order_addr,
 ) -> List<Output> {
   expect [rem, ..rest] = remainders
-  expect rem.address == order_addr
+  // remainder is a continuing order at the SAME address (stays tagged S), with no
+  // attached reference script (L-01).
+  expect utils.is_protocol_output(rem, order_addr)
   // full-value pin: the remainder holds EXACTLY the unsold asset + pre-funded
   // min-ADA + leftover tip and nothing else (no junk asset rides along to the
   // solver, and the unsold side can't be shorted).
@@ -123,7 +125,8 @@ fn check_one(
   expect InlineDatum(bd) = bound.datum
   expect b: BoundDatum = bd
   expect b.order_ref == input.output_reference
-  expect bound.address.payment_credential == order.owner
+  // owner payout: payment cred = owner, stake = None, no ref script (M-01/L-01)
+  expect utils.is_payout_output(bound, order.owner)
 
   expect f >= 1
   expect f <= order.sell_amount
@@ -275,7 +278,8 @@ pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool 
     fn(o) { utils.asset_qty(o.value, r.pool_nft) == 1 },
   )
   expect [pool_out] = pool_outs
-  expect pool_out.address == pool_in.output.address
+  // pool continuity: same address, no attached reference script (L-01)
+  expect utils.is_protocol_output(pool_out, pool_in.output.address)
 
   // (6) O(N) positional binding: owner-outputs are the first N outputs in
   // canonical (input) order; remainders follow the pool.

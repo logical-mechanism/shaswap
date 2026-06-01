@@ -97,7 +97,17 @@
 > own policy), so C-01 is closed transitively; the per-order `pool_nft` consent closes
 > C-02. The anchor still reads **neither the curve nor the fee** from the datum, so it
 > stays curve-agnostic (§5.4 split intact). Datum-shape change (`OrderDatum.pool_nft`) +
-> settlement-logic change; +6 negative tests (79 green).**)
+> settlement-logic change; +6 negative tests (79 green).**
+> **Rev 15: output-perimeter hardening (§5.2.1) — closes audit M-01 + L-01.** Every
+> settlement output now pins its full perimeter, not just value/datum: **owner payouts**
+> fix the **stake credential to `None`** (payment credential is the owner's) so a solver
+> can't set a stake credential it controls and skim the payout's staking rewards (M-01,
+> value leak); and **all** continuing/payout outputs (owner payouts, re-locked
+> remainders, the recreated pool — in both the settlement anchor and the standalone
+> `LpAction` path) assert **no attached reference script**, so a solver can't bloat an
+> output's min-ADA with a reference script (L-01, griefing). Factored into two reused
+> helpers (`is_payout_output` / `is_protocol_output`). Settlement/pool-logic change, no
+> datum-shape change; +4 negative tests (83 green).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -315,6 +325,16 @@ witness — the validator checks algebra, never solves (Principle 4).
      counts units of a *solver-chosen* asset); the binding does. This is the anchor's **only**
      read of the `PoolDatum` — it still never reads the curve or fee, so it stays
      curve-agnostic (§5.4).
+   - **Output perimeter (Rev 15, closes M-01/L-01).** Outputs pin their full
+     *perimeter*, not just value/datum. **Owner payouts** fix the **stake credential to
+     `None`** (payment credential = the owner) so a solver can't attach a stake
+     credential it controls and skim the payout's staking rewards (M-01). **Every**
+     continuing/payout output (owner payout, re-locked remainder, recreated pool — and
+     the pool output on the standalone `LpAction` path) asserts **no attached reference
+     script**, so a solver can't inflate an output's min-ADA with a reference script
+     (L-01). Two reused helpers (`is_payout_output` / `is_protocol_output`) carry this.
+     *(If owners ever need to keep delegation control, a future `OrderDatum.owner_stake`
+     field would pin to a chosen stake credential instead of `None`.)*
 2. **Uniform price.** Every order in the (single-shard) batch fills at one clearing
    price. → eliminates intra-batch ordering MEV / sandwiching.
 3. **Pool invariant non-decreasing (incl. the trading fee).** Checked by the **pool
