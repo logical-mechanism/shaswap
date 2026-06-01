@@ -29,12 +29,15 @@
 //!
 //! Modes: one pass by default; `SHASWAP_INTERVAL_SECS=<n>` runs as a daemon that
 //! polls Kupo's checkpoint every `n`s and settles only when a new block is indexed
-//! (block-driven). Just-submitted orders are tracked in-flight so it never
-//! double-spends before they confirm. Economically rational: a tx whose tips don't
-//! cover its fee is skipped (its orders defer to a better-amortized batch). The
-//! per-tx order cap comes from the deployment JSON (`max_orders_per_tx`, default
-//! 20) and can be overridden with `SHASWAP_MAX_ORDERS_PER_TX`. `RUST_LOG` controls
-//! verbosity (default info).
+//! (block-driven). Every input spent by a submitted-but-unconfirmed tx (settled
+//! order refs AND the wallet funding UTXO) is held `pending` and excluded from the
+//! next pass, so an in-flight chain is never double-spent before it confirms;
+//! entries expire after a grace window so a failed/never-confirmed tx's inputs are
+//! retried (recovery). A submit failure aborts the whole pass (the rolling funding
+//! is then ambiguous). Economically rational: a tx whose tips don't cover its fee
+//! is skipped (its orders defer to a better-amortized batch). The per-tx order cap
+//! comes from the deployment JSON (`max_orders_per_tx`, default 20) and can be
+//! overridden with `SHASWAP_MAX_ORDERS_PER_TX`. `RUST_LOG` controls verbosity.
 //!
 //! Config path: `$SHASWAP_DEPLOYMENT` or argv[1].
 
@@ -65,6 +68,15 @@ const COLLATERAL_LOVELACE: u64 = 5_000_000;
 /// it to demand a minimum per-tx profit. Under load many small tips amortize one
 /// fee, so batching tip-bearing orders is what makes a tx clear this.
 const FEE_COVER_MARGIN: u64 = 0;
+/// How long (slots) an order/funding UTXO stays "pending" after we submit a tx
+/// spending it. While pending it is excluded from settlement + funding selection
+/// so we never double-spend a still-unconfirmed input. A submitted settlement
+/// confirms within a few blocks; if a UTXO is still pending after this window the
+/// tx almost certainly failed (rejected/evicted, or a chained ancestor died), so
+/// the entry expires and the input is retried — the recovery path that keeps
+/// orders from being stranded forever and bounds a chain's blast radius to one
+/// grace window. ~3 min on preprod (1s slots, ~20s blocks).
+const PENDING_GRACE_SLOTS: u64 = 180;
 
 type Err = Box<dyn std::error::Error>;
 /// A UTXO identity (tx id, output index).
@@ -181,12 +193,42 @@ fn run() -> Result<(), Err> {
     }
 }
 
-/// Loop-carried state: orders we've submitted but not yet seen confirmed-spent,
-/// and a round-robin cursor over pools so no pool is starved.
+/// Loop-carried state across passes.
+///
+/// `pending` maps every input UTXO we've spent in a submitted-but-unconfirmed tx
+/// (settled order refs AND the wallet funding UTXO) to the slot we submitted it at.
+/// A pending order is excluded from settlement and a pending wallet UTXO from
+/// funding selection — so a chain in flight is never double-spent before it
+/// confirms. Entries expire after [`PENDING_GRACE_SLOTS`] (the tx failed → retry)
+/// or simply linger harmlessly once the UTXO confirms-spent (it leaves the chain
+/// snapshot, so it can't be re-selected regardless). Collateral is intentionally
+/// NOT tracked here — a phase-2-passing tx never consumes it, so it is reused.
 #[derive(Default)]
 struct LoopState {
-    in_flight: HashSet<Key>,
+    pending: HashMap<Key, u64>,
     cursor: usize,
+}
+
+impl LoopState {
+    /// Drop pending entries whose grace window has elapsed (relative to the current
+    /// tip slot), freeing their inputs to be retried if the tx never confirmed.
+    fn expire_pending(&mut self, tip_slot: u64) {
+        self.pending
+            .retain(|_, &mut submitted| tip_slot.saturating_sub(submitted) <= PENDING_GRACE_SLOTS);
+    }
+}
+
+/// How a pool's drain attempt ended — distinguishes a recoverable skip from a
+/// pass-fatal submit failure.
+enum PassError {
+    /// Non-fatal: solve/assemble failed for this pool and NOTHING was submitted, so
+    /// the rolling funding is untouched — skip this pool, keep draining the others.
+    SkipPool(Err),
+    /// Fatal to the pass: a submit failed, so the rolling funding is now ambiguous
+    /// (the tx may or may not be in the mempool). Stop the pass immediately rather
+    /// than build a later link on a maybe-spent UTXO; the next pass re-discovers
+    /// real chain state, and `pending` + the grace window handle recovery.
+    AbortPass(Err),
 }
 
 /// One discover → group-by-pool → settle-one-pool pass.
@@ -211,23 +253,19 @@ fn settle_once(
         .discover(&cfg.settlement_cred, solver_addr)
         .map_err(|e| format!("discover: {e:?}"))?;
 
-    // Drop in-flight entries that have confirmed (no longer present), then exclude
-    // the still-pending ones from this pass so we never double-spend.
-    let present: HashSet<Key> = all_orders
-        .iter()
-        .map(|o| key(&o.output_reference))
-        .collect();
-    state.in_flight.retain(|k| present.contains(k));
+    // Expire stale pending entries (failed/never-confirmed txs → retry), then
+    // exclude still-pending orders so an in-flight chain is never double-spent.
+    state.expire_pending(tip.slot);
     let orders: Vec<OrderInput> = all_orders
         .into_iter()
-        .filter(|o| !state.in_flight.contains(&key(&o.output_reference)))
+        .filter(|o| !state.pending.contains_key(&key(&o.output_reference)))
         .collect();
 
     info!(
         slot = tip.slot,
         pools = pools.len(),
         orders = orders.len(),
-        in_flight = state.in_flight.len(),
+        pending = state.pending.len(),
         wallet = wallet.len(),
         "discovered"
     );
@@ -264,9 +302,18 @@ fn settle_once(
     // several chained txs (k capped batches). This drains the whole orderbook in
     // one pass instead of one pool per block. The chain's funding starts at the
     // solver's on-chain funding UTXO; the collateral is shared across the chain
-    // (a phase-2-passing tx never consumes its collateral, so it stays in the
-    // mempool UTXO set for the next tx — see MEMORY).
-    let (funding0, collateral0) = select_inputs(&wallet)?;
+    // (a phase-2-passing tx never consumes its collateral — the EvaluateTx gate
+    // guarantees phase-2 success — so it stays in the mempool UTXO set for every
+    // link; see MEMORY). Funding UTXOs already spent by an unconfirmed prior pass
+    // are excluded so we never re-spend them before they confirm.
+    let Ok((funding0, collateral0)) = select_inputs(&wallet, &state.pending) else {
+        // No spendable funding distinct from collateral — either everything is
+        // pending an earlier pass's confirmation, or the wallet is underfunded.
+        // Wait it out (the daemon retries next block); don't treat it as fatal.
+        debug!("no spendable funding this pass (pending confirmation or underfunded)");
+        return Ok(());
+    };
+    let funding0_key = key(&funding0.output_reference);
     let mut chain = ChainCtx {
         funding: (funding0.output_reference.clone(), funding0.value.clone()),
         collateral: collateral0.output_reference.clone(),
@@ -287,20 +334,35 @@ fn settle_once(
             pool,
             ords,
             submit,
+            tip.slot,
             &mut chain,
-            &mut state.in_flight,
+            &mut state.pending,
         ) {
             Ok(n) => settled += n,
-            Err(e) => {
-                // A failed tx just doesn't advance the chain; the rolling funding
-                // is unchanged, so the next pool retries from the same UTXO.
+            Err(PassError::SkipPool(e)) => {
+                // Nothing was submitted for this pool; the rolling funding is
+                // untouched, so the next pool safely retries from the same UTXO.
                 warn!(
                     nft = hex::encode(&pool.datum.nft.policy),
-                    "settle failed: {e}"
+                    "settle skipped: {e}"
                 );
                 continue;
             }
+            Err(PassError::AbortPass(e)) => {
+                // A submit failed: the rolling funding is now ambiguous (the tx may
+                // be in the mempool). Stop the pass; next pass re-discovers state.
+                warn!(
+                    nft = hex::encode(&pool.datum.nft.policy),
+                    "submit failed, aborting pass: {e}"
+                );
+                break;
+            }
         }
+    }
+    // If we submitted anything, the first link consumed the wallet funding UTXO —
+    // mark it pending so a follow-up pass can't re-spend it before it confirms.
+    if submit && settled > 0 {
+        state.pending.insert(funding0_key, tip.slot);
     }
     // Rotate the lead pool each pass so a persistently-unsolvable pool can't pin
     // the chain order (round-robin fairness, retained from the one-per-block era).
@@ -364,10 +426,13 @@ fn settlement_plan(
 
 /// Drain ONE pool into the tx chain, splitting its orders into capped batches
 /// (`cfg.max_orders_per_tx`): each batch is re-solved against the previous batch's
-/// pool-continuation output, assembled, gated, and (when enabled) submitted, then
+/// pool-continuation output (the pool reserves move per batch, so a re-solve is
+/// required, not optional), assembled, gated, and (when enabled) submitted, then
 /// the chain advances (its change funds the next tx; its change + pool output are
-/// recorded as `additionalUtxo` ancestors). Returns the number of settlement txs
-/// this pool produced.
+/// supplied as `additionalUtxo` ancestors to the next gate). On submit, the
+/// settled order refs are recorded in `pending` (keyed by submit slot). Returns
+/// the number of settlement txs produced, or a [`PassError`] distinguishing a
+/// recoverable skip (nothing submitted) from a pass-fatal submit failure.
 #[allow(clippy::too_many_arguments)]
 fn settle_pool(
     backend: &KupoOgmios,
@@ -379,9 +444,10 @@ fn settle_pool(
     pool: &PoolInput,
     orders: &[OrderInput],
     submit: bool,
+    submit_slot: u64,
     chain: &mut ChainCtx,
-    in_flight: &mut HashSet<Key>,
-) -> Result<usize, Err> {
+    pending: &mut HashMap<Key, u64>,
+) -> Result<usize, PassError> {
     let nft = hex::encode(&pool.datum.nft.policy);
     // Orders not yet placed in a batch, and the rolling pool state (the on-chain
     // pool for batch 1, then each batch's pool-continuation output).
@@ -430,8 +496,9 @@ fn settle_pool(
             invalid_after_slot,
         };
         // Resolve this tx's not-yet-confirmed ancestors (funding + rolled pool).
+        // A build/gate failure submits nothing, so the chain is untouched → skip.
         let built = assemble::build_signed(&inp, backend, skey, &chain.resolved)
-            .map_err(|e| format!("assemble: {e:?}"))?;
+            .map_err(|e| PassError::SkipPool(format!("assemble: {e:?}").into()))?;
 
         // Economically rational: don't burn ADA on a batch whose tips don't cover
         // its fee. Stop draining this pool here (the remaining orders defer to a
@@ -456,11 +523,13 @@ fn settle_pool(
         );
 
         if submit {
+            // A submit failure is pass-fatal: the tx may already be in the mempool
+            // (spending this link's funding), so no later link may reuse it.
             let txid = backend
                 .submit(&built.signed.tx_bytes.0)
-                .map_err(|e| format!("submit: {e:?}"))?;
+                .map_err(|e| PassError::AbortPass(format!("submit: {e:?}").into()))?;
             for o in &solved.orders {
-                in_flight.insert(key(&o.output_reference));
+                pending.insert(key(&o.output_reference), submit_slot);
             }
             info!(nft, tx = hex::encode(&txid), "SUBMITTED");
         } else {
@@ -471,23 +540,18 @@ fn settle_pool(
             );
         }
 
-        // Advance the chain. The change funds the next tx; the change AND the
-        // pool-continuation output are supplied as `additionalUtxo` ancestors so
-        // the next gate can resolve them. The pool output also becomes the next
-        // batch's pool input (same pool, re-solved against its new reserves). Done
-        // in dry-run too, so a full chain is built + gated without submitting.
+        // Advance the chain. The change funds the next tx and the pool-continuation
+        // output becomes the next batch's pool input (re-solved against its new
+        // reserves); both are kept as the ONLY `additionalUtxo` ancestors for the
+        // next gate — older outputs were consumed by intervening links and are never
+        // referenced again, so pruning to just these keeps the set O(1). Done in
+        // dry-run too, so a full chain is built + gated without submitting.
         chain.funding = (
             built.change.output_reference.clone(),
             built.change.value.clone(),
         );
-        pool_input = PoolInput {
-            output_reference: built.pool_out.output_reference.clone(),
-            address: pool_input.address.clone(),
-            value: solved.settlement.pool_output.value.clone(),
-            datum: pool_input.datum.clone(),
-        };
-        chain.resolved.push(built.change);
-        chain.resolved.push(built.pool_out);
+        pool_input = built.next_pool;
+        chain.resolved = vec![built.change, built.pool_out];
         batches += 1;
 
         // Drop the orders just settled; stop when the pool is drained.
@@ -510,15 +574,30 @@ fn settle_pool(
 /// fee is bounded by the max ex-units + max tx size. Funding is the largest UTXO
 /// that isn't a reference script and isn't the collateral (its leftover — incl.
 /// any tokens — returns as change).
-fn select_inputs(wallet: &[Utxo]) -> Result<(&Utxo, &Utxo), Err> {
+///
+/// `pending` excludes UTXOs already spent by an earlier, still-unconfirmed pass
+/// (Kupo only marks an input spent on block confirmation, so a freshly-spent
+/// funding UTXO still appears unspent here) — without this guard a second pass
+/// firing before the prior chain confirms would re-select and double-spend it.
+fn select_inputs<'a>(
+    wallet: &'a [Utxo],
+    pending: &HashMap<Key, u64>,
+) -> Result<(&'a Utxo, &'a Utxo), Err> {
+    let usable = |u: &Utxo| !pending.contains_key(&key(&u.output_reference));
     let collateral = wallet
         .iter()
-        .filter(|u| u.is_pure_ada() && u.value.lovelace_of() >= COLLATERAL_LOVELACE as i128)
+        .filter(|u| {
+            u.is_pure_ada() && u.value.lovelace_of() >= COLLATERAL_LOVELACE as i128 && usable(u)
+        })
         .min_by_key(|u| u.value.lovelace_of())
         .ok_or("no pure-ADA collateral UTXO >= 5 ADA")?;
     let funding = wallet
         .iter()
-        .filter(|u| !u.has_reference_script && u.output_reference != collateral.output_reference)
+        .filter(|u| {
+            !u.has_reference_script
+                && u.output_reference != collateral.output_reference
+                && usable(u)
+        })
         .max_by_key(|u| u.value.lovelace_of())
         .ok_or("no funding UTXO (distinct from collateral)")?;
     Ok((funding, collateral))
@@ -537,7 +616,9 @@ fn ensure_collateral(
     let wallet = backend
         .find_wallet_utxos(solver_addr)
         .map_err(|e| format!("wallet: {e:?}"))?;
-    if select_inputs(&wallet).is_ok() {
+    // Startup check: nothing is in flight yet, so no pending exclusions.
+    let no_pending = HashMap::new();
+    if select_inputs(&wallet, &no_pending).is_ok() {
         return Ok(()); // already have funding + a distinct collateral
     }
     if !submit {
@@ -593,7 +674,7 @@ fn ensure_collateral(
         let w = backend
             .find_wallet_utxos(solver_addr)
             .map_err(|e| format!("wallet: {e:?}"))?;
-        if select_inputs(&w).is_ok() {
+        if select_inputs(&w, &no_pending).is_ok() {
             info!("collateral confirmed; wallet ready");
             return Ok(());
         }
@@ -662,5 +743,57 @@ mod tests {
         let (attempt, orphans) = settlement_plan(&pools, &orders, 5);
         assert!(attempt.is_empty());
         assert_eq!(orphans, vec![nft(9)]);
+    }
+
+    fn utxo(b: u8, lovelace: i128, pure: bool) -> Utxo {
+        Utxo {
+            output_reference: OutputReference {
+                transaction_id: vec![b; 32],
+                output_index: 0,
+            },
+            value: Value::from_lovelace(lovelace),
+            has_reference_script: false,
+            has_datum: !pure,
+        }
+    }
+
+    #[test]
+    fn expire_pending_drops_only_stale_entries() {
+        let mut s = LoopState::default();
+        s.pending.insert((vec![1; 32], 0), 100); // submitted at slot 100
+        s.pending.insert((vec![2; 32], 0), 100);
+        // tip 100 + grace: nothing expires yet.
+        s.expire_pending(100 + PENDING_GRACE_SLOTS);
+        assert_eq!(s.pending.len(), 2);
+        // one slot past the grace window: both expire (failed/unconfirmed → retry).
+        s.expire_pending(100 + PENDING_GRACE_SLOTS + 1);
+        assert!(s.pending.is_empty());
+    }
+
+    #[test]
+    fn select_inputs_excludes_pending_funding() {
+        // big funding UTXO (#9) + two pure-ADA candidates for collateral (#5,#6).
+        let wallet = vec![
+            utxo(9, 100_000_000, false),
+            utxo(5, COLLATERAL_LOVELACE as i128, true),
+            utxo(6, COLLATERAL_LOVELACE as i128 + 1, true),
+        ];
+        // Nothing pending → the largest non-collateral UTXO funds.
+        let none = HashMap::new();
+        let (f, _c) = select_inputs(&wallet, &none).unwrap();
+        assert_eq!(f.output_reference.transaction_id, vec![9; 32]);
+
+        // Mark #9 pending (spent by an unconfirmed prior pass): it must NOT be
+        // re-selected as funding; the next-largest usable UTXO is chosen instead.
+        let mut pending = HashMap::new();
+        pending.insert((vec![9u8; 32], 0u64), 0u64);
+        let (f2, _c2) = select_inputs(&wallet, &pending).unwrap();
+        assert_ne!(f2.output_reference.transaction_id, vec![9; 32]);
+
+        // With every spendable UTXO pending, selection fails (wait, don't double-spend).
+        for u in &wallet {
+            pending.insert(key(&u.output_reference), 0);
+        }
+        assert!(select_inputs(&wallet, &pending).is_err());
     }
 }

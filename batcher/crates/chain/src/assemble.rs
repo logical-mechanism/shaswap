@@ -262,6 +262,19 @@ fn build_staging(
     )?;
     tx = tx.output(change_out);
 
+    // Tie the actual built layout to the index helpers used for chaining: the
+    // change output must be the last, at `change_output_index`. If anyone reorders
+    // or inserts an output above without updating the index fns, this fails loudly
+    // here instead of silently stamping a wrong output_index into the next link's
+    // funding/pool ref (which would only surface as a submit failure downstream).
+    let n_outputs = tx.outputs.as_ref().map_or(0, Vec::len);
+    if n_outputs != change_output_index(inp.settlement) as usize + 1 {
+        return Err(ChainError::Shape(format!(
+            "output layout drift: built {n_outputs} outputs, change index {}",
+            change_output_index(inp.settlement)
+        )));
+    }
+
     // --- redeemers: each order Settle, pool PoolSettle, withdraw-0 SettlementRedeemer ---
     let order_settle = plutus::to_cbor(&plutus::order_settle());
     let pool_settle = plutus::to_cbor(&plutus::pool_settle());
@@ -315,18 +328,25 @@ pub struct BuiltSettlement {
     /// next tx spends this as its pool input and resolves it via `additionalUtxo`.
     /// Carries the pool's inline `PoolDatum` (unchanged by settlement).
     pub pool_out: ResolvedUtxo,
+    /// The pool as it will exist after this tx — the [`PoolInput`] the next capped
+    /// batch of the SAME pool must spend. Built here (not hand-assembled by the
+    /// caller) so its `output_reference`/`value` stay consistent with `pool_out`,
+    /// and its `address`/`datum` come from this tx's pool input (the settlement
+    /// validator pins both unchanged). Resolving it at the next gate uses `pool_out`.
+    pub next_pool: PoolInput,
 }
 
 /// The output index of the solver-change output (always last): owners `[0,N)`,
-/// then the pool, then remainders, then change.
-fn change_output_index(inp: &AssembleInputs) -> u64 {
-    (inp.settlement.owner_outputs.len() + 1 + inp.settlement.remainders.len()) as u64
+/// then the pool, then remainders, then change. Single source of the layout the
+/// chaining refs depend on; `build_staging` asserts the built tx matches it.
+fn change_output_index(s: &Settlement) -> u64 {
+    (s.owner_outputs.len() + 1 + s.remainders.len()) as u64
 }
 
 /// The output index of the pool-continuation output: right after the N owner
 /// outputs (owners `[0,N)`, then the pool).
-fn pool_output_index(inp: &AssembleInputs) -> u64 {
-    inp.settlement.owner_outputs.len() as u64
+fn pool_output_index(s: &Settlement) -> u64 {
+    s.owner_outputs.len() as u64
 }
 
 /// Build + evaluate + fee-balance + sign a settlement tx. Does NOT submit (the
@@ -412,7 +432,7 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
     let change = ResolvedUtxo {
         output_reference: OutputReference {
             transaction_id: tx_id.clone(),
-            output_index: change_output_index(inp),
+            output_index: change_output_index(inp.settlement),
         },
         address_bech32: inp.solver_addr_bech32.to_string(),
         value: change_value,
@@ -426,14 +446,24 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
     let pool_addr = txaddr::shelley_bech32(net, &inp.settlement.pool_output.address)
         .map_err(|e| ChainError::Address(format!("{e:?}")))?;
     let pool_datum = plutus::datum(&inp.settlement.pool_output.datum).map(|d| plutus::to_cbor(&d));
+    let pool_ref = OutputReference {
+        transaction_id: tx_id,
+        output_index: pool_output_index(inp.settlement),
+    };
     let pool_out = ResolvedUtxo {
-        output_reference: OutputReference {
-            transaction_id: tx_id,
-            output_index: pool_output_index(inp),
-        },
+        output_reference: pool_ref.clone(),
         address_bech32: pool_addr,
         value: inp.settlement.pool_output.value.clone(),
         datum: pool_datum,
+    };
+    // The pool as it will exist after this tx — the next capped batch's input.
+    // Same ref/value as `pool_out`; address + datum from THIS tx's pool input, which
+    // the settlement validator pins unchanged (so no need to re-decode `pool_out`).
+    let next_pool = PoolInput {
+        output_reference: pool_ref,
+        address: inp.pool.address.clone(),
+        value: inp.settlement.pool_output.value.clone(),
+        datum: inp.pool.datum.clone(),
     };
 
     Ok(BuiltSettlement {
@@ -442,6 +472,7 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
         total_ex_units: total,
         change,
         pool_out,
+        next_pool,
     })
 }
 
@@ -572,5 +603,27 @@ mod tests {
         let total = Value::from_lovelace(5_000_000);
         let st = settlement(Value::from_lovelace(6_000_000), Value::zero());
         assert!(compute_change(&total, &st, 1_000_000).is_err());
+    }
+
+    // A settlement with N owner outputs and R remainders, for index math.
+    fn settlement_with(n_owners: usize, n_remainders: usize) -> Settlement {
+        let mut s = settlement(Value::from_lovelace(1), Value::from_lovelace(1));
+        s.owner_outputs = (0..n_owners).map(|i| out(i as u8, Value::zero())).collect();
+        s.remainders = (0..n_remainders)
+            .map(|i| out(0x70 + i as u8, Value::zero()))
+            .collect();
+        s
+    }
+
+    #[test]
+    fn output_indices_track_the_owners_pool_remainders_change_layout() {
+        // Layout: owners [0,N) -> pool (N) -> remainders -> change (last).
+        let st = settlement_with(3, 2);
+        assert_eq!(pool_output_index(&st), 3); // right after the 3 owners
+        assert_eq!(change_output_index(&st), 3 + 1 + 2); // owners + pool + remainders
+                                                         // No remainders: pool at N, change immediately after the pool.
+        let st0 = settlement_with(1, 0);
+        assert_eq!(pool_output_index(&st0), 1);
+        assert_eq!(change_output_index(&st0), 2);
     }
 }

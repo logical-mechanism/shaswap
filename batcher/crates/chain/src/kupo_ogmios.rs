@@ -298,6 +298,10 @@ pub fn parse_kupo_datum(reply: &Json) -> Result<Vec<u8>, ChainError> {
 /// (the strict object form the live service requires — see the captured fixture
 /// `tests/fixtures/ogmios-evaluate-additional-utxo.json`). Quantities are
 /// non-negative here (these are real outputs) and fit `u64` on Cardano.
+///
+/// The ADA = `(empty policy, empty name)` convention matches `solver_core::Value`
+/// and `assemble::apply_assets` / `txbuild::value` — the same sentinel + group-by-
+/// policy lowering, here targeting JSON rather than a Pallas value or builder output.
 pub fn value_to_ogmios_json(v: &Value) -> Result<Json, ChainError> {
     use serde_json::Map;
     let mut lovelace: u64 = 0;

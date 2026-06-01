@@ -66,6 +66,39 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher hardening — code-review fixes (tx chaining made safe/reliable).**
+  Acted on a high-effort multi-agent review of the chaining diff (3 candidates refuted as
+  safe: Ogmios rejecting already-spent `additionalUtxo` — each evaluate is independent, proven
+  live; cap-after-price under-solving — feasibility is judged on the capped subset; fee-cover
+  break stranding high-tip orders — the check is on the tip *sum* and solve maximizes count).
+  Fixed the rest:
+  - **In-flight tracker with TTL + funding (was order-only, never-expiring).** `LoopState`
+    now holds `pending: HashMap<Key, slot>` for every input spent by a submitted-but-
+    unconfirmed tx — settled order refs AND the wallet **funding** UTXO. Orders in `pending`
+    are excluded from settlement and pending wallet UTXOs from `select_inputs`, so a still-
+    mempool chain can't be double-spent across passes (Kupo only marks inputs spent on block
+    confirmation — the old code re-selected funding and could double-spend). Entries expire
+    after `PENDING_GRACE_SLOTS` (180), so a failed/never-confirmed tx's inputs are retried
+    instead of stranded forever (the old `in_flight` had no expiry → a non-confirming tx
+    froze its orders permanently). Collateral is deliberately NOT tracked (reused).
+  - **Submit failure aborts the whole pass.** `settle_pool` returns `PassError::{SkipPool,
+    AbortPass}`: a solve/assemble failure (nothing submitted) skips the pool and continues;
+    a **submit** failure aborts the pass (the rolling funding is then ambiguous — the tx may
+    be in the mempool — so no later link may reuse it). Next pass re-discovers real state.
+  - **`chain.resolved` pruned to O(1).** A link's only off-chain inputs are the immediately-
+    prior tx's change (funding) + pool-continuation output, so `resolved` now holds just those
+    two (was an unbounded accumulation re-serialized into every gate call → O(M²) payload).
+  - **Output layout single-sourced.** `build_signed` now returns the next `PoolInput` (built
+    from the same data as the `pool_out` `ResolvedUtxo`, no caller hand-merge), and
+    `build_staging` asserts the built tx's output count matches `change_output_index` — so a
+    future output reorder fails loudly instead of silently stamping a wrong ref into the chain.
+  - **#9 reuse:** documented the ADA-sentinel/group-by-policy convention shared with
+    `Value`/`apply_assets`/`txbuild::value`.
+  **Proven live:** a 3-tx chain across 2 pools in one pass (cap=1) — pool `1c3be7b9` drained
+  over 2 within-pool batches (`b8eb3b2f`→`477d7b51`, the 2nd on pruned `resolved`+`next_pool`)
+  then pool `a2c6916e` (`b059d505`); pools moved by the exact sums (−20M ADA/+80M TEST and
+  −11M/+40M). **81 tests** (+3: `expire_pending` TTL, `select_inputs` excludes pending,
+  output-index layout), clippy -D + fmt clean.
 - **2026-06-01** — **Within-pool batch splitting (configurable cap) — a single hot pool
   drains across k chained txs.** Completed the chaining follow-up. New deployment-JSON
   field **`max_orders_per_tx`** (serde default **20**, clamped ≥1; env override
