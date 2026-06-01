@@ -14,7 +14,9 @@
 //! ex-units (the pre-submit gate) → compute fee (script-exec + reference-script +
 //! size, with a margin) → rebuild → sign.
 
-use crate::backend::{ChainBackend, ExUnits as BkExUnits, ProtocolParams, Purpose, RedeemerEval};
+use crate::backend::{
+    ChainBackend, ExUnits as BkExUnits, ProtocolParams, Purpose, RedeemerEval, ResolvedUtxo,
+};
 use crate::config::ValidatedConfig;
 use crate::fees;
 use crate::kupo_ogmios::ChainError;
@@ -304,15 +306,30 @@ pub struct BuiltSettlement {
     pub signed: BuiltTransaction,
     pub fee: u64,
     pub total_ex_units: BkExUnits,
+    /// The solver-change output this tx creates (last output) — its resolved
+    /// form. In a chain it becomes the next tx's funding input, and is supplied
+    /// as `additionalUtxo` to that tx's `EvaluateTx` (it isn't on-chain yet).
+    pub change: ResolvedUtxo,
+}
+
+/// The output index of the solver-change output (always last): owners `[0,N)`,
+/// then the pool, then remainders, then change.
+fn change_output_index(inp: &AssembleInputs) -> u64 {
+    (inp.settlement.owner_outputs.len() + 1 + inp.settlement.remainders.len()) as u64
 }
 
 /// Build + evaluate + fee-balance + sign a settlement tx. Does NOT submit (the
 /// orchestrator does, via the backend), so the same backend serves the
 /// EvaluateTx gate here and submission there.
+///
+/// `additional` resolves any not-yet-on-chain ancestor outputs the tx spends (the
+/// previous chained settlement's change), passed to the `EvaluateTx` gate as
+/// `additionalUtxo`. Empty for a standalone (non-chained) settlement.
 pub fn build_signed<B: ChainBackend<Error = ChainError>>(
     inp: &AssembleInputs,
     backend: &B,
     skey: &SecretKey,
+    additional: &[ResolvedUtxo],
 ) -> Result<BuiltSettlement, ChainError> {
     let empty: SpendExUnits = BTreeMap::new();
     let zero = BkExUnits { mem: 0, steps: 0 };
@@ -321,7 +338,7 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
     let draft = build_staging(inp, 1_500_000, &empty, zero)?
         .build_conway_raw()
         .map_err(|e| ChainError::Shape(format!("draft build: {e:?}")))?;
-    let evals = backend.evaluate(&draft.tx_bytes.0)?;
+    let evals = backend.evaluate(&draft.tx_bytes.0, additional)?;
     let (spend_exu, reward_exu) = map_exunits(inp, &evals)?;
 
     // Every script input MUST have a real ex-units budget from EvaluateTx. The
@@ -376,10 +393,25 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
         .sign(skey)
         .map_err(|e| ChainError::Shape(format!("sign: {e:?}")))?;
 
+    // The change output's resolved form — funding for the next tx in a chain, and
+    // the `additionalUtxo` entry that lets its gate resolve this still-unconfirmed
+    // output. Its ref is (this tx's id, the change index).
+    let change_value = change_value(inp, fee)?;
+    let change = ResolvedUtxo {
+        output_reference: OutputReference {
+            transaction_id: signed.tx_hash.0.to_vec(),
+            output_index: change_output_index(inp),
+        },
+        address_bech32: inp.solver_addr_bech32.to_string(),
+        value: change_value,
+        datum: None,
+    };
+
     Ok(BuiltSettlement {
         signed,
         fee,
         total_ex_units: total,
+        change,
     })
 }
 

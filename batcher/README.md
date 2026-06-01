@@ -41,11 +41,19 @@ RUST_LOG=debug            # verbosity (default info); tracing w/ timestamps + le
 **Zero-config and self-maintaining.** Deploy, send some ADA to the solver address,
 and run — the batcher discovers everything itself:
 
-- **Any number of pools / pairs.** It finds every pool at the pool address (each
-  self-describes its pair + NFT via its `PoolDatum`; no per-pool config), groups
-  orders by their target pool, and settles each pool's batch at its own uniform
-  price. A settlement tx settles one pool, so it settles **one pool per block,
-  round-robin** — no pool is starved. One-sided and two-sided (netting) batches.
+- **Any number of pools / pairs, drained per pass via tx chaining.** It finds every
+  pool at the pool address (each self-describes its pair + NFT via its `PoolDatum`;
+  no per-pool config), groups orders by their target pool, and settles each pool's
+  batch at its own uniform price. A settlement tx settles one pool, so a pass builds
+  a **chain** of settlement txs — one per settleable pool — each funded by the
+  previous tx's change output, gated, and submitted back-to-back into the mempool
+  (which accepts chained txs). The previous tx's still-unconfirmed change is supplied
+  to each `EvaluateTx` gate via Ogmios `additionalUtxo` (it isn't on-chain yet); the
+  collateral is **shared** across the chain (a phase-2-passing tx never consumes it).
+  This drains the whole settleable orderbook in one pass instead of one pool per
+  block. One-sided and two-sided (netting) batches.
+- **Economically rational.** A tx whose tips don't cover its fee (+`FEE_COVER_MARGIN`)
+  is skipped; its orders defer to a later, better-amortized batch.
 - **Atomic discovery** — one Kupo snapshot per pass; the order/pool/wallet views
   can't drift mid-pass.
 - **Griefing-resistant** — skips (never aborts on) junk UTXOs parked at the public
@@ -162,14 +170,16 @@ Node-independent, fully tested:
 ## Status
 
 The full pipeline works live on preprod: the Kupo/Ogmios `ChainBackend`
-(discovery, params, the EvaluateTx pre-submit gate, submit), the body assembler
-(funding/collateral, reference inputs, `script_data_hash` over the cost models,
-ex-units from EvaluateTx, fee balancing, signing), and the orchestrator loop have
-all settled real one-sided and netting batches (see `../MEMORY.md`).
+(discovery, params, the EvaluateTx pre-submit gate with `additionalUtxo`, submit),
+the body assembler (funding/collateral, reference inputs, `script_data_hash` over
+the cost models, ex-units from EvaluateTx, fee balancing, signing, and emitting the
+change output's resolved form for the next link), and the orchestrator loop have
+all settled real one-sided, netting, AND **chained multi-pool** batches — a chain
+of settlement txs in one pass, sharing one collateral (see `../MEMORY.md`).
 
-Possible follow-ups: multi-funding / auto-split when fewer than two pure-ADA
-UTXOs are available; surplus-maximizing solving (the deferred §5.2.7 layer); and
-the emulator pass still owed on the contracts side.
+Possible follow-ups: within-pool multi-tx splitting when a single pool has more
+orders than fit one tx's ex-unit/size budget; surplus-maximizing solving (the
+deferred §5.2.7 layer); and the emulator pass still owed on the contracts side.
 
 ## Invariants this component must keep
 

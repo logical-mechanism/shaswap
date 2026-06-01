@@ -66,6 +66,46 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **🎉 TRANSACTION CHAINING LIVE — batcher drains ALL settleable pools
+  in one pass (was one-pool-per-block).** The reference solver now builds a **chain** of
+  settlement txs per pass — one per settleable pool — each funded by the previous tx's
+  **change output**, gated, and submitted back-to-back into the mempool, instead of
+  ceding throughput by settling a single pool per block. **Proven live, end-to-end:**
+  a 2-pool chain — tx1 `dd7342f6…` (pool `1c3be7b9`, price 3/10) → tx2 `1bad4abd…`
+  (pool `a2c6916e`, price 7/20) — built+gated+submitted in **one pass**, tx2 funded by
+  tx1's still-unconfirmed change. **On-chain audit:** pool1 −30M ADA/+100M TEST, pool2
+  −35M ADA/+100M TEST; user (floor-protected, no fee) got 32M & 37M ADA; **solver net =
+  Σtips 4,000,000 − Σfees 893,151 = +3,106,849** (exactly the terminal change output);
+  solver TEST unchanged. The two hard pieces:
+  - **Resolved-UTXO tracker + Ogmios `additionalUtxo`.** When tx N funds itself from tx
+    N-1's change, that input isn't on-chain, so `evaluateTransaction` can't resolve it
+    from ledger state. New `backend::ResolvedUtxo` (ref+address+value+inline-datum);
+    `ChainBackend::evaluate(tx, additional)` now takes the not-yet-confirmed ancestors and
+    serializes them into Ogmios v6 `additionalUtxo`. **Schema captured live, not guessed**
+    (strict-validation curl probing → fixture `chain/tests/fixtures/ogmios-evaluate-additional-utxo.json`):
+    `{transaction:{id}, index, address, value:{ada:{lovelace}, <policyHex>:{<nameHex>:qty}}, datum?}`
+    — a malformed entry is rejected with JSON-RPC −32600 *before* the tx decode; `value`
+    must be the nested object form. `assemble::build_signed` now takes `additional` and
+    returns the change output's `ResolvedUtxo` (ref = this tx's hash + change index).
+    The orchestrator threads a `ChainCtx{funding, collateral, resolved}`: rolling funding
+    starts at the on-chain funding UTXO then becomes each tx's change; `resolved`
+    accumulates every in-flight change to feed the next gate. Works in dry-run too (whole
+    chain built+gated without submit — verified both txs pass with `additionalUtxo`).
+  - **Collateral across a chain → SHARED works (verified live, decided + documented).** A
+    phase-2-passing tx never consumes its collateral, so it stays in the mempool UTXO set;
+    both chained txs reused the on-chain 5-ADA collateral `5fda1b6d#0` and it remained
+    **unspent** after both confirmed. No rolling-collateral machinery needed (the EvaluateTx
+    gate guarantees phase-2 success, so the shared collateral is never at risk). Each
+    settlement tx still settles exactly ONE pool (one price+pool_nft per `SettlementRedeemer`).
+  - **Economically-rational order selection.** A tx whose tips don't cover its fee
+    (+`FEE_COVER_MARGIN`, default 0 = break-even floor) is skipped and its orders defer to a
+    better-amortized batch — keeping solver-core's "never emit a settlement the chain
+    rejects" property. Under load many small tips amortize one fee.
+  **75 tests** (+4: `ResolvedUtxo`/`Value`→Ogmios-JSON serializers vs the captured shape),
+  clippy -D + fmt clean. The one-pool fallback path is retained (a failed/fee-negative link
+  just doesn't advance the chain; the next pool retries from the same funding). Remaining
+  follow-up: within-pool multi-tx split when a single pool has >~40 orders (the per-tx
+  ex-unit/size budget check already errors rather than mis-building); surplus-max solving (§5.2.7).
 - **2026-06-01** — **Fee handling verified with a separate USER key (not batcher-vs-itself).**
   Added a distinct trader wallet (`testnets/keys/user.skey`, OUTSIDE the repo; guarded
   exports in `env.sh`; scripts `happy_path/u1-setup-user.sh` gen+fund, `u2-post-user-order.sh`

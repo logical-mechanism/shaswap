@@ -30,6 +30,24 @@ impl Utxo {
     }
 }
 
+/// A resolved transaction output the ledger doesn't know about yet — the change
+/// output of an in-flight (built-but-unconfirmed) settlement in a tx chain. When
+/// tx N spends tx N-1's change as its funding, that input isn't on-chain, so
+/// Ogmios `EvaluateTx` can't resolve it from ledger state; we pass every such
+/// not-yet-on-chain ancestor via `additionalUtxo` so phase-2 evaluation succeeds.
+///
+/// Carries exactly what Ogmios needs to resolve the input: its reference, the
+/// solver address that owns it (bech32), its value, and any inline datum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedUtxo {
+    pub output_reference: OutputReference,
+    /// The bech32 address holding this output (the solver's own address).
+    pub address_bech32: String,
+    pub value: Value,
+    /// Inline datum CBOR, if any. The solver-change output has none.
+    pub datum: Option<Vec<u8>>,
+}
+
 /// The chain tip — enough to set a slot-based validity bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tip {
@@ -139,7 +157,16 @@ pub trait ChainBackend {
 
     /// Local Phase-2 evaluation of a built tx — the **pre-submit gate**. Every tx
     /// must pass this (and have its ex-units filled from the result) before submit.
-    fn evaluate(&self, tx_cbor: &[u8]) -> Result<Vec<RedeemerEval>, Self::Error>;
+    ///
+    /// `additional` resolves inputs the ledger can't yet see: when chaining
+    /// settlements, tx N funds itself from tx N-1's still-unconfirmed change
+    /// output, so every not-yet-on-chain ancestor output it references must be
+    /// supplied here (Ogmios `additionalUtxo`). Empty for a standalone tx.
+    fn evaluate(
+        &self,
+        tx_cbor: &[u8],
+        additional: &[ResolvedUtxo],
+    ) -> Result<Vec<RedeemerEval>, Self::Error>;
 
     /// Submit a fully-built, signed tx; returns its id (32 bytes).
     fn submit(&self, tx_cbor: &[u8]) -> Result<Vec<u8>, Self::Error>;

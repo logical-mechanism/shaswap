@@ -9,7 +9,7 @@
 //! transport, which is exercised live by the orchestrator.
 
 use crate::backend::{
-    ChainBackend, ExUnits, ProtocolParams, Purpose, RedeemerEval, Snapshot, Tip, Utxo,
+    ChainBackend, ExUnits, ProtocolParams, Purpose, RedeemerEval, ResolvedUtxo, Snapshot, Tip, Utxo,
 };
 use crate::config::ValidatedConfig;
 use crate::decode::{self, DecodeError};
@@ -291,6 +291,64 @@ pub fn parse_kupo_datum(reply: &Json) -> Result<Vec<u8>, ChainError> {
         .and_then(|d| d.as_str())
         .ok_or_else(|| ChainError::Shape("datum not found / not stored".into()))?;
     hex_to_bytes(d)
+}
+
+/// Serialize a solver-core [`Value`] into Ogmios v6's nested value object:
+/// `{ "ada": {"lovelace": N}, "<policyHex>": {"<assetNameHex>": qty, ...}, ... }`
+/// (the strict object form the live service requires — see the captured fixture
+/// `tests/fixtures/ogmios-evaluate-additional-utxo.json`). Quantities are
+/// non-negative here (these are real outputs) and fit `u64` on Cardano.
+pub fn value_to_ogmios_json(v: &Value) -> Result<Json, ChainError> {
+    use serde_json::Map;
+    let mut lovelace: u64 = 0;
+    // Group native assets by policy id (BTreeMap → deterministic key order).
+    let mut by_policy: std::collections::BTreeMap<String, Map<String, Json>> = Default::default();
+    for (policy, name, qty) in v.flatten() {
+        let q = u64::try_from(qty).map_err(|_| {
+            ChainError::Shape(format!(
+                "negative/oversized qty {qty} in additionalUtxo value"
+            ))
+        })?;
+        if policy.is_empty() && name.is_empty() {
+            lovelace = q; // ADA
+        } else {
+            by_policy
+                .entry(hex::encode(policy))
+                .or_default()
+                .insert(hex::encode(name), Json::from(q));
+        }
+    }
+    let mut top = Map::new();
+    top.insert("ada".into(), json!({ "lovelace": lovelace }));
+    for (policy, names) in by_policy {
+        top.insert(policy, Json::Object(names));
+    }
+    Ok(Json::Object(top))
+}
+
+/// Serialize one in-flight [`ResolvedUtxo`] into an Ogmios v6 `additionalUtxo`
+/// entry (`{ transaction:{id}, index, address, value, datum? }`).
+pub fn resolved_utxo_to_json(u: &ResolvedUtxo) -> Result<Json, ChainError> {
+    let mut entry = json!({
+        "transaction": { "id": hex::encode(&u.output_reference.transaction_id) },
+        "index": u.output_reference.output_index,
+        "address": u.address_bech32,
+        "value": value_to_ogmios_json(&u.value)?,
+    });
+    if let Some(d) = &u.datum {
+        entry["datum"] = Json::String(hex::encode(d));
+    }
+    Ok(entry)
+}
+
+/// Serialize the full `additionalUtxo` array for an `evaluateTransaction` call.
+pub fn additional_utxo_json(additional: &[ResolvedUtxo]) -> Result<Json, ChainError> {
+    Ok(Json::Array(
+        additional
+            .iter()
+            .map(resolved_utxo_to_json)
+            .collect::<Result<Vec<_>, _>>()?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -577,9 +635,19 @@ impl ChainBackend for KupoOgmios {
         })
     }
 
-    fn evaluate(&self, tx_cbor: &[u8]) -> Result<Vec<RedeemerEval>, ChainError> {
+    fn evaluate(
+        &self,
+        tx_cbor: &[u8],
+        additional: &[ResolvedUtxo],
+    ) -> Result<Vec<RedeemerEval>, ChainError> {
         let hex = hex::encode(tx_cbor);
-        let reply = self.ogmios("evaluateTransaction", json!({"transaction": {"cbor": hex}}))?;
+        let mut params = json!({ "transaction": { "cbor": hex } });
+        // Only attach `additionalUtxo` when chaining (resolving an unconfirmed
+        // ancestor) — a standalone tx resolves entirely from ledger state.
+        if !additional.is_empty() {
+            params["additionalUtxo"] = additional_utxo_json(additional)?;
+        }
+        let reply = self.ogmios("evaluateTransaction", params)?;
         parse_evaluate(&reply)
     }
 
@@ -719,6 +787,77 @@ mod tests {
         let id = parse_submit(&reply).unwrap();
         assert_eq!(id.len(), 32);
         assert_eq!(id[0], 0x6c);
+    }
+
+    #[test]
+    fn value_to_ogmios_json_groups_by_policy() {
+        let policy =
+            hex_to_bytes("8160c878d40c39d7bfeb300560343d646620ab50182981efa8ae779a").unwrap();
+        let v = Value::from_lovelace(5_000_000).add(&policy, b"TEST", 100);
+        let j = value_to_ogmios_json(&v).unwrap();
+        // ADA lives under "ada":{"lovelace":N}; native assets under the policy hex.
+        assert_eq!(j["ada"]["lovelace"], serde_json::json!(5_000_000));
+        assert_eq!(
+            j["8160c878d40c39d7bfeb300560343d646620ab50182981efa8ae779a"]["54455354"],
+            serde_json::json!(100)
+        );
+    }
+
+    #[test]
+    fn value_to_ogmios_json_ada_only_has_zero_safe_shape() {
+        let j = value_to_ogmios_json(&Value::from_lovelace(2_000_000)).unwrap();
+        assert_eq!(j, serde_json::json!({ "ada": { "lovelace": 2_000_000 } }));
+        // a negative quantity (shouldn't occur for a real output) is rejected.
+        let neg = Value::zero().add(&[], &[], -1);
+        assert!(value_to_ogmios_json(&neg).is_err());
+    }
+
+    #[test]
+    fn resolved_utxo_to_json_matches_captured_shape() {
+        // Mirror the live-captured request entry exactly (fixture: the request
+        // shape Ogmios v6 strictly validated as well-formed before tx decode).
+        let policy =
+            hex_to_bytes("8160c878d40c39d7bfeb300560343d646620ab50182981efa8ae779a").unwrap();
+        let u = ResolvedUtxo {
+            output_reference: OutputReference {
+                transaction_id: vec![0u8; 32],
+                output_index: 3,
+            },
+            address_bech32: "addr_test1vq6vymyr2plj92javazvvxfqj5aaqxhk5u3u87ud4dc8u5gyasnly"
+                .into(),
+            value: Value::from_lovelace(5_000_000).add(&policy, b"TEST", 100),
+            datum: Some(hex_to_bytes("d87980").unwrap()),
+        };
+        let got = resolved_utxo_to_json(&u).unwrap();
+        let want = serde_json::json!({
+            "transaction": { "id": "0000000000000000000000000000000000000000000000000000000000000000" },
+            "index": 3,
+            "address": "addr_test1vq6vymyr2plj92javazvvxfqj5aaqxhk5u3u87ud4dc8u5gyasnly",
+            "value": {
+                "ada": { "lovelace": 5_000_000 },
+                "8160c878d40c39d7bfeb300560343d646620ab50182981efa8ae779a": { "54455354": 100 }
+            },
+            "datum": "d87980"
+        });
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn resolved_utxo_to_json_omits_absent_datum() {
+        let u = ResolvedUtxo {
+            output_reference: OutputReference {
+                transaction_id: vec![0xab; 32],
+                output_index: 0,
+            },
+            address_bech32: "addr_test1vq6vymyr2plj92javazvvxfqj5aaqxhk5u3u87ud4dc8u5gyasnly"
+                .into(),
+            value: Value::from_lovelace(7_000_000),
+            datum: None,
+        };
+        let got = resolved_utxo_to_json(&u).unwrap();
+        // a solver-change output carries no datum → the field is absent.
+        assert!(got.get("datum").is_none());
+        assert_eq!(got["index"], serde_json::json!(0));
     }
 
     #[test]
