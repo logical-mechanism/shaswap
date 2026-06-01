@@ -80,6 +80,25 @@ fn builds_withdraw_zero_with_reward_redeemer() {
 }
 
 #[test]
+fn is_valid_is_always_true() {
+    // ShaSwap invariant (relied on by the batcher): every built tx has
+    // `isValid == true`. A `false` would tell the ledger "my scripts fail, take my
+    // collateral" — the solver must never emit one. There is no builder API to set
+    // it false, so this is by construction; the test pins it against regressions.
+    let built = StagingTransaction::new()
+        .input(Input::new(Hash::from([0xa1u8; 32]), 0))
+        .output(Output::new(enterprise_addr(), 2_000_000))
+        .fee(200_000)
+        .build_conway_raw()
+        .expect("tx should build");
+    let tx: Tx = pallas_codec::minicbor::decode(&built.tx_bytes.0).expect("valid conway tx cbor");
+    assert!(
+        tx.success,
+        "isValid must always be true (never burn collateral)"
+    );
+}
+
+#[test]
 fn reward_redeemer_without_matching_withdrawal_is_rejected() {
     // A reward redeemer whose account isn't in the withdrawals set has no index to
     // bind to — the build must fail rather than emit a dangling redeemer.

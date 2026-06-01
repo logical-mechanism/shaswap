@@ -66,6 +66,35 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher production-readiness pass (v1 daemon hardening).** Made the
+  reference solver safe to run unattended under systemd. (1) **Graceful shutdown:** added
+  `signal-hook`; SIGTERM/SIGINT flip an `AtomicBool` checked **only between passes** (a
+  signal never interrupts a pass mid-build/submit → no ambiguous chain state), then it logs
+  + exits 0. `sleep_responsive` wakes in ≤250ms steps so shutdown is prompt at any cadence.
+  (2) **Fast by default:** poll cadence is now millisecond (`SHASWAP_INTERVAL_MS`, `_SECS`
+  kept ×1000 for back-compat). It's safe to poll briskly because we key off **Kupo's**
+  checkpoint (never read ahead of what Kupo indexed); the latency floor is Kupo's index lag,
+  not the cadence — so an Ogmios chain-sync push buys ~nothing over fast polling and was
+  deliberately NOT added. (3) **Dust / token-poisoning defense:** funding selection now
+  requires `value.is_ada_only()` — a gifted token-bearing UTXO at the public solver address
+  can't be chosen as funding (its foreign tokens would ride into the change output and
+  bloat its min-ADA/size until unbuildable). A datum on an ada-only vkey UTXO is inert
+  (doesn't propagate to change), so those still fund fine; settlement change is always
+  ada-only, so the solver self-funds indefinitely and gifted tokens sit unused. (4) **P&L
+  readout:** each pass logs `balance_ada` + `delta_ada` (drift since first pass) — a
+  confirmed settlement moves the solver's ADA only by tips−fee and collateral is constant,
+  so the wallet-balance trend IS realized profit (user's suggestion: "checking the wallet
+  balance would work"). (5) **`isValid == true` invariant locked:** the fork hardcodes
+  `success: true` with no API to set it false (documented; `is_valid_is_always_true` decode
+  test) — so the batcher can never emit a collateral-burning is-false tx, and combined with
+  the EvaluateTx gate the node always accepts our tx phase-2 → **collateral is never
+  consumed.** **Proven live:** daemon at 500ms logged the balance/P&L and shut down cleanly
+  on SIGTERM between passes (exit 0). **85 tests** (+4: dust-funding rejection, isValid decode,
+  pending TTL/exclusion already there), clippy -D + fmt clean. **Scope decisions (user):**
+  v1 multi-asset = arbitrary 2-asset pairs (already done, Rev 10); >2-asset *multilateral*
+  clearing stays deferred (not needed). Surplus-max stays deferred. Single-batcher + cap 20
+  for now; competitive multi-solver tests deferred. Collateral assumed never taken (holds by
+  the isValid+gate invariant above).
 - **2026-06-01** — **Configurable drain strategy (round-robin | profit-greedy).** The
   cross-pool/shard ordering a pass attempts pools in is now a config knob: deployment-JSON
   `strategy` (default `"round-robin"`; env override `SHASWAP_STRATEGY`), parsed into an

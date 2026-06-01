@@ -21,6 +21,9 @@ serde_json = "1"
 hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Graceful shutdown: flip a flag on SIGTERM/SIGINT so the daemon exits cleanly
+# between passes (systemd sends SIGTERM). Tiny, synchronous, no async runtime.
+signal-hook = "0.3"
 
 [lints]
 workspace = true

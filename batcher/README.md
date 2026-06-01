@@ -34,9 +34,20 @@ SHASWAP_DEPLOYMENT=../contracts/happy_path/deployment.json \
   cargo run -p orchestrator
 
 SHASWAP_SUBMIT=1          # actually submit settlements
-SHASWAP_INTERVAL_SECS=5   # run as a daemon (else one-shot)
+SHASWAP_INTERVAL_MS=500   # run as a daemon at this poll cadence (or _SECS; else one-shot)
+SHASWAP_MAX_ORDERS_PER_TX=20   # per-tx order cap (overrides deployment JSON)
+SHASWAP_STRATEGY=round-robin   # drain order: round-robin | profit-greedy
 RUST_LOG=debug            # verbosity (default info); tracing w/ timestamps + levels
 ```
+
+**Daemon / systemd.** The poll is a cheap Kupo-checkpoint GET, so a small interval
+(e.g. 500 ms) keeps it reactive without reading ahead of what Kupo has indexed (the
+latency floor is Kupo's index lag, not the cadence). `SIGTERM`/`SIGINT` shut it down
+cleanly **between passes** — a signal never interrupts a pass mid-submit — so it's
+safe under `systemd`. Each pass logs a running wallet-balance P&L (`balance_ada` +
+`delta_ada` since start). Every built tx is `isValid == true` and gated by
+`EvaluateTx` before submit, so the node accepts it and the collateral is never
+consumed. Funding is drawn only from ada-only UTXOs (a dust/token-poisoning guard).
 
 **Zero-config and self-maintaining.** Deploy, send some ADA to the solver address,
 and run — the batcher discovers everything itself:

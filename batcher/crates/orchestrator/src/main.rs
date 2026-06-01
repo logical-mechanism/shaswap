@@ -27,17 +27,26 @@
 //! This drains the whole settleable orderbook in a single pass instead of one pool
 //! per block.
 //!
-//! Modes: one pass by default; `SHASWAP_INTERVAL_SECS=<n>` runs as a daemon that
-//! polls Kupo's checkpoint every `n`s and settles only when a new block is indexed
-//! (block-driven). Every input spent by a submitted-but-unconfirmed tx (settled
-//! order refs AND the wallet funding UTXO) is held `pending` and excluded from the
-//! next pass, so an in-flight chain is never double-spent before it confirms;
-//! entries expire after a grace window so a failed/never-confirmed tx's inputs are
-//! retried (recovery). A submit failure aborts the whole pass (the rolling funding
-//! is then ambiguous). Economically rational: a tx whose tips don't cover its fee
-//! is skipped (its orders defer to a better-amortized batch). The per-tx order cap
-//! comes from the deployment JSON (`max_orders_per_tx`, default 20) and can be
-//! overridden with `SHASWAP_MAX_ORDERS_PER_TX`. `RUST_LOG` controls verbosity.
+//! Modes: one pass by default; `SHASWAP_INTERVAL_MS=<n>` (or `_SECS`, back-compat)
+//! runs as a daemon that polls Kupo's checkpoint and settles only when a new block
+//! is indexed (block-driven). The poll is a cheap `/checkpoints` GET keyed off
+//! Kupo's checkpoint, so polling fast is safe (never reads ahead of what Kupo
+//! indexed) and reactive — fast by default; the latency floor is Kupo's index lag,
+//! not the cadence. `SIGTERM`/`SIGINT` shut the daemon down cleanly between passes
+//! (systemd-friendly; a signal never interrupts a pass mid-submit). Every input
+//! spent by a submitted-but-unconfirmed tx (settled order refs AND the wallet
+//! funding UTXO) is held `pending` and excluded from the next pass, so an in-flight
+//! chain is never double-spent before it confirms; entries expire after a grace
+//! window so a failed/never-confirmed tx's inputs are retried (recovery). A submit
+//! failure aborts the whole pass (the rolling funding is then ambiguous). Every
+//! built tx is `isValid == true` (the builder cannot emit `false`) and is gated by
+//! `EvaluateTx` before submit, so the node accepts it phase-2 and the collateral is
+//! never consumed. Economically rational: a tx whose tips don't cover its fee is
+//! skipped. Funding selection takes only ada-only UTXOs (dust/token-poisoning
+//! defense). The per-tx order cap (`max_orders_per_tx`, default 20) and drain
+//! `strategy` come from the deployment JSON (env overrides `SHASWAP_MAX_ORDERS_PER_TX`,
+//! `SHASWAP_STRATEGY`). A running wallet-balance P&L is logged each pass. `RUST_LOG`
+//! controls verbosity.
 //!
 //! Config path: `$SHASWAP_DEPLOYMENT` or argv[1].
 
@@ -53,6 +62,8 @@ use solver_core::output::{OrderInput, PoolInput};
 use solver_core::types::OutputReference;
 use solver_core::value::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -168,14 +179,27 @@ fn run() -> Result<(), Err> {
     let skey = assemble::load_signing_key(&signing_key_path).map_err(|e| format!("skey: {e:?}"))?;
     let solver_addr = solver_address(network_id, &skey)?;
     let submit = std::env::var("SHASWAP_SUBMIT").as_deref() == Ok("1");
-    let interval = std::env::var("SHASWAP_INTERVAL_SECS")
+    // Daemon poll cadence (ms): `SHASWAP_INTERVAL_MS` preferred; `SHASWAP_INTERVAL_SECS`
+    // (×1000) kept for back-compat. Either > 0 → daemon mode; else one-shot. The poll
+    // is a cheap Kupo `/checkpoints` GET, and we settle only when the checkpoint
+    // advances — so polling fast is safe (never reads ahead of what Kupo indexed) and
+    // makes the batcher reactive by default. The real latency floor is Kupo's index
+    // lag, not this cadence, so there's no benefit to an Ogmios push beyond polling
+    // briskly here.
+    let poll_ms = std::env::var("SHASWAP_INTERVAL_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
+        .or_else(|| {
+            std::env::var("SHASWAP_INTERVAL_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|s| s.saturating_mul(1000))
+        })
         .filter(|n| *n > 0);
     info!(
         solver = %solver_addr,
         submit,
-        mode = %interval.map_or("one-shot".into(), |n| format!("loop {n}s")),
+        mode = %poll_ms.map_or("one-shot".into(), |n| format!("loop {n}ms")),
         strategy = ?strategy,
         cap = cfg.max_orders_per_tx,
         "starting"
@@ -196,7 +220,7 @@ fn run() -> Result<(), Err> {
     let mut state = LoopState::default();
 
     // One-shot: a single pass, propagate any error.
-    let Some(poll) = interval else {
+    let Some(poll) = poll_ms else {
         return settle_once(
             &backend,
             &cfg,
@@ -209,12 +233,22 @@ fn run() -> Result<(), Err> {
         );
     };
 
+    // Graceful shutdown: SIGTERM (systemd stop) / SIGINT (Ctrl-C) flip this flag.
+    // We check it only BETWEEN passes, so a signal never interrupts a pass mid
+    // tx-build/submit (which could leave ambiguous chain state) — the current pass
+    // finishes, then we exit cleanly.
+    let term = Arc::new(AtomicBool::new(false));
+    for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
+        signal_hook::flag::register(sig, term.clone())
+            .map_err(|e| format!("install signal handler: {e}"))?;
+    }
+
     // Daemon: **block-driven**. Do a pass when Kupo's checkpoint advances (which
     // also guarantees Kupo has the block's data — no read-stale-data race against
     // the node tip); otherwise just cheaply re-poll. A transient failure logs and
     // waits for the next block rather than killing the daemon.
     let mut last_block: Option<u64> = None;
-    loop {
+    while !term.load(Ordering::Relaxed) {
         match backend.kupo_checkpoint() {
             Ok(cp) if last_block != Some(cp) => {
                 if let Err(e) = settle_once(
@@ -234,7 +268,20 @@ fn run() -> Result<(), Err> {
             Ok(_) => {} // no new block since last pass
             Err(e) => warn!("checkpoint poll failed (will retry): {e:?}"),
         }
-        std::thread::sleep(Duration::from_secs(poll));
+        sleep_responsive(poll, &term);
+    }
+    info!("received shutdown signal; exiting cleanly");
+    Ok(())
+}
+
+/// Sleep up to `total_ms`, but wake early (in ≤250 ms steps) if `term` is set, so
+/// shutdown stays responsive even when the poll cadence is large.
+fn sleep_responsive(total_ms: u64, term: &AtomicBool) {
+    let mut left = total_ms;
+    while left > 0 && !term.load(Ordering::Relaxed) {
+        let step = left.min(250);
+        std::thread::sleep(Duration::from_millis(step));
+        left -= step;
     }
 }
 
@@ -252,6 +299,10 @@ fn run() -> Result<(), Err> {
 struct LoopState {
     pending: HashMap<Key, u64>,
     cursor: usize,
+    /// Total solver-wallet ADA at the first pass — the baseline for the running
+    /// P&L readout (a confirmed settlement moves the solver's ADA by exactly
+    /// tips − fee, so the wallet balance's drift since start is realized profit).
+    start_balance: Option<i128>,
 }
 
 impl LoopState {
@@ -308,12 +359,22 @@ fn settle_once(
         .filter(|o| !state.pending.contains_key(&key(&o.output_reference)))
         .collect();
 
+    // Running P&L readout: total confirmed wallet ADA + its drift since the first
+    // pass. Settlements move the solver's ADA only by tips − fee (owner/pool
+    // outputs go elsewhere) and collateral is constant, so `delta` is realized
+    // profit. It lags by any in-flight (unconfirmed) settlements and would also
+    // move if the address were funded/swept out of band — so it's the wallet
+    // balance trend, not a strict ledger of every tx.
+    let balance: i128 = wallet.iter().map(|u| u.value.lovelace_of()).sum();
+    let start = *state.start_balance.get_or_insert(balance);
     info!(
         slot = tip.slot,
         pools = pools.len(),
         orders = orders.len(),
         pending = state.pending.len(),
         wallet = wallet.len(),
+        balance_ada = balance,
+        delta_ada = balance - start,
         "discovered"
     );
 
@@ -652,9 +713,18 @@ fn settle_pool(
 /// Pick the solver's funding + collateral UTXOs. Collateral must be pure-ADA (no
 /// datum/tokens/ref-script) and ≥ 5 ADA — which exceeds the worst-case collateral
 /// requirement (fee × `collateralPercentage`) for ANY tx on this network, since
-/// fee is bounded by the max ex-units + max tx size. Funding is the largest UTXO
-/// that isn't a reference script and isn't the collateral (its leftover — incl.
-/// any tokens — returns as change).
+/// fee is bounded by the max ex-units + max tx size. Funding is the largest
+/// **ada-only** UTXO that isn't a reference script and isn't the collateral.
+///
+/// Funding requires ada-only (`value.is_ada_only()`) as a **dust/token-poisoning
+/// defense**: the solver address is public, so anyone can send it a UTXO; if a
+/// token-bearing one were chosen as funding, those foreign tokens would ride into
+/// the solver-change output, inflating its min-ADA / size until the settlement
+/// can't be built. A datum on an ada-only vkey UTXO is inert (it doesn't propagate
+/// to change), so it's still fine to fund from. Because every settlement's change
+/// is ada-only, the solver self-funds from its own change indefinitely; gifted
+/// tokens simply sit unused. (Pure dust just isn't the largest, so it's ignored;
+/// and each dust UTXO costs the attacker min-ADA, so the vector is bounded.)
 ///
 /// `pending` excludes UTXOs already spent by an earlier, still-unconfirmed pass
 /// (Kupo only marks an input spent on block confirmation, so a freshly-spent
@@ -675,12 +745,13 @@ fn select_inputs<'a>(
     let funding = wallet
         .iter()
         .filter(|u| {
-            !u.has_reference_script
+            u.value.is_ada_only()
+                && !u.has_reference_script
                 && u.output_reference != collateral.output_reference
                 && usable(u)
         })
         .max_by_key(|u| u.value.lovelace_of())
-        .ok_or("no funding UTXO (distinct from collateral)")?;
+        .ok_or("no ada-only funding UTXO (distinct from collateral)")?;
     Ok((funding, collateral))
 }
 
@@ -909,5 +980,34 @@ mod tests {
             pending.insert(key(&u.output_reference), 0);
         }
         assert!(select_inputs(&wallet, &pending).is_err());
+    }
+
+    #[test]
+    fn select_inputs_rejects_token_bearing_funding_dust() {
+        // Attacker gifts a FAT token-bearing UTXO (largest by ADA) to the solver
+        // address, hoping it's chosen as funding so its tokens poison the change.
+        let mut poison = utxo(9, 1_000_000_000, true);
+        poison.value = poison.value.add(&[0x33; 28], b"JUNK", 1); // now NOT ada-only
+                                                                  // a legitimate, smaller ada-only funding UTXO + a pure-ADA collateral.
+        let funding = utxo(7, 50_000_000, true);
+        let collateral = utxo(5, COLLATERAL_LOVELACE as i128, true);
+        let wallet = vec![poison, funding, collateral];
+
+        let none = HashMap::new();
+        let (f, _c) = select_inputs(&wallet, &none).unwrap();
+        // Funding is the ada-only #7, NOT the bigger token-bearing #9.
+        assert_eq!(f.output_reference.transaction_id, vec![7; 32]);
+
+        // If the ONLY non-collateral UTXO is token-bearing, funding selection fails
+        // (stall safely) rather than poisoning the change.
+        let only_poison = vec![
+            {
+                let mut u = utxo(9, 1_000_000_000, true);
+                u.value = u.value.add(&[0x33; 28], b"JUNK", 1);
+                u
+            },
+            utxo(5, COLLATERAL_LOVELACE as i128, true),
+        ];
+        assert!(select_inputs(&only_poison, &none).is_err());
     }
 }

@@ -319,7 +319,12 @@ impl BuildConway for StagingTransaction {
                 },
             }
             .into(),
-            success: true, // TODO
+            // ShaSwap invariant: `isValid` is ALWAYS true. A `false` here is the
+            // ledger's "this tx's scripts fail — consume my collateral" flag; the
+            // batcher must never emit one (it would burn collateral). There is no
+            // builder API to set it false, so the invariant holds by construction;
+            // see the `is_valid_is_always_true` test.
+            success: true,
             auxiliary_data: self.auxiliary_data.map(KeepRaw::from).into(),
         };
 
