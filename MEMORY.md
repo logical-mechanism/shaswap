@@ -62,6 +62,17 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher `txbuild` started: Plutus `Data` encoder.** New `txbuild`
+  crate (pallas-primitives/codec/crypto). `plutus.rs` encodes every datum/redeemer to
+  Plutus Data matching `plutus.json` constructor indices/field order exactly
+  (byte-verified: Settle/PoolSettle = `d87980`, ADA AssetId = `d8799f4040ff`; round-trip
+  decode test). **Key finding: `pallas-txbuilder` 1.0 CANNOT build a ShaSwap settlement
+  — it only supports Spend/Mint redeemers, with no withdrawals field or reward-redeemer
+  purpose.** The settlement anchor is a withdraw-0 staking script (its redeemer is a
+  *reward* redeemer), so the tx must be **hand-rolled on the Conway `pallas-primitives`
+  model** (which has `withdrawals` + the full Redeemers incl. reward tag). Order/pool
+  spend redeemers (Settle/PoolSettle) would be fine in txbuilder; the anchor is the
+  keystone it lacks. (Don't retry pallas-txbuilder for this.)
 - **2026-06-01** — **Batcher milestone-1: `solver-core` (off-chain reference solver
   core).** New Cargo workspace under `batcher/` (`crates/solver-core`, pure/IO-free,
   deps: num-bigint/integer/traits only) on branch `batcher/reference-solver` (cut off
