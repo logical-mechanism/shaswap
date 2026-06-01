@@ -66,6 +66,25 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **🎉 Batcher generalized to ANY number of pools (zero-config) + real
+  logging.** The reference solver is now turnkey for the protocol's arbitrary-pairs design:
+  deploy, send ADA to the solver address, run — it discovers everything. **Multi-pool:**
+  `ChainBackend::find_pools` returns every pool at the pool address (each self-describes its
+  pair + NFT via its `PoolDatum` — verified it holds the NFT it declares — so NO per-pool
+  config; `find_pool(nft)` is now a convenience default over it). `Snapshot.pools: Vec`. The
+  orchestrator groups orders by `order.datum.pool_nft`, and `settlement_plan` (pure,
+  unit-tested) picks which pools to attempt — sorted + **round-robin rotated by a cursor so
+  none is starved** — and flags orphan orders (target a pool not on-chain; logged, never
+  settled). Settles **one pool per block** (a settlement tx carries one price+pool; one tx
+  keeps the single funding+collateral pair conflict-free), so K pools clear over ~K blocks.
+  **Logging:** added `tracing` + `tracing-subscriber` (timestamps, levels, `RUST_LOG`);
+  idle/junk-skip → debug, passes/submits → info, failures → warn/error. **Proven live with
+  TWO pools:** stood up a 2nd TEST/ADA pool (`happy_path/04b-create-second-pool.sh`, new
+  one-shot NFT `a2c6916e…`, reserves 500e6/300e6), posted an order for each, ran the daemon
+  → block 1 settled pool `1c3be7b9` at price 9/20 (tx `9c0a0f02…`), block 2 settled pool
+  `a2c6916e` at price 2/5 (tx `1e9a2bf3…`), each pool moving by exactly its order's fill.
+  **71 tests, clippy -D + fmt clean.** Remaining (deferred): parallel multi-pool per block
+  (needs multi-funding/UTXO pool), surplus-max solving (§5.2.7), Ogmios chain-sync WS push.
 - **2026-06-01** — **Batcher loop is now block-driven (was a blind timer).** Chain state
   only changes on a new block, so the daemon now does a settle pass exactly when **Kupo's
   checkpoint advances** rather than every N seconds. `SHASWAP_INTERVAL_SECS` is reinterpreted

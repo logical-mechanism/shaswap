@@ -33,19 +33,31 @@ identities + signing-key path come from a `deployment.json` (see
 SHASWAP_DEPLOYMENT=../contracts/happy_path/deployment.json \
   cargo run -p orchestrator
 
-SHASWAP_SUBMIT=1        # actually submit the settlement
+SHASWAP_SUBMIT=1          # actually submit settlements
 SHASWAP_INTERVAL_SECS=5   # run as a daemon (else one-shot)
+RUST_LOG=debug            # verbosity (default info); tracing w/ timestamps + levels
 ```
 
-It discovers in **one atomic Kupo snapshot** per pass, settles one-sided and
-two-sided (netting) batches, skips (never aborts on) junk UTXOs parked at the
-public order address, and self-provisions a collateral UTXO on first run if the
-wallet is a single lump (so you can just send ADA to the solver address).
+**Zero-config and self-maintaining.** Deploy, send some ADA to the solver address,
+and run — the batcher discovers everything itself:
 
-In daemon mode the loop is **block-driven**: `SHASWAP_INTERVAL_SECS` is how often
-it polls Kupo's checkpoint, and it does a settle pass only when a new block has
-been indexed (no wasted work between blocks; never reads ahead of Kupo). It tracks
-just-submitted orders as in-flight so it never double-spends before they confirm.
+- **Any number of pools / pairs.** It finds every pool at the pool address (each
+  self-describes its pair + NFT via its `PoolDatum`; no per-pool config), groups
+  orders by their target pool, and settles each pool's batch at its own uniform
+  price. A settlement tx settles one pool, so it settles **one pool per block,
+  round-robin** — no pool is starved. One-sided and two-sided (netting) batches.
+- **Atomic discovery** — one Kupo snapshot per pass; the order/pool/wallet views
+  can't drift mid-pass.
+- **Griefing-resistant** — skips (never aborts on) junk UTXOs parked at the public
+  order address.
+- **Self-provisioning collateral** — on first run, if the wallet is a single lump,
+  it carves a dedicated 5-ADA collateral UTXO; thereafter the wallet self-maintains
+  (settlements regenerate the funding-change UTXO; collateral is never spent on
+  success).
+- **Block-driven loop** — `SHASWAP_INTERVAL_SECS` is the Kupo-checkpoint poll
+  cadence; a settle pass runs only when a new block is indexed (no wasted work
+  between blocks; never reads ahead of Kupo). Just-submitted orders are tracked
+  in-flight so it never double-spends before they confirm.
 
 ## `solver-core` (done)
 

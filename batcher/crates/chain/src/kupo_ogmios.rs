@@ -16,7 +16,7 @@ use crate::decode::{self, DecodeError};
 use pallas_addresses::Network;
 use serde_json::{json, Value as Json};
 use solver_core::output::{Address, OrderInput, PoolInput};
-use solver_core::types::{AssetId, Credential, OutputReference};
+use solver_core::types::{Credential, OutputReference};
 use solver_core::value::Value;
 use txbuild::address as txaddr;
 
@@ -421,10 +421,11 @@ impl KupoOgmios {
     fn try_order(&self, m: &KupoMatch) -> Option<OrderInput> {
         let r = &m.output_reference;
         let skip = |why: String| {
-            eprintln!(
-                "skip order utxo {}#{}: {why}",
-                hex::encode(&r.transaction_id),
-                r.output_index
+            // Junk at the public order address is expected; debug, not warn,
+            // so it doesn't spam every block.
+            tracing::debug!(
+                utxo = format!("{}#{}", hex::encode(&r.transaction_id), r.output_index),
+                "skip order utxo: {why}"
             );
         };
         let Some(hash) = m.datum_hash.as_ref() else {
@@ -451,30 +452,33 @@ impl KupoOgmios {
         }
     }
 
-    /// Decode a match at the pool address into a [`PoolInput`] iff it carries the
-    /// pool NFT and a valid `PoolDatum`; `None` (logged) otherwise.
-    fn try_pool(&self, m: &KupoMatch, nft: &AssetId) -> Option<PoolInput> {
-        if m.value.quantity_of(&nft.policy, &nft.name) < 1 {
-            return None;
-        }
+    /// Decode a match at the pool address into a [`PoolInput`], or `None` (logged)
+    /// if it isn't a well-formed pool. NFT-agnostic: the pool self-describes its
+    /// pair + NFT via its `PoolDatum`; we accept it iff it has a valid datum AND
+    /// actually holds the NFT it declares (so any number of pairs are discovered
+    /// with no per-pool config, and a junk UTXO at the pool address is skipped).
+    fn try_pool(&self, m: &KupoMatch) -> Option<PoolInput> {
         let r = &m.output_reference;
         let datum = match m
             .datum_hash
             .as_ref()
-            .ok_or_else(|| ChainError::Shape("pool UTXO has no datum".into()))
+            .ok_or_else(|| ChainError::Shape("no datum".into()))
             .and_then(|h| self.fetch_datum(h))
             .and_then(|cbor| decode::pool_datum_cbor(&cbor).map_err(ChainError::from))
         {
             Ok(d) => d,
-            Err(e) => {
-                eprintln!(
-                    "skip pool-NFT utxo {}#{}: bad PoolDatum ({e:?})",
-                    hex::encode(&r.transaction_id),
-                    r.output_index
-                );
-                return None;
-            }
+            // No datum / not a PoolDatum → not a pool; skip quietly (the pool
+            // address only ever holds pools in practice, but be defensive).
+            Err(_) => return None,
         };
+        // Must hold exactly the NFT it declares (else it's malformed/an attack).
+        if m.value.quantity_of(&datum.nft.policy, &datum.nft.name) < 1 {
+            tracing::warn!(
+                utxo = format!("{}#{}", hex::encode(&r.transaction_id), r.output_index),
+                "skip pool utxo: datum declares an NFT it doesn't hold"
+            );
+            return None;
+        }
         Some(PoolInput {
             output_reference: r.clone(),
             address: Address {
@@ -531,11 +535,12 @@ impl ChainBackend for KupoOgmios {
         Ok(out)
     }
 
-    fn find_pool(&self, nft: &AssetId) -> Result<PoolInput, ChainError> {
-        self.matches_at(&self.pool_addr)?
+    fn find_pools(&self) -> Result<Vec<PoolInput>, ChainError> {
+        Ok(self
+            .matches_at(&self.pool_addr)?
             .iter()
-            .find_map(|m| self.try_pool(m, nft))
-            .ok_or(ChainError::PoolNotFound)
+            .filter_map(|m| self.try_pool(m))
+            .collect())
     }
 
     fn find_wallet_utxos(&self, address: &str) -> Result<Vec<Utxo>, ChainError> {
@@ -544,16 +549,12 @@ impl ChainBackend for KupoOgmios {
 
     /// Override the default (three separate fetches) with ONE `/matches/*?unspent`
     /// call partitioned by address — an atomic snapshot (no inter-call chain drift)
-    /// and a third of the Kupo round-trips per pass.
-    fn discover(
-        &self,
-        _s: &Credential,
-        nft: &AssetId,
-        wallet_addr: &str,
-    ) -> Result<Snapshot, ChainError> {
+    /// and a third of the Kupo round-trips per pass. Discovers EVERY pool (one per
+    /// pair) and EVERY order with no per-pool config.
+    fn discover(&self, _s: &Credential, wallet_addr: &str) -> Result<Snapshot, ChainError> {
         let all = self.all_unspent()?;
         let mut orders = Vec::new();
-        let mut pool = None;
+        let mut pools = Vec::new();
         let mut wallet = Vec::new();
         for m in &all {
             if m.address == self.order_addr {
@@ -561,8 +562,8 @@ impl ChainBackend for KupoOgmios {
                     orders.push(o);
                 }
             } else if m.address == self.pool_addr {
-                if pool.is_none() {
-                    pool = self.try_pool(m, nft);
+                if let Some(p) = self.try_pool(m) {
+                    pools.push(p);
                 }
             } else if m.address == wallet_addr {
                 wallet.push(wallet_utxo(m));
@@ -571,7 +572,7 @@ impl ChainBackend for KupoOgmios {
         Self::sort_orders(&mut orders);
         Ok(Snapshot {
             orders,
-            pool: pool.ok_or(ChainError::PoolNotFound)?,
+            pools,
             wallet,
         })
     }

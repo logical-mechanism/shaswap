@@ -40,18 +40,24 @@ fn live_tip_and_params() {
 
 #[test]
 #[ignore]
-fn live_find_pool() {
+fn live_find_pools() {
     let b = backend();
-    let nft = b.config().pool_nft.clone();
-    let pool = b.find_pool(&nft).expect("find pool");
-    println!(
-        "pool ref = {}#{}  ada={} datum.asset_a={:?}",
-        hex::encode(&pool.output_reference.transaction_id),
-        pool.output_reference.output_index,
-        pool.value.lovelace_of(),
-        pool.datum.asset_a.name
-    );
-    assert!(pool.value.quantity_of(&nft.policy, &nft.name) == 1);
+    let pools = b.find_pools().expect("find pools");
+    println!("pools found = {}", pools.len());
+    for p in &pools {
+        println!(
+            "  pool {}#{} ada={} pair=({:?},{:?}) nft={}",
+            hex::encode(&p.output_reference.transaction_id),
+            p.output_reference.output_index,
+            p.value.lovelace_of(),
+            p.datum.asset_a.name,
+            p.datum.asset_b.name,
+            hex::encode(&p.datum.nft.policy),
+        );
+        // each pool must actually hold the NFT it declares.
+        assert!(p.value.quantity_of(&p.datum.nft.policy, &p.datum.nft.name) == 1);
+    }
+    assert!(!pools.is_empty());
 }
 
 #[test]

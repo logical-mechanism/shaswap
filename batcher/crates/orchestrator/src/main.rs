@@ -1,40 +1,46 @@
 //! ShaSwap reference-solver orchestrator.
 //!
-//! The permissionless solver loop against a live preprod node (Kupo + Ogmios
-//! behind the [`chain`] backend):
+//! A permissionless, **zero-config** solver loop against a live node (Kupo +
+//! Ogmios behind the [`chain`] backend). It discovers everything itself — every
+//! pool (one per `(asset_a, asset_b)` pair, any number, all under the same anchor
+//! `S`), every order, and the solver's own wallet — so the only setup is: deploy,
+//! fund the solver address with some ADA, and run.
 //!
-//! 1. **discover** — one atomic snapshot: order UTXOs (tagged `S`) + the pool (by
-//!    NFT) + the solver's wallet (funding/collateral), via Kupo `discover`;
-//! 2. **solve** — `solver-core::solve` picks a uniform price, nets opposing orders,
-//!    routes the residual through the pool (floor-only v1);
-//! 3. **assemble** — lower the settlement into the withdraw-0 Conway tx;
-//! 4. **evaluate** — Ogmios `EvaluateTx` fills ex-units AND is the pre-submit gate
-//!    (the on-chain validators must accept the tx phase-2);
-//! 5. **submit** — only when `SHASWAP_SUBMIT=1` (otherwise a dry run: build +
-//!    evaluate + print, for cross-checking before going live).
+//! Each pass:
+//! 1. **discover** — one atomic Kupo snapshot: all orders + all pools + wallet;
+//! 2. **group** — orders by their target pool (`order.datum.pool_nft`);
+//! 3. **solve** — `solver-core::solve` per pool (uniform price, netting, residual
+//!    through the pool; floor-only v1);
+//! 4. **assemble + evaluate** — lower one pool's settlement into the withdraw-0
+//!    Conway tx; Ogmios `EvaluateTx` fills ex-units and is the pre-submit gate;
+//! 5. **submit** — when `SHASWAP_SUBMIT=1` (else a dry run).
 //!
-//! Runs one pass by default. Set `SHASWAP_INTERVAL_SECS=<n>` to run as a daemon:
-//! it polls Kupo's checkpoint every `n` seconds and does a settle pass **only when
-//! a new block has been indexed** (block-driven, not a blind timer — no wasted work
-//! between blocks, and no reading stale data ahead of Kupo). The loop tracks
-//! just-submitted orders as in-flight and won't re-settle them until they confirm
-//! (drop out of discovery), so it never double-spends.
+//! A settlement tx settles ONE pool (the `SettlementRedeemer` carries one price +
+//! pool), and one tx per block keeps the wallet's single funding+collateral pair
+//! conflict-free, so the loop settles **one pool per block, round-robin** across
+//! pools that have orders. With orders for K pairs it clears them over ~K blocks.
 //!
-//! Config path: `$SHASWAP_DEPLOYMENT` or argv[1] (default
-//! `../contracts/happy_path/deployment.json`).
+//! Modes: one pass by default; `SHASWAP_INTERVAL_SECS=<n>` runs as a daemon that
+//! polls Kupo's checkpoint every `n`s and settles only when a new block is indexed
+//! (block-driven). Just-submitted orders are tracked in-flight so it never
+//! double-spends before they confirm. `RUST_LOG` controls verbosity (default info).
+//!
+//! Config path: `$SHASWAP_DEPLOYMENT` or argv[1].
 
 use chain::assemble::{self, AssembleInputs};
-use chain::backend::{ChainBackend, Snapshot};
+use chain::backend::{ChainBackend, Snapshot, Utxo};
 use chain::config::{Config, ValidatedConfig};
 use chain::fees;
 use chain::kupo_ogmios::KupoOgmios;
 use pallas_addresses::{Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart};
 use pallas_crypto::hash::Hasher;
 use pallas_crypto::key::ed25519::SecretKey;
+use solver_core::output::{OrderInput, PoolInput};
 use solver_core::types::OutputReference;
 use solver_core::value::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use tracing::{debug, error, info, warn};
 
 /// preprod genesis: system start 2022-06-01T00:00:00Z, 1s slots.
 const SYSTEM_START_MS: i64 = 1_654_041_600_000;
@@ -45,15 +51,24 @@ const SLOT_LENGTH_MS: i64 = 1_000;
 const COLLATERAL_LOVELACE: u64 = 5_000_000;
 
 type Err = Box<dyn std::error::Error>;
+/// A UTXO identity (tx id, output index).
 type Key = (Vec<u8>, u64);
+/// An asset identity (policy, name) — used to key pools/orders by NFT.
+type NftKey = (Vec<u8>, Vec<u8>);
 
 fn key(r: &OutputReference) -> Key {
     (r.transaction_id.clone(), r.output_index)
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     if let Err(e) = run() {
-        eprintln!("error: {e}");
+        error!("{e}");
         std::process::exit(1);
     }
 }
@@ -79,10 +94,11 @@ fn run() -> Result<(), Err> {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|n| *n > 0);
-    println!(
-        "solver address: {solver_addr} | submit={} | mode={}",
+    info!(
+        solver = %solver_addr,
         submit,
-        interval.map_or("one-shot".into(), |n| format!("loop {n}s")),
+        mode = %interval.map_or("one-shot".into(), |n| format!("loop {n}s")),
+        "starting"
     );
 
     // The reference-script sizes never change for a fixed deployment — fetch once.
@@ -97,8 +113,7 @@ fn run() -> Result<(), Err> {
     // never spent on success).
     ensure_collateral(&backend, &skey, &solver_addr, submit)?;
 
-    // Orders we've submitted but not yet seen confirmed-spent (loop only).
-    let mut in_flight: HashSet<Key> = HashSet::new();
+    let mut state = LoopState::default();
 
     // One-shot: a single pass, propagate any error.
     let Some(poll) = interval else {
@@ -109,19 +124,17 @@ fn run() -> Result<(), Err> {
             &solver_addr,
             ref_bytes,
             submit,
-            &mut in_flight,
+            &mut state,
         );
     };
 
-    // Loop: **block-driven**. Chain state only changes on a new block, so we do a
-    // pass exactly when Kupo's checkpoint advances (which also means Kupo has that
-    // block's data — no read-stale-data race against the node tip), and otherwise
-    // just cheaply re-poll the checkpoint every `poll` seconds. A transient pass
-    // failure logs and waits for the next block rather than killing the daemon.
+    // Daemon: **block-driven**. Do a pass when Kupo's checkpoint advances (which
+    // also guarantees Kupo has the block's data — no read-stale-data race against
+    // the node tip); otherwise just cheaply re-poll. A transient failure logs and
+    // waits for the next block rather than killing the daemon.
     let mut last_block: Option<u64> = None;
     loop {
         match backend.kupo_checkpoint() {
-            // New block indexed (or first iteration, or a rollback) → settle.
             Ok(cp) if last_block != Some(cp) => {
                 if let Err(e) = settle_once(
                     &backend,
@@ -130,20 +143,28 @@ fn run() -> Result<(), Err> {
                     &solver_addr,
                     ref_bytes,
                     submit,
-                    &mut in_flight,
+                    &mut state,
                 ) {
-                    eprintln!("pass failed (will retry next block): {e}");
+                    warn!("pass failed (will retry next block): {e}");
                 }
                 last_block = Some(cp);
             }
-            Ok(_) => {} // no new block since last pass — nothing to do
-            Err(e) => eprintln!("checkpoint poll failed (will retry): {e:?}"),
+            Ok(_) => {} // no new block since last pass
+            Err(e) => warn!("checkpoint poll failed (will retry): {e:?}"),
         }
         std::thread::sleep(Duration::from_secs(poll));
     }
 }
 
-/// One discover → solve → assemble → evaluate → (submit) pass.
+/// Loop-carried state: orders we've submitted but not yet seen confirmed-spent,
+/// and a round-robin cursor over pools so no pool is starved.
+#[derive(Default)]
+struct LoopState {
+    in_flight: HashSet<Key>,
+    cursor: usize,
+}
+
+/// One discover → group-by-pool → settle-one-pool pass.
 fn settle_once(
     backend: &KupoOgmios,
     cfg: &ValidatedConfig,
@@ -151,7 +172,7 @@ fn settle_once(
     solver_addr: &str,
     ref_bytes: u64,
     submit: bool,
-    in_flight: &mut HashSet<Key>,
+    state: &mut LoopState,
 ) -> Result<(), Err> {
     let tip = backend.tip().map_err(|e| format!("tip: {e:?}"))?;
     let params = backend
@@ -159,75 +180,170 @@ fn settle_once(
         .map_err(|e| format!("params: {e:?}"))?;
     let Snapshot {
         orders: all_orders,
-        pool,
+        pools,
         wallet,
     } = backend
-        .discover(&cfg.settlement_cred, &cfg.pool_nft, solver_addr)
+        .discover(&cfg.settlement_cred, solver_addr)
         .map_err(|e| format!("discover: {e:?}"))?;
 
-    // Drop in-flight entries that have confirmed (no longer present).
+    // Drop in-flight entries that have confirmed (no longer present), then exclude
+    // the still-pending ones from this pass so we never double-spend.
     let present: HashSet<Key> = all_orders
         .iter()
         .map(|o| key(&o.output_reference))
         .collect();
-    in_flight.retain(|k| present.contains(k));
-    // Don't re-settle orders we've already submitted and are awaiting confirmation.
-    let orders: Vec<_> = all_orders
+    state.in_flight.retain(|k| present.contains(k));
+    let orders: Vec<OrderInput> = all_orders
         .into_iter()
-        .filter(|o| !in_flight.contains(&key(&o.output_reference)))
+        .filter(|o| !state.in_flight.contains(&key(&o.output_reference)))
         .collect();
 
-    println!(
-        "tip slot {} | settleable orders {} ({} in-flight) | pool {}#{} ada={} | wallet {} utxos",
-        tip.slot,
-        orders.len(),
-        in_flight.len(),
-        hex::encode(&pool.output_reference.transaction_id),
-        pool.output_reference.output_index,
-        pool.value.lovelace_of(),
-        wallet.len(),
+    info!(
+        slot = tip.slot,
+        pools = pools.len(),
+        orders = orders.len(),
+        in_flight = state.in_flight.len(),
+        wallet = wallet.len(),
+        "discovered"
     );
-    if orders.is_empty() {
-        println!("  nothing to settle this pass.");
-        return Ok(());
+
+    // Group settleable orders by their target pool NFT.
+    let mut by_pool: HashMap<NftKey, Vec<OrderInput>> = HashMap::new();
+    for o in orders {
+        by_pool
+            .entry(nft_key(&o.datum.pool_nft))
+            .or_default()
+            .push(o);
     }
-    for (i, o) in orders.iter().enumerate() {
-        println!(
-            "  order[{i}] {}#{} sell_a={} sell={} limit={} tip={}",
-            hex::encode(&o.output_reference.transaction_id),
-            o.output_reference.output_index,
-            o.datum.sell_a,
-            o.datum.sell_amount,
-            o.datum.limit,
-            o.datum.tip,
+    let pool_nfts: Vec<NftKey> = pools.iter().map(|p| nft_key(&p.datum.nft)).collect();
+    let order_nfts: Vec<NftKey> = by_pool.keys().cloned().collect();
+
+    // Decide which pools to attempt, in what order (deterministic + round-robin
+    // fair), and which orders are orphans (target a pool we don't see).
+    let (attempt, orphans) = settlement_plan(&pool_nfts, &order_nfts, state.cursor);
+    for nft in &orphans {
+        warn!(
+            nft = hex::encode(&nft.0),
+            "orders target a pool not found on-chain; skipping"
         );
     }
+    if attempt.is_empty() {
+        debug!("nothing to settle this pass");
+        return Ok(());
+    }
 
-    let solved = solver_core::solve::solve(&orders, &pool)
-        .ok_or("solver found no valid clearing for this batch")?;
-    println!(
-        "solved: price {}/{} | included {}/{} | cleared_a {} | net_a {} net_b {} | tip_take {}",
-        solved.price.num,
-        solved.price.den,
-        solved.orders.len(),
-        orders.len(),
-        solved.cleared_volume_a,
-        solved.settlement.net_a,
-        solved.settlement.net_b,
-        solved.settlement.tip_taken_total,
+    // Settle the first pool (in rotation) that produces a valid clearing. ONE tx
+    // per block keeps the single funding+collateral pair conflict-free; remaining
+    // pools settle on following blocks (round-robin, so none is starved).
+    let waiting = attempt.len();
+    for pi in attempt {
+        let pool = &pools[pi];
+        let ords = &by_pool[&pool_nfts[pi]];
+        match try_settle_pool(
+            backend,
+            cfg,
+            skey,
+            solver_addr,
+            ref_bytes,
+            &params,
+            pool,
+            ords,
+            &wallet,
+            submit,
+            &mut state.in_flight,
+        ) {
+            Ok(true) => {
+                state.cursor = state.cursor.wrapping_add(1);
+                if waiting > 1 {
+                    info!(waiting = waiting - 1, "other pools have orders; next block");
+                }
+                return Ok(());
+            }
+            Ok(false) => continue, // no valid clearing for this pool; try next
+            Err(e) => {
+                warn!(
+                    nft = hex::encode(&pool.datum.nft.policy),
+                    "settle failed: {e}"
+                );
+                continue;
+            }
+        }
+    }
+    debug!("no pool produced a settlement this pass");
+    Ok(())
+}
+
+fn nft_key(a: &solver_core::types::AssetId) -> NftKey {
+    (a.policy.clone(), a.name.clone())
+}
+
+/// Decide the per-pass settlement plan (pure policy, no IO): which pools to attempt
+/// and in what order, plus which order NFTs are orphans.
+///
+/// Returns `(attempt, orphans)` where `attempt` is indices into `pool_nfts` for the
+/// pools that have at least one settleable order — sorted deterministically by NFT,
+/// then rotated by `cursor` so no pool is starved across passes — and `orphans` is
+/// the order NFTs that match no known pool (deduped, sorted; logged, never settled).
+fn settlement_plan(
+    pool_nfts: &[NftKey],
+    order_nfts: &[NftKey],
+    cursor: usize,
+) -> (Vec<usize>, Vec<NftKey>) {
+    let have: HashSet<&NftKey> = order_nfts.iter().collect();
+    let mut attempt: Vec<usize> = (0..pool_nfts.len())
+        .filter(|&i| have.contains(&pool_nfts[i]))
+        .collect();
+    attempt.sort_by(|&a, &b| pool_nfts[a].cmp(&pool_nfts[b]));
+    let len = attempt.len();
+    if len > 0 {
+        attempt.rotate_left(cursor % len);
+    }
+
+    let pool_set: HashSet<&NftKey> = pool_nfts.iter().collect();
+    let mut orphans: Vec<NftKey> = order_nfts
+        .iter()
+        .filter(|n| !pool_set.contains(n))
+        .cloned()
+        .collect();
+    orphans.sort();
+    orphans.dedup();
+
+    (attempt, orphans)
+}
+
+/// Solve + assemble + (submit) one pool's batch. Returns `Ok(true)` if a
+/// settlement was built (and submitted, when enabled), `Ok(false)` if the pool had
+/// no valid clearing.
+#[allow(clippy::too_many_arguments)]
+fn try_settle_pool(
+    backend: &KupoOgmios,
+    cfg: &ValidatedConfig,
+    skey: &SecretKey,
+    solver_addr: &str,
+    ref_bytes: u64,
+    params: &chain::backend::ProtocolParams,
+    pool: &PoolInput,
+    orders: &[OrderInput],
+    wallet: &[Utxo],
+    submit: bool,
+    in_flight: &mut HashSet<Key>,
+) -> Result<bool, Err> {
+    let nft = hex::encode(&pool.datum.nft.policy);
+    let Some(solved) = solver_core::solve::solve(orders, pool) else {
+        debug!(nft, orders = orders.len(), "no valid clearing");
+        return Ok(false);
+    };
+    info!(
+        nft,
+        price = format!("{}/{}", solved.price.num, solved.price.den),
+        included = format!("{}/{}", solved.orders.len(), orders.len()),
+        net_a = solved.settlement.net_a,
+        net_b = solved.settlement.net_b,
+        tip_take = solved.settlement.tip_taken_total,
+        "solved"
     );
 
-    let (funding, collateral) = select_inputs(&wallet)?;
-    println!(
-        "funding {}#{} ada={} | collateral {}#{} ada={}",
-        hex::encode(&funding.output_reference.transaction_id),
-        funding.output_reference.output_index,
-        funding.value.lovelace_of(),
-        hex::encode(&collateral.output_reference.transaction_id),
-        collateral.output_reference.output_index,
-        collateral.value.lovelace_of(),
-    );
-
+    let (funding, collateral) = select_inputs(wallet)?;
     let invalid_after_slot = solved
         .orders
         .iter()
@@ -240,44 +356,42 @@ fn settle_once(
     let inp = AssembleInputs {
         settlement: &solved.settlement,
         orders: &solved.orders,
-        pool: &pool,
+        pool,
         funding: &funding_pairs,
         collateral: &collateral.output_reference,
         solver_addr_bech32: solver_addr,
         config: cfg,
-        params: &params,
+        params,
         ref_script_total_bytes: ref_bytes,
         invalid_after_slot,
     };
-
     let built =
         assemble::build_signed(&inp, backend, skey).map_err(|e| format!("assemble: {e:?}"))?;
-    println!(
-        "built + evaluated OK (gate passed): tx {} | fee {} | ex-units mem={} steps={} | ref_bytes {}",
-        hex::encode(built.signed.tx_hash.0),
-        built.fee,
-        built.total_ex_units.mem,
-        built.total_ex_units.steps,
-        ref_bytes,
+    info!(
+        nft,
+        tx = hex::encode(built.signed.tx_hash.0),
+        fee = built.fee,
+        mem = built.total_ex_units.mem,
+        steps = built.total_ex_units.steps,
+        "built + evaluated OK (gate passed)"
     );
 
     if submit {
         let txid = backend
             .submit(&built.signed.tx_bytes.0)
             .map_err(|e| format!("submit: {e:?}"))?;
-        // Mark the settled orders in-flight so the next pass skips them until they
-        // confirm (and thus disappear from discovery).
         for o in &solved.orders {
             in_flight.insert(key(&o.output_reference));
         }
-        println!("SUBMITTED settlement tx {}", hex::encode(&txid));
+        info!(nft, tx = hex::encode(&txid), "SUBMITTED");
     } else {
-        println!(
-            "dry run (set SHASWAP_SUBMIT=1 to submit). Signed tx: {} bytes",
-            built.signed.tx_bytes.0.len()
+        info!(
+            nft,
+            bytes = built.signed.tx_bytes.0.len(),
+            "dry run (set SHASWAP_SUBMIT=1 to submit)"
         );
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Pick the solver's funding + collateral UTXOs. Collateral must be pure-ADA (no
@@ -286,9 +400,7 @@ fn settle_once(
 /// fee is bounded by the max ex-units + max tx size. Funding is the largest UTXO
 /// that isn't a reference script and isn't the collateral (its leftover — incl.
 /// any tokens — returns as change).
-fn select_inputs(
-    wallet: &[chain::backend::Utxo],
-) -> Result<(&chain::backend::Utxo, &chain::backend::Utxo), Err> {
+fn select_inputs(wallet: &[Utxo]) -> Result<(&Utxo, &Utxo), Err> {
     let collateral = wallet
         .iter()
         .filter(|u| u.is_pure_ada() && u.value.lovelace_of() >= COLLATERAL_LOVELACE as i128)
@@ -336,7 +448,6 @@ fn ensure_collateral(
         .filter(|u| !u.has_reference_script)
         .max_by_key(|u| u.value.lovelace_of())
         .ok_or("no spendable UTXO to provision collateral from")?;
-    // collateral + a min-ADA change + fee headroom.
     let need = COLLATERAL_LOVELACE as i128 + 2_000_000 + 1_000_000;
     if src.value.lovelace_of() < need {
         return Err(format!(
@@ -357,21 +468,23 @@ fn ensure_collateral(
     let txid = backend
         .submit(&signed.tx_bytes.0)
         .map_err(|e| format!("submit split: {e:?}"))?;
-    println!(
-        "provisioned collateral: split tx {} (carving 5 ADA from {}#{})",
-        hex::encode(&txid),
-        hex::encode(&src.output_reference.transaction_id),
-        src.output_reference.output_index
+    info!(
+        tx = hex::encode(&txid),
+        from = format!(
+            "{}#{}",
+            hex::encode(&src.output_reference.transaction_id),
+            src.output_reference.output_index
+        ),
+        "provisioned 5-ADA collateral"
     );
 
-    // Wait for the split to confirm (until the wallet can supply both inputs).
     for _ in 0..30 {
         std::thread::sleep(Duration::from_secs(5));
         let w = backend
             .find_wallet_utxos(solver_addr)
             .map_err(|e| format!("wallet: {e:?}"))?;
         if select_inputs(&w).is_ok() {
-            println!("collateral confirmed; wallet ready.");
+            info!("collateral confirmed; wallet ready");
             return Ok(());
         }
     }
@@ -390,4 +503,54 @@ fn solver_address(network_id: u8, skey: &SecretKey) -> Result<String, Err> {
         ShelleyDelegationPart::Null,
     );
     Ok(addr.to_bech32()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nft(b: u8) -> NftKey {
+        (vec![b; 28], b"NFT".to_vec())
+    }
+
+    #[test]
+    fn plan_picks_only_pools_with_orders() {
+        let pools = [nft(1), nft(2), nft(3)];
+        // orders for pools 1 and 3 only.
+        let orders = [nft(3), nft(1)];
+        let (attempt, orphans) = settlement_plan(&pools, &orders, 0);
+        // sorted by nft -> pool index 0 (nft1), 2 (nft3).
+        assert_eq!(attempt, vec![0, 2]);
+        assert!(orphans.is_empty());
+    }
+
+    #[test]
+    fn plan_rotates_by_cursor_for_fairness() {
+        let pools = [nft(1), nft(2), nft(3)];
+        let orders = [nft(1), nft(2), nft(3)];
+        assert_eq!(settlement_plan(&pools, &orders, 0).0, vec![0, 1, 2]);
+        assert_eq!(settlement_plan(&pools, &orders, 1).0, vec![1, 2, 0]);
+        assert_eq!(settlement_plan(&pools, &orders, 2).0, vec![2, 0, 1]);
+        // cursor wraps past the candidate count.
+        assert_eq!(settlement_plan(&pools, &orders, 3).0, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn plan_reports_orphans_and_skips_them() {
+        let pools = [nft(1)];
+        // orders for the known pool (1) and two unknown pools (7, 8).
+        let orders = [nft(7), nft(1), nft(8), nft(7)];
+        let (attempt, orphans) = settlement_plan(&pools, &orders, 0);
+        assert_eq!(attempt, vec![0]); // only the known pool is attempted
+        assert_eq!(orphans, vec![nft(7), nft(8)]); // deduped + sorted, never settled
+    }
+
+    #[test]
+    fn plan_empty_when_no_orders_match_any_pool() {
+        let pools = [nft(1), nft(2)];
+        let orders = [nft(9)];
+        let (attempt, orphans) = settlement_plan(&pools, &orders, 5);
+        assert!(attempt.is_empty());
+        assert_eq!(orphans, vec![nft(9)]);
+    }
 }

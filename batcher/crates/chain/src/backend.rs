@@ -86,13 +86,14 @@ pub enum Purpose {
     Propose,
 }
 
-/// An atomic discovery snapshot: the orders to settle, the pool, and the solver's
-/// own UTXOs (for funding/collateral) — ideally read from a single chain view so
-/// they can't drift between separate queries within one pass.
+/// An atomic discovery snapshot: every order to settle, every pool (one per
+/// `(asset_a, asset_b)` pair — there can be arbitrarily many under the same
+/// anchor `S`), and the solver's own UTXOs (for funding/collateral) — ideally read
+/// from a single chain view so they can't drift between separate queries.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub orders: Vec<OrderInput>,
-    pub pool: PoolInput,
+    pub pools: Vec<PoolInput>,
     pub wallet: Vec<Utxo>,
 }
 
@@ -110,25 +111,28 @@ pub trait ChainBackend {
     /// All order UTXOs tagged with the settlement stake credential `S`, decoded.
     fn find_orders(&self, s: &Credential) -> Result<Vec<OrderInput>, Self::Error>;
 
-    /// The pool UTXO carrying `nft`, decoded.
-    fn find_pool(&self, nft: &AssetId) -> Result<PoolInput, Self::Error>;
+    /// Every pool UTXO (one per `(asset_a, asset_b)` pair), decoded — pools
+    /// self-describe via their `PoolDatum`, so no per-pool config is needed.
+    fn find_pools(&self) -> Result<Vec<PoolInput>, Self::Error>;
+
+    /// The single pool carrying `nft`, if present (a convenience over
+    /// [`find_pools`](Self::find_pools)).
+    fn find_pool(&self, nft: &AssetId) -> Result<Option<PoolInput>, Self::Error> {
+        Ok(self.find_pools()?.into_iter().find(|p| p.datum.nft == *nft))
+    }
 
     /// All unspent UTXOs at `address` (the solver wallet) — for funding/collateral
     /// selection. Returns plain [`Utxo`]s (no domain decoding).
     fn find_wallet_utxos(&self, address: &str) -> Result<Vec<Utxo>, Self::Error>;
 
-    /// One discovery pass: orders + pool + wallet. The default composes the three
-    /// queries above; a backend that can read them from a single chain view should
-    /// override this (so the three views can't drift mid-pass) — see `KupoOgmios`.
-    fn discover(
-        &self,
-        s: &Credential,
-        nft: &AssetId,
-        wallet_addr: &str,
-    ) -> Result<Snapshot, Self::Error> {
+    /// One discovery pass: every order + every pool + the wallet. The default
+    /// composes the queries above; a backend that can read them from a single chain
+    /// view should override this (so the views can't drift mid-pass) — see
+    /// `KupoOgmios`.
+    fn discover(&self, s: &Credential, wallet_addr: &str) -> Result<Snapshot, Self::Error> {
         Ok(Snapshot {
             orders: self.find_orders(s)?,
-            pool: self.find_pool(nft)?,
+            pools: self.find_pools()?,
             wallet: self.find_wallet_utxos(wallet_addr)?,
         })
     }
