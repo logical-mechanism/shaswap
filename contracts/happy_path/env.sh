@@ -53,3 +53,9 @@ export POOL_MIN_ADA="2000000"
 export ORDER_MIN_ADA="2000000"
 
 cli() { cardano-cli latest "$@"; }   # cardano-cli 11 groups era subcommands
+
+# `transaction txid` prints JSON ({"txhash": "..."}) in cardano-cli 11; extract the bare hash.
+txid() {
+  cli transaction txid --tx-file "$1" \
+    | python3 -c "import sys,json;s=sys.stdin.read().strip();print(json.loads(s)['txhash'] if s.startswith('{') else s)"
+}

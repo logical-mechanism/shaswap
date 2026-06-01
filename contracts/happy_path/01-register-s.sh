@@ -35,7 +35,7 @@ cli transaction build \
 cli transaction sign --tx-file "$WORK/s.reg.tx" --signing-key-file "$SOLVER_SKEY" \
   --testnet-magic "$NET_MAGIC" --out-file "$WORK/s.reg.signed"
 
-TXID=$(cli transaction txid --tx-file "$WORK/s.reg.signed")
+TXID=$(txid "$WORK/s.reg.signed")
 echo "submitting S registration: $TXID"
 cli transaction submit --tx-file "$WORK/s.reg.signed" --testnet-magic "$NET_MAGIC"
 echo "submitted. txid=$TXID"
