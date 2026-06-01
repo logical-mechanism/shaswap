@@ -26,17 +26,16 @@ pub fn create(
   expect assets.quantity_of(tx.mint, policy_id, nft_name) == 1
   expect assets.quantity_of(tx.mint, policy_id, lp_name) == total_lp
   // NFT + full LP supply land together in one output (the pool)
-  expect Some(pool) =
-    list.find(
-      tx.outputs,
-      fn(o) {
-        assets.quantity_of(o.value, policy_id, nft_name) == 1 && assets.quantity_of(
-          o.value,
-          policy_id,
-          lp_name,
-        ) == total_lp
-      },
-    )
+  expect Some(pool) = list.find(
+    tx.outputs,
+    fn(o) {
+      assets.quantity_of(o.value, policy_id, nft_name) == 1 && assets.quantity_of(
+        o.value,
+        policy_id,
+        lp_name,
+      ) == total_lp
+    },
+  )
   // the pool output must carry a well-formed PoolDatum:
   expect InlineDatum(pd) = pool.datum
   expect d: PoolDatum = pd
