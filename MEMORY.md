@@ -65,6 +65,23 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **🎉 FIRST LIVE SETTLEMENT on preprod — the full design works on
+  chain.** Settlement tx `6cbd9061426e1b9fb98998baae155fe1e3c54f95186ff1f9e859e8e5abfdb4da`
+  settled one token-seller order against the pool via the **withdraw-0 anchor** +
+  reference scripts, passing phase-2. Verified on-chain: order consumed; pool moved
+  EXACTLY to the pins (TEST 1e9→1.1e9 in, ADA 1,002,000,000→911,338,911 out, NFT+full LP
+  preserved, datum intact); owner paid 92,661,089 lovelace (90,661,089 received + 2 ADA
+  min) with the `BoundDatum`; solver took the 2 ADA tip. Exercised: order `Settle`, pool
+  `PoolSettle`, settlement withdraw-0 (`SettlementRedeemer` w/ price+fills), per-order
+  floor, pool k-with-fee, injective binding, M-01/L-01 output pins. Built with cardano-cli
+  (pins computed the same way solver-core does — `received = swap_out` floor, price =
+  received/sell); `happy_path/06-settle.sh`. **Live deployment identities** (also in
+  `happy_path/deployment.json`, matches `chain::Config`): S `82039119…`, order
+  `65261b26…`, pool `dfa55af0…`, pool_mint policy `1c3be7b9…`, TEST token `8160c878…`
+  (name `54455354`), reference scripts all in tx `032ded5d…` (settlement#0, pool#1,
+  order#2). **Next:** wire the Rust batcher to reproduce this programmatically
+  (Ogmios/Kupo backend + the shaswap-txbuilder fork + solver-core pins), then a
+  netting (two-sided) settlement.
 - **2026-06-01** — **CRITICAL deploy fix → Blueprint Rev 20: settlement anchor must
   authorize its own registration.** Found while bootstrapping preprod (cardano-node 11,
   Conway PV10): registering `S` (the settlement script's hash, a *script* stake
