@@ -15,8 +15,7 @@ use shaswap/clearing
 use shaswap/constants.{lp_name, order_min_ada, total_lp}
 use shaswap/spend
 use shaswap/types.{
-  AssetId, BoundDatum, OrderDatum, PoolDatum, PoolSettle, Reclaim, Settle,
-  SettlementRedeemer,
+  AssetId, BoundDatum, OrderDatum, PoolDatum, SettlementRedeemer,
 }
 
 // ---- fixtures -------------------------------------------------------------
