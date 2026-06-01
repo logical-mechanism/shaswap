@@ -15,13 +15,18 @@ bidirectional netting, and an emulator pass.
 
 ## Immediate next step
 
-**On-chain v1 feature set is essentially complete.** Next: an **emulator pass** with a
-real `Data` ScriptContext + full tx assembly (the one thing unit tests can't do —
-confirms the ~40-order ceiling and decoding cost), and fold the **clearing-price +
-ADA-triple-role** specs into exact rounding rules / property tests. Then start the
-**off-chain reference solver** (Rust/Pallas) and the **app** data-access layer. Later:
-**true-equilibrium** cost spike (§5.2.7). **Done:** trust anchor, order/pool/pool_mint
-validators, LP path, pool close, bidirectional netting, deadlines, **partial fills**.
+**Off-chain reference solver started — `solver-core` (milestone-1 core) is done** on
+branch `batcher/reference-solver`. Next on the batcher: **`txbuild`** (lower a
+`Settlement` into a Pallas tx + CBOR matching `plutus.json`) and **`chain`** (Kupo
+discovery, Ogmios params/submit + **EvaluateTx pre-submit gate**), then the live
+preprod loop — which is gated by the **bootstrap dependency** (deploy ref scripts,
+register `S` and NEVER delegate it, create+seed a pool; scaffold in
+`contracts/happy_path/`). Still owed on-chain: an **emulator pass** with a real `Data`
+ScriptContext (confirms the ~40-order ceiling + decoding cost), and folding the
+clearing-price/ADA-triple-role specs into exact rounding rules. Later:
+**true-equilibrium** cost spike (§5.2.7), the **app** data-access layer. **Done:** trust
+anchor, order/pool/pool_mint validators, LP path, pool close, bidirectional netting,
+deadlines, partial fills; **solver-core** (clearing mirror + v1 floor-only solver + sim).
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -57,6 +62,33 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher milestone-1: `solver-core` (off-chain reference solver
+  core).** New Cargo workspace under `batcher/` (`crates/solver-core`, pure/IO-free,
+  deps: num-bigint/integer/traits only) on branch `batcher/reference-solver` (cut off
+  the `contracts/audit-followup` HEAD, NOT main — main lags the contracts being
+  mirrored; the batcher is decoupled so this keeps `constants.ak`/`plutus.json` in
+  sync). Modules: `value` (normalized multi-asset `Value` matching `assets`), `types`/
+  `output` (datum/redeemer + ledger shapes from `types.ak`; constants from
+  `constants.ak`), `curve` (`reserve_of` + `k`-with-fee via `BigInt` + forward v2 swap,
+  mirrors `spend.pool_settle`), **`clearing`** (the pin generator — line-for-line port
+  of `clearing.ak` `run`/`process`/`check_one`; `build_settlement` returns the exact
+  owner/pool/remainder outputs the anchor accepts or the matching error), `solve` (v1
+  **floor-only** clearing: CoW balance price `p = Σ asset_b sold / Σ asset_a sold` +
+  spot/floor-breakpoint fallbacks, net + route residual; **every result re-verified**
+  against the pin generator + k-check, so it can under-solve but never emit an invalid
+  tx), `sim` (synthetic-book harness). Tests: **23 green** — golden tests mirror
+  `clearing_test.ak` fixtures to the lovelace (happy n1/n3, partial token-seller,
+  perfect netting, ada-solo, token/token, incidental pass-through + rejections);
+  property test = conservation + no-skim over 5 000 random settlements (`Σin == Σout +
+  solver tip`). `cargo clippy -D warnings` clean. Sim sweep: netting 0%→**85% at N≈44**
+  (rises with batch size); surplus-vs-solo is negative on imbalanced one-sided books
+  (count-max v1 routes the residual at a boundary price — honest, surplus-max is the
+  deferred optimal layer). Key gotchas recorded: remainder limit must be
+  `ceil(limit*unsold/sell)` (floor would violate the on-chain `limit'*sell ≥
+  limit*unsold`); owner loses the FULL `tip` (solver takes `tip*f/sell`, remainder keeps
+  the rest); a bare-LCG PRNG's low bit cycles → use SplitMix64 for the sim generator.
+  **Not yet built:** `txbuild` (CBOR/Pallas tx assembly), `chain` (Kupo/Ogmios +
+  EvaluateTx gate), live loop — all gated by the bootstrap dependency.
 - **2026-05-31** — Blueprint reached Rev 4 after two design reviews. Repo-level
   `CLAUDE.md` + `MEMORY.md` created; `BLUEPRINT.md` moved into `documentation/`.
   Key review outcomes folded in: double-satisfaction rule, withdraw-0 "checks every
