@@ -17,6 +17,12 @@ pub const min_liq: Int = 1_000
 /// retain at least this much lovelace.
 pub const pool_min_ada: Int = 2_000_000
 
+/// Per-UTXO min-ADA assumed for an order/remainder output. A `partial`-eligible
+/// order pre-funds two of these (its own + the remainder's); on a partial fill one
+/// is siphoned into the remainder UTXO, on a full fill the spare returns to the
+/// owner. Must be ≥ the real ledger min-ADA for an order UTXO.
+pub const order_min_ada: Int = 2_000_000
+
 /// LP-token asset name (under the pool's mint policy = `nft.policy`). "LP".
 pub const lp_name: AssetName = #"4c50"
 

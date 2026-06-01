@@ -26,7 +26,10 @@
 > **Rev 7: LP model resolved (§5.1/§6) — value-derived reserves + held-LP circulating
 > supply (no counters), min-ADA carved out of reserves, first-deposit `is_sqrt`,
 > `MIN_LIQ` permanently locked at the unspendable mint-policy address, per-share-backing
-> non-decreasing invariant; resolves the §5.1/§6 conflict and the §12 LP decision.**)
+> non-decreasing invariant; resolves the §5.1/§6 conflict and the §12 LP decision.**
+> **Rev 8: partial fills resolved + implemented (§7/§12.4) — proportional tip
+> (pay-per-fill), one-level remainder, pre-funded 2× min-ADA, limit-price preserved;
+> plus bidirectional netting and order deadlines implemented.**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -430,9 +433,14 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
 - **Surplus capture (the differentiator, §5.2.7).** The floor guarantees Uniswap
   parity; whether netting surplus reaches *traders* depends on requiring the true
   equilibrium, cost-bounded by §13.1. Explicit open decision (§12.2).
-- **Partial-fill min-ADA.** One input (one min-ADA) → remainder UTXO **and** owner
-  output, each needing its own min-ADA. Funding rule TBD (§12.4): user pre-funds for
-  a bounded number of partials, or partials are capped.
+- **Partial fills — proportional tip, one-level remainder (RESOLVED, Rev 8; impl
+  `clearing.ak`).** The solver declares each order's fill `f`; on a partial fill it
+  collects `tip·f/sell_amount` **now** (pay-per-fill) and the remainder keeps the
+  rest. The order **pre-funds two min-ADAs** (its own + the remainder's); on a full
+  fill the spare returns to the owner, on a partial it funds the remainder UTXO, which
+  is re-locked at the order's own address (tagged `S`) with **`partial = False`** (one
+  level — bounds the min-ADA blow-up). The remainder preserves the **limit price**
+  (`limit'·sell ≥ limit·sell'`), so no fill is ever worse than the order's own limit.
 - **No protocol rent, no treasury, no governance token** (Principle 2).
 
 ---
@@ -517,8 +525,9 @@ privileged operator, any mortal external dependency in the core.
 2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7): floor-only; equilibrium
    deferred** pending its own cost spike.
 3. **Order rollover** mechanics (the size *bound* is resolved: ~40/settlement, §5.3).
-4. **Partial-fill semantics:** remainder rules, integer rounding, min-ADA funding —
-   being specified in [`spec/partial-fills.md`](spec/partial-fills.md) (A4).
+4. ~~Partial-fill semantics~~ — **RESOLVED (Rev 8): proportional tip, one-level
+   remainder, pre-funded 2× min-ADA, limit-price preserved** (§7; impl `clearing.ak`,
+   spec [`spec/partial-fills.md`](spec/partial-fills.md)).
 5. **Clearing-price representation:** exact rational encoding + rounding for bit-exact
    solve/verify — being specified in
    [`spec/clearing-price.md`](spec/clearing-price.md) (A4).

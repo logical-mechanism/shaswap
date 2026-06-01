@@ -1,8 +1,9 @@
 # Spec — Partial-fill semantics (A4 / BLUEPRINT §12.4)
 
-> **Status:** design decided (2026-05-31), not yet implemented. The current
-> settlement is full-fill only. This locks the v1 policy so the implementation is
-> mechanical. Fold into BLUEPRINT §5.2.4/§7 when built.
+> **Status:** IMPLEMENTED (2026-05-31) in `lib/shaswap/clearing.ak` with the
+> **proportional-tip** variant (solver chose pay-per-fill). Tests in
+> `clearing_test.ak` (`partial_token_seller`, `partial_ada_seller`, + negatives).
+> Folded into BLUEPRINT §7/§12.4 (Rev 8).
 
 ## Decided v1 policy (the short version)
 

@@ -90,4 +90,8 @@ pub type SettlementRedeemer {
   price_den: Int,
   token: AssetId,
   pool_nft: AssetId,
+  /// Per-order fill amount (canonical input order; one entry per order input).
+  /// `fills[i] == sell_amount` is a full fill; `fills[i] < sell_amount` is a
+  /// partial fill (requires `partial == True`) producing a remainder UTXO.
+  fills: List<Int>,
 }

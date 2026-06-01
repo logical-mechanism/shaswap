@@ -15,14 +15,13 @@ bidirectional netting, and an emulator pass.
 
 ## Immediate next step
 
-**Implement partial fills** — the policy is now decided in `spec/partial-fills.md`
-(one-level remainder, solver-supplied `fills`, limit-price-preserving remainder,
-pre-funded min-ADA, tagged remainder outputs alongside the NFT-bearing pool). Then:
-fold the **clearing-price + ADA-triple-role** specs into the validators (exact
-rational/rounding rules); **emulator** re-measure with real `Data` ScriptContext.
-Later: **true-equilibrium** cost spike (§5.2.7). **Done:** trust anchor,
-order/pool/pool_mint validators, LP path, pool close, **bidirectional netting**,
-**deadlines**.
+**On-chain v1 feature set is essentially complete.** Next: an **emulator pass** with a
+real `Data` ScriptContext + full tx assembly (the one thing unit tests can't do —
+confirms the ~40-order ceiling and decoding cost), and fold the **clearing-price +
+ADA-triple-role** specs into exact rounding rules / property tests. Then start the
+**off-chain reference solver** (Rust/Pallas) and the **app** data-access layer. Later:
+**true-equilibrium** cost spike (§5.2.7). **Done:** trust anchor, order/pool/pool_mint
+validators, LP path, pool close, bidirectional netting, deadlines, **partial fills**.
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -123,4 +122,17 @@ High-signal pointers only:
   (one-level remainder, solver-supplied fills, limit-price-preserving remainder,
   pre-funded min-ADA, remainder outputs enumerated alongside the NFT pool) — ready to
   implement next.
+- **2026-05-31** — **Partial fills implemented (Blueprint Rev 8).** User chose the
+  **proportional-tip** variant (pay-per-fill). `clearing.ak`: solver declares per-order
+  `fills`; `f < sell_amount` requires `partial==True` and produces a one-level
+  (`partial==False`) remainder UTXO at the order's own address holding unsold asset +
+  pre-funded min-ADA + leftover tip (`tip − tip·f/sell`); solver takes `tip·f/sell`
+  now. Remainder preserves the limit *price* (`limit'·sell ≥ limit·sell'`). Pre-funds
+  2× `order_min_ada` (spare returns to owner on full fill). Tagged outputs now =
+  pool (NFT) + remainders (no NFT); `process` recursion threads fills+remainders and
+  asserts both fully consumed. SettlementRedeemer += `fills`. 48 tests green (+6:
+  partial token/ada happy, + rejections for not-allowed, shorted-remainder,
+  worse-limit). Cost: partials add per-order work (N=20 mem 6.30M→7.27M → mem-bound
+  ~N≈38). Safety unchanged: per-order + remainder + pool pinning + mint==0 + ledger
+  conservation ⇒ solver takes only proportional tips.
 </content>

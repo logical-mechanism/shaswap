@@ -11,6 +11,7 @@ use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
 use shaswap/clearing
+use shaswap/constants.{order_min_ada}
 use shaswap/spend
 use shaswap/types.{
   AssetId, BoundDatum, OrderDatum, PoolDatum, PoolSettle, Reclaim, Settle,
@@ -71,8 +72,14 @@ fn s() -> Credential {
   Script(s_hash)
 }
 
-fn redeemer() -> SettlementRedeemer {
-  SettlementRedeemer { price_num: 1, price_den: 2, token: tok, pool_nft: nft }
+fn redeemer(fills: List<Int>) -> SettlementRedeemer {
+  SettlementRedeemer {
+    price_num: 1,
+    price_den: 2,
+    token: tok,
+    pool_nft: nft,
+    fills,
+  }
 }
 
 fn tagged(c: Credential) -> Address {
@@ -256,17 +263,17 @@ fn build1(
 test happy_n1() {
   clearing.run(
     s(),
-    redeemer(),
+    redeemer([sell]),
     build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
   )
 }
 
 test happy_n3() {
-  clearing.run(s(), redeemer(), build(3))
+  clearing.run(s(), redeemer(list.repeat(sell, 3)), build(3))
 }
 
 test happy_n20() {
-  clearing.run(s(), redeemer(), build(20))
+  clearing.run(s(), redeemer(list.repeat(sell, 20)), build(20))
 }
 
 // ---- settlement negatives -------------------------------------------------
@@ -276,7 +283,7 @@ test happy_n20() {
 test neg_value_theft() fail {
   clearing.run(
     s(),
-    redeemer(),
+    redeemer([sell]),
     build1(
       owner_out_ada - 100,
       0,
@@ -291,7 +298,7 @@ test neg_value_theft() fail {
 test neg_misbinding() fail {
   clearing.run(
     s(),
-    redeemer(),
+    redeemer([sell]),
     build1(owner_out_ada, 7, pool_ada_in - received, pool_tok_in + sell, True),
   )
 }
@@ -301,7 +308,7 @@ test neg_misbinding() fail {
 test neg_fake_pool_no_nft() fail {
   clearing.run(
     s(),
-    redeemer(),
+    redeemer([sell]),
     build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, False),
   )
 }
@@ -330,7 +337,7 @@ test neg_floor_breach() fail {
     ],
     withdrawals: [Pair(s(), 0)],
   }
-  clearing.run(s(), redeemer(), tx)
+  clearing.run(s(), redeemer([sell]), tx)
 }
 
 // ---- order validator logic ------------------------------------------------
@@ -403,7 +410,7 @@ test netting_perfect() {
     ],
     withdrawals: [Pair(s(), 0)],
   }
-  clearing.run(s(), redeemer(), tx)
+  clearing.run(s(), redeemer([sell, 500_000]), tx)
 }
 
 // Partial netting: token-seller 1_000_000 token, ADA-seller only 250_000
@@ -425,7 +432,7 @@ test netting_partial() {
     ],
     withdrawals: [Pair(s(), 0)],
   }
-  clearing.run(s(), redeemer(), tx)
+  clearing.run(s(), redeemer([sell, 250_000]), tx)
 }
 
 // A lone ADA-seller: pool absorbs the whole trade (sells 500_000 lovelace,
@@ -441,7 +448,7 @@ test ada_seller_solo() {
     ],
     withdrawals: [Pair(s(), 0)],
   }
-  clearing.run(s(), redeemer(), tx)
+  clearing.run(s(), redeemer([500_000]), tx)
 }
 
 // ADA-seller floor breach: demands more token than the clearing price yields.
@@ -456,7 +463,7 @@ test ada_seller_floor() fail {
     ],
     withdrawals: [Pair(s(), 0)],
   }
-  clearing.run(s(), redeemer(), tx)
+  clearing.run(s(), redeemer([500_000]), tx)
 }
 
 // Pool not credited the netted residual (solver tries to skim the token the
@@ -478,7 +485,7 @@ test netting_pool_shorted() fail {
     ],
     withdrawals: [Pair(s(), 0)],
   }
-  clearing.run(s(), redeemer(), tx)
+  clearing.run(s(), redeemer([sell, 250_000]), tx)
 }
 
 // ---- deadlines ------------------------------------------------------------
@@ -511,20 +518,188 @@ fn deadline_tx(d: Option<Int>, range: Interval) -> Transaction {
 
 // settled before the deadline: ok.
 test deadline_within() {
-  clearing.run(s(), redeemer(), deadline_tx(Some(1000), interval.before(900)))
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    deadline_tx(Some(1000), interval.before(900)),
+  )
 }
 
 // tx could be included after the deadline: rejected.
 test deadline_expired() fail {
-  clearing.run(s(), redeemer(), deadline_tx(Some(1000), interval.before(1500)))
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    deadline_tx(Some(1000), interval.before(1500)),
+  )
 }
 
 // open-ended tx can't honor a deadline: rejected.
 test deadline_open_tx() fail {
-  clearing.run(s(), redeemer(), deadline_tx(Some(1000), interval.everything))
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    deadline_tx(Some(1000), interval.everything),
+  )
 }
 
 // no deadline: an open-ended tx is fine.
 test deadline_none_open_ok() {
-  clearing.run(s(), redeemer(), deadline_tx(None, interval.everything))
+  clearing.run(s(), redeemer([sell]), deadline_tx(None, interval.everything))
+}
+
+// ---- partial fills (proportional tip) -------------------------------------
+// A partial-eligible order pre-funds tip + 2*order_min_ada. On a partial fill
+// the solver takes tip*f/sell now; the remainder keeps the rest + one min-ADA.
+
+fn partial_token_order(allow_partial: Bool) -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: tok_val(tip + 2 * order_min_ada, sell),
+      datum: InlineDatum(
+        OrderDatum {
+          owner: VerificationKey(owner_vkh),
+          sell_ada: False,
+          sell_amount: sell,
+          limit,
+          tip,
+          partial: allow_partial,
+          deadline: None,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+}
+
+fn partial_ada_order() -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: assets.from_lovelace(1_000_000 + tip + 2 * order_min_ada),
+      datum: InlineDatum(
+        OrderDatum {
+          owner: VerificationKey(owner_vkh),
+          sell_ada: True,
+          sell_amount: 1_000_000,
+          limit: 1_500_000,
+          tip,
+          partial: True,
+          deadline: None,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+}
+
+fn remainder_output(
+  is_ada: Bool,
+  tok_amt: Int,
+  ada: Int,
+  sell2: Int,
+  lim2: Int,
+  tip2: Int,
+) -> Output {
+  Output {
+    address: tagged(Script(o_hash)),
+    value: tok_val(ada, tok_amt),
+    datum: InlineDatum(
+      OrderDatum {
+        owner: VerificationKey(owner_vkh),
+        sell_ada: is_ada,
+        sell_amount: sell2,
+        limit: lim2,
+        tip: tip2,
+        partial: False,
+        deadline: None,
+      },
+    ),
+    reference_script: None,
+  }
+}
+
+// token-seller fills 400_000 of 1_000_000 at p=1/2: gets 200_000 ADA; remainder
+// holds 600_000 token + (min + leftover tip 1_200_000); solver takes 800_000 tip.
+test partial_token_seller() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      remainder_output(False, 600_000, 3_200_000, 600_000, 240_000, 1_200_000),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// ADA-seller fills 400_000 of 1_000_000 lovelace: gets 800_000 token; remainder
+// holds 600_000 unsold ADA + min + leftover tip.
+test partial_ada_seller() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_ada_order(), pool_input(True)],
+    outputs: [
+      tok_owner_output(0, 800_000, 2_000_000),
+      pool_output(pool_ada_in + 400_000, pool_tok_in - 800_000),
+      remainder_output(True, 0, 3_800_000, 600_000, 900_000, 1_200_000),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// partial fill of an order that doesn't allow partials: rejected.
+test partial_not_allowed() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(False), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      remainder_output(False, 600_000, 3_200_000, 600_000, 240_000, 1_200_000),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// remainder shorted (holds 500_000 < 600_000 unsold token): user robbed, rejected.
+test partial_remainder_shorted() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      remainder_output(False, 500_000, 3_200_000, 600_000, 240_000, 1_200_000),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// remainder limit price worse than original (100_000 < proportional 240_000): rejected.
+test partial_remainder_bad_limit() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      remainder_output(False, 600_000, 3_200_000, 600_000, 100_000, 1_200_000),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
 }
