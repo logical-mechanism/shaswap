@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/*
+ * ShaSwap theme — dark, modern, restrained. One accent color (teal) used for
+ * the gradient mark, primary button, and active states. Custom tokens below are
+ * exposed to Tailwind v4 as utilities (bg-surface, text-muted, bg-accent, …).
+ */
+
+:root {
+  --background: #0a0b0f;
+  --foreground: #e9edf2;
+  --surface: #14161d;
+  --muted: #8b93a7;
+  --accent: #5eead4;
+  --accent-2: #34d399;
+  --border: rgba(255, 255, 255, 0.08);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --shadow-glow: 0 0 24px -6px rgba(94, 234, 212, 0.55);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  /* Subtle radial accent glows on a dark field — not flashy. */
+  background-image:
+    radial-gradient(
+      60rem 40rem at 50% -10%,
+      rgba(52, 211, 153, 0.08),
+      transparent 60%
+    ),
+    radial-gradient(
+      40rem 30rem at 90% 10%,
+      rgba(94, 234, 212, 0.06),
+      transparent 55%
+    );
+  background-attachment: fixed;
+}
