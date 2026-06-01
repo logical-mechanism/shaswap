@@ -99,6 +99,14 @@ impl Value {
         self.inner.is_empty()
     }
 
+    /// True if this value holds nothing but ADA (no native assets). An empty value
+    /// counts as ADA-only. Used to pick pure-ADA funding/collateral UTXOs.
+    pub fn is_ada_only(&self) -> bool {
+        self.inner
+            .keys()
+            .all(|(p, n)| p == &ada_policy_id() && n == &ada_asset_name())
+    }
+
     /// Sum of two values (`assets.merge`), normalized. Used for conservation
     /// checks (Σ inputs vs Σ outputs).
     pub fn merge(&self, other: &Value) -> Value {

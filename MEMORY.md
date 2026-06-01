@@ -65,6 +65,31 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher live transport: Kupo+Ogmios `ChainBackend` (chain crate).**
+  Wired the live provider behind the existing trait (`crates/chain/src/kupo_ogmios.rs`,
+  dep `ureq` blocking HTTP + `pallas-addresses`). Ogmios JSON-RPC :1337 → `tip`
+  (`queryNetwork/tip`), `protocol_params` (`queryLedgerState/protocolParameters` — now
+  also carries the **PlutusV3 cost model** [350 ints] for `language_views` + the Conway
+  **reference-script tiered fee** params), `evaluate` (`evaluateTransaction` = the
+  pre-submit gate), `submit`. Kupo REST :1442 → discovery. **Real-JSON gotchas (verified
+  live, not guessed):** (1) Kupo rejects full-address path patterns (`/matches/<addr>` →
+  "invalid pattern") — query `/matches/*?unspent` (returns only the configured bounded
+  set: S-tagged order/pool + solver wallet) and filter by address client-side; (2) inline
+  datums come back by hash — fetch CBOR via `/datums/{hash}` → `{"datum":"<hex>"}`;
+  (3) Ogmios prices are `"num/den"` strings, cost models keyed `plutus:v3`. Extended
+  `ProtocolParams` (+cost_model_v3, +ref_script_{base,range,multiplier}); added
+  `fees::reference_script_fee` (tiered), `Value::is_ada_only`, `backend::Utxo` +
+  `find_wallet_utxos` (funding/collateral selection), `txbuild::address::shelley_bech32`.
+  JSON parsing is factored into pure fns unit-tested against **captured live fixtures**
+  (`crates/chain/tests/fixtures/`); a `#[ignore]` live suite (`tests/live.rs`) hit the
+  running services and confirmed: tip slot, params (350-entry V3 model), **find_pool** →
+  `6cbd9061…#1` (ADA 911,338,911, TEST 1.1e9, NFT+LP, asset_a=TEST), wallet (6 UTXOs,
+  1 pure-ADA). **64 batcher tests, clippy -D + fmt clean.** Launch scripts:
+  `happy_path/run-ogmios.sh`, `run-kupo.sh` (matches `*/S_HASH` + solver addr; first run
+  `--since origin` to capture the pre-existing pool, then resumes from checkpoint).
+  **Next:** body-assembly glue (Settlement → StagingTransaction) + orchestrator loop;
+  note only **1 pure-ADA UTXO** in the solver wallet now → funding can be the TEST-bearing
+  UTXO (leftover returns as change), collateral = the 6.59-ADA pure UTXO.
 - **2026-06-01** — **🎉 FIRST LIVE SETTLEMENT on preprod — the full design works on
   chain.** Settlement tx `6cbd9061426e1b9fb98998baae155fe1e3c54f95186ff1f9e859e8e5abfdb4da`
   settled one token-seller order against the pool via the **withdraw-0 anchor** +

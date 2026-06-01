@@ -57,6 +57,18 @@ pub fn shelley_bytes(net: Network, addr: &Address) -> Result<Vec<u8>, AddressErr
     Ok(a.to_vec())
 }
 
+/// Bech32 form of the Shelley address (e.g. `addr_test1…`) — for querying the
+/// chain indexer (Kupo matches on bech32 addresses).
+pub fn shelley_bech32(net: Network, addr: &Address) -> Result<String, AddressError> {
+    let a = ShelleyAddress::new(
+        net,
+        payment_part(&addr.payment)?,
+        delegation_part(&addr.stake)?,
+    );
+    // ShelleyAddress::to_bech32 is infallible for well-formed parts.
+    a.to_bech32().map_err(|_| AddressError::BadHashLength(0))
+}
+
 /// Raw bytes of the reward account for the settlement stake credential `S`
 /// (always a script credential). This is the key of the withdraw-0 entry.
 pub fn reward_account(net: Network, s: &Credential) -> Result<Vec<u8>, AddressError> {

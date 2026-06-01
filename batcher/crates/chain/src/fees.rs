@@ -29,6 +29,24 @@ pub fn size_fee(params: &ProtocolParams, tx_size_bytes: u64) -> u64 {
     params.min_fee_a.saturating_mul(tx_size_bytes) + params.min_fee_b
 }
 
+/// Conway's tiered reference-script fee for `total_ref_bytes` of referenced
+/// scripts: the first `range` bytes cost `base` lovelace each, the next `range`
+/// cost `base·multiplier`, and so on (geometric per tier), floored. A settlement
+/// references the settlement + pool + order scripts, so this is a real cost.
+pub fn reference_script_fee(params: &ProtocolParams, total_ref_bytes: u64) -> u64 {
+    let range = params.ref_script_range.max(1);
+    let mut remaining = total_ref_bytes;
+    let mut price = params.ref_script_base;
+    let mut total = 0.0_f64;
+    while remaining > 0 {
+        let chunk = remaining.min(range);
+        total += chunk as f64 * price;
+        price *= params.ref_script_multiplier;
+        remaining -= chunk;
+    }
+    total.floor() as u64
+}
+
 /// Sum every redeemer's ex-units into one budget (the tx-wide script cost).
 pub fn total_ex_units<I: IntoIterator<Item = ExUnits>>(units: I) -> ExUnits {
     units
@@ -69,6 +87,10 @@ mod tests {
                 steps: 10_000_000_000,
             },
             coins_per_utxo_byte: 4_310,
+            cost_model_v3: vec![],
+            ref_script_base: 15.0,
+            ref_script_range: 25_600,
+            ref_script_multiplier: 1.2,
         }
     }
 
@@ -86,6 +108,19 @@ mod tests {
         // a non-divisible budget rounds up, never down.
         let f2 = script_exec_fee(&params(), ExUnits { mem: 1, steps: 1 });
         assert_eq!(f2, 1 + 1); // ceil(577/10000)=1, ceil(721/1e7)=1
+    }
+
+    #[test]
+    fn ref_script_fee_single_tier_is_linear() {
+        // Below one 25600-byte tier the fee is just bytes * base (15 lovelace/byte).
+        assert_eq!(reference_script_fee(&params(), 7_338), 7_338 * 15);
+        assert_eq!(reference_script_fee(&params(), 0), 0);
+    }
+
+    #[test]
+    fn ref_script_fee_crosses_tier_with_multiplier() {
+        // 25600 @ 15 + 400 @ (15*1.2) = 384000 + 7200 = 391200.
+        assert_eq!(reference_script_fee(&params(), 26_000), 384_000 + 7_200);
     }
 
     #[test]
