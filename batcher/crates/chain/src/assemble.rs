@@ -383,6 +383,56 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
     })
 }
 
+/// Build + sign a plain (no-script) tx that carves a pure-ADA collateral UTXO of
+/// `collateral_lovelace` out of `source`, returning the rest (incl. any native
+/// tokens, minus fee) as change — both to `solver_addr_bech32`. Used once at
+/// startup to self-provision collateral when the operator funded the solver as a
+/// single lump (a settlement needs a funding input AND a distinct collateral
+/// input, so ≥2 wallet UTXOs are required). Caller must ensure `source` holds
+/// enough ADA (collateral + fee + a min-ADA change).
+pub fn build_collateral_split(
+    source: &OutputReference,
+    source_value: &Value,
+    solver_addr_bech32: &str,
+    collateral_lovelace: u64,
+    params: &ProtocolParams,
+    skey: &SecretKey,
+) -> Result<BuiltTransaction, ChainError> {
+    let solver = PallasAddress::from_bech32(solver_addr_bech32)
+        .map_err(|e| ChainError::Address(format!("{e:?}")))?;
+
+    let build = |fee: u64| -> Result<StagingTransaction, ChainError> {
+        // collateral output: pure ADA, no datum/tokens.
+        let collateral = Output::new(solver.clone(), collateral_lovelace);
+        // change: everything else, minus collateral + fee from the ADA side.
+        let change_val = source_value.add(&[], &[], -((collateral_lovelace + fee) as i128));
+        let change_ada = change_val.lovelace_of();
+        if change_ada < 0 {
+            return Err(ChainError::Shape(
+                "source UTXO can't cover collateral + fee".into(),
+            ));
+        }
+        let change = apply_assets(Output::new(solver.clone(), change_ada as u64), &change_val)?;
+        Ok(StagingTransaction::new()
+            .fee(fee)
+            .input(input_of(source)?)
+            .output(collateral)
+            .output(change))
+    };
+
+    // Two-pass fee: a plain tx pays only the size fee (no scripts).
+    let probe = build(300_000)?
+        .build_conway_raw()
+        .map_err(|e| ChainError::Shape(format!("split probe: {e:?}")))?;
+    let size = probe.tx_bytes.0.len() as u64 + WITNESS_OVERHEAD;
+    let fee = fees::size_fee(params, size) + FEE_MARGIN;
+    build(fee)?
+        .build_conway_raw()
+        .map_err(|e| ChainError::Shape(format!("split build: {e:?}")))?
+        .sign(skey)
+        .map_err(|e| ChainError::Shape(format!("split sign: {e:?}")))
+}
+
 /// Load a cardano-cli `PaymentSigningKeyShelley_ed25519` skey (TextEnvelope) into
 /// an [`ed25519::SecretKey`](SecretKey). The `cborHex` is `5820<32 raw bytes>`.
 pub fn load_signing_key(path: &str) -> Result<SecretKey, ChainError> {

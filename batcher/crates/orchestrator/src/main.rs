@@ -36,6 +36,10 @@ use std::time::Duration;
 /// preprod genesis: system start 2022-06-01T00:00:00Z, 1s slots.
 const SYSTEM_START_MS: i64 = 1_654_041_600_000;
 const SLOT_LENGTH_MS: i64 = 1_000;
+/// The dedicated collateral UTXO size the batcher provisions/uses (lovelace).
+/// 5 ADA exceeds the worst-case requirement (max-fee × collateralPercentage) for
+/// any tx on this network, since fee is bounded by max ex-units + max tx size.
+const COLLATERAL_LOVELACE: u64 = 5_000_000;
 
 type Err = Box<dyn std::error::Error>;
 type Key = (Vec<u8>, u64);
@@ -82,6 +86,13 @@ fn run() -> Result<(), Err> {
     let ref_bytes = backend
         .ref_script_total_bytes()
         .map_err(|e| format!("ref script sizes: {e:?}"))?;
+
+    // Turnkey bootstrap: a settlement needs a funding input AND a distinct
+    // collateral input (≥2 wallet UTXOs). If the operator funded the address as a
+    // single lump, self-provision a dedicated collateral UTXO once. After that the
+    // wallet self-maintains (settlements regenerate funding-change; collateral is
+    // never spent on success).
+    ensure_collateral(&backend, &skey, &solver_addr, submit)?;
 
     // Orders we've submitted but not yet seen confirmed-spent (loop only).
     let mut in_flight: HashSet<Key> = HashSet::new();
@@ -257,7 +268,7 @@ fn select_inputs(
 ) -> Result<(&chain::backend::Utxo, &chain::backend::Utxo), Err> {
     let collateral = wallet
         .iter()
-        .filter(|u| u.is_pure_ada() && u.value.lovelace_of() >= 5_000_000)
+        .filter(|u| u.is_pure_ada() && u.value.lovelace_of() >= COLLATERAL_LOVELACE as i128)
         .min_by_key(|u| u.value.lovelace_of())
         .ok_or("no pure-ADA collateral UTXO >= 5 ADA")?;
     let funding = wallet
@@ -266,6 +277,82 @@ fn select_inputs(
         .max_by_key(|u| u.value.lovelace_of())
         .ok_or("no funding UTXO (distinct from collateral)")?;
     Ok((funding, collateral))
+}
+
+/// Ensure the solver wallet can supply both a funding input and a distinct
+/// collateral input. If [`select_inputs`] already succeeds, do nothing. Otherwise
+/// (single lump, or no pure-ADA collateral), submit a one-time split tx that
+/// carves a dedicated `COLLATERAL_LOVELACE` UTXO, then wait for it to confirm.
+fn ensure_collateral(
+    backend: &KupoOgmios,
+    skey: &SecretKey,
+    solver_addr: &str,
+    submit: bool,
+) -> Result<(), Err> {
+    let wallet = backend
+        .find_wallet_utxos(solver_addr)
+        .map_err(|e| format!("wallet: {e:?}"))?;
+    if select_inputs(&wallet).is_ok() {
+        return Ok(()); // already have funding + a distinct collateral
+    }
+    if !submit {
+        return Err(
+            "wallet lacks a funding + distinct collateral UTXO. Re-run with \
+             SHASWAP_SUBMIT=1 to auto-provision a 5-ADA collateral, or fund the solver \
+             address with a second UTXO."
+                .into(),
+        );
+    }
+
+    // Split the largest spendable UTXO into [5-ADA collateral, change].
+    let params = backend
+        .protocol_params()
+        .map_err(|e| format!("params: {e:?}"))?;
+    let src = wallet
+        .iter()
+        .filter(|u| !u.has_reference_script)
+        .max_by_key(|u| u.value.lovelace_of())
+        .ok_or("no spendable UTXO to provision collateral from")?;
+    // collateral + a min-ADA change + fee headroom.
+    let need = COLLATERAL_LOVELACE as i128 + 2_000_000 + 1_000_000;
+    if src.value.lovelace_of() < need {
+        return Err(format!(
+            "largest UTXO ({} lovelace) too small to provision a 5-ADA collateral",
+            src.value.lovelace_of()
+        )
+        .into());
+    }
+    let signed = assemble::build_collateral_split(
+        &src.output_reference,
+        &src.value,
+        solver_addr,
+        COLLATERAL_LOVELACE,
+        &params,
+        skey,
+    )
+    .map_err(|e| format!("build split: {e:?}"))?;
+    let txid = backend
+        .submit(&signed.tx_bytes.0)
+        .map_err(|e| format!("submit split: {e:?}"))?;
+    println!(
+        "provisioned collateral: split tx {} (carving 5 ADA from {}#{})",
+        hex::encode(&txid),
+        hex::encode(&src.output_reference.transaction_id),
+        src.output_reference.output_index
+    );
+
+    // Wait for the split to confirm (until the wallet can supply both inputs).
+    for _ in 0..30 {
+        std::thread::sleep(Duration::from_secs(5));
+        let w = backend
+            .find_wallet_utxos(solver_addr)
+            .map_err(|e| format!("wallet: {e:?}"))?;
+        if select_inputs(&w).is_ok() {
+            println!("collateral confirmed; wallet ready.");
+            return Ok(());
+        }
+    }
+    Err("timed out waiting for the collateral split to confirm".into())
 }
 
 /// Derive the solver's enterprise (payment-only) bech32 address from its signing

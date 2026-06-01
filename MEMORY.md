@@ -66,6 +66,24 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher turnkey collateral self-provisioning.** Decision (user):
+  the reference solver should be turnkey — an operator just funds the solver address
+  with ADA (any shape) and the batcher manages its own UTXOs. Key insight: a settlement
+  needs a funding input AND a *distinct* collateral input (Cardano forbids one UTXO being
+  both), so ≥2 wallet UTXOs are required — but **steady-state the wallet self-maintains**
+  (each settlement regenerates the funding-change UTXO; collateral is never spent on
+  success thanks to the EvaluateTx gate). The only gap was **bootstrap from a single
+  lump**. Added `assemble::build_collateral_split` (a plain no-script tx carving a 5-ADA
+  pure collateral + change, two-pass size fee) and `orchestrator::ensure_collateral`
+  (runs once at startup: if `select_inputs` can't find funding + a distinct collateral,
+  and `SHASWAP_SUBMIT=1`, it splits the largest UTXO, submits, and waits for confirmation;
+  in dry-run it errors with guidance). 5-ADA collateral is fixed by `COLLATERAL_LOVELACE`
+  and exceeds the worst-case requirement. **Proven live:** consolidated the test wallet to
+  one lump (`17465045…#0`), ran the batcher → it auto-split (tx `5fda1b6d…`: out#0 =
+  5,000,000 pure ADA collateral, out#1 = change incl. TEST), confirmed, then settled.
+  **66 tests, clippy -D + fmt clean.** Remaining batcher follow-up: multi-funding when a
+  single funding UTXO can't cover a very large batch's fee (not reachable in v1); surplus-max
+  solving (deferred §5.2.7).
 - **2026-06-01** — **Batcher: atomic single-fetch discovery + continuous loop mode.**
   Worked the deferred review items. (1) **`ChainBackend::discover`** — new trait method
   (default = the 3 separate queries; `KupoOgmios` overrides with ONE `/matches/*?unspent`
