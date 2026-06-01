@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/solver-core",
+    "crates/txbuild",
+    "crates/chain",
+    "crates/txbuilder",
+    "crates/orchestrator",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.75"
+
+# Workspace-wide lints: clippy must be clean with -D warnings (CLAUDE.md).
+[workspace.lints.clippy]
+all = "warn"
+
+[workspace.dependencies]
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"

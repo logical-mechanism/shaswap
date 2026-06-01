@@ -1,0 +1,31 @@
+{
+  "network_id": 0,
+  "network_magic": 1,
+  "kupo_url": "http://127.0.0.1:1442",
+  "ogmios_url": "http://127.0.0.1:1337",
+  "settlement_hash": "82039119bc85e1b8fb4fab8cfb0628f487e64f0b6338da842950500c",
+  "order_script_hash": "65261b26df3cb88e75bfb936df8d479de2a43e3fef276a1f0e2e4e94",
+  "pool_script_hash": "dfa55af00c04e5ce5d982e7d8e7b991fbc5e96c261f401259ef8b510",
+  "pool_mint_policy": "1c3be7b9fe09c169ae92722eac4961f1a2d94274a7669190828605d0",
+  "nft_name": "4e4654",
+  "lp_name": "4c50",
+  "total_lp": 9223372036854775807,
+  "min_liq": 1000,
+  "pool_min_ada": 2000000,
+  "order_min_ada": 2000000,
+  "settlement_ref": {
+    "tx_id": "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
+    "index": 0
+  },
+  "order_ref": {
+    "tx_id": "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
+    "index": 2
+  },
+  "pool_ref": {
+    "tx_id": "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
+    "index": 1
+  },
+  "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey",
+  "max_orders_per_tx": 20,
+  "strategy": "round-robin"
+}

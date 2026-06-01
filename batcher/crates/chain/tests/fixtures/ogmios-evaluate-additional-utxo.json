@@ -1,0 +1,19 @@
+{
+  "_comment": "The evaluateTransaction `additionalUtxo` request shape, captured from live Ogmios v6.14.0 (preprod) on 2026-06-01 by strict-validation probing (NOT guessed). Each entry resolves an input that isn't on the ledger yet (a chained tx's not-yet-confirmed ancestor output). Evidence: a malformed entry returns JSON-RPC -32600 (schema reject) BEFORE the tx is decoded; the shape below returns -32602 (tx-level), i.e. it passed schema. Strictness confirmed: `value` as a bare number -> 'parsing Value failed, expected Object'; missing `index` -> 'field index not found'; `value` must be the nested object form `{ada:{lovelace}, <policyHex>:{<nameHex>:qty}}`. Optional per-entry: `datum` (inline-datum hex CBOR), `datumHash` (hex), `script`. Unknown fields are ignored.",
+  "method": "evaluateTransaction",
+  "params": {
+    "transaction": { "cbor": "<full signed/draft tx cbor hex>" },
+    "additionalUtxo": [
+      {
+        "transaction": { "id": "0000000000000000000000000000000000000000000000000000000000000000" },
+        "index": 3,
+        "address": "addr_test1vq6vymyr2plj92javazvvxfqj5aaqxhk5u3u87ud4dc8u5gyasnly",
+        "value": {
+          "ada": { "lovelace": 5000000 },
+          "8160c878d40c39d7bfeb300560343d646620ab50182981efa8ae779a": { "54455354": 100 }
+        },
+        "datum": "d87980"
+      }
+    ]
+  }
+}

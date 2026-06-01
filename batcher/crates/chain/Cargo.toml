@@ -1,0 +1,24 @@
+[package]
+name = "chain"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ShaSwap chain access — ChainBackend trait, typed Config, on-chain datum decoding, and Kupo/Ogmios models (discovery, params, submit, EvaluateTx gate)."
+
+[dependencies]
+solver-core = { path = "../solver-core" }
+txbuild = { path = "../txbuild" }
+shaswap-txbuilder = { path = "../txbuilder" }
+pallas-primitives = "1.0.0"
+pallas-codec = "1.0.0"
+pallas-crypto = "1.0.0"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+pallas-addresses = "1.0.0"
+tracing = "0.1"
+
+[lints]
+workspace = true
