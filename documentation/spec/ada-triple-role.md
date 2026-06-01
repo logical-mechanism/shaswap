@@ -1,9 +1,14 @@
-# Spec stub — ADA's three roles, both trade directions (A5 / BLUEPRINT §5.2.1)
+# Spec — ADA's three roles, both trade directions (A5 / BLUEPRINT §5.2.1)
 
-> **Status:** stub. The ex-unit spike exercised only **orders buying ADA** (selling
-> token X). The genuinely hard case is **orders selling ADA**, where one lovelace
-> field carries three roles at once. This spec pins the exact accounting both ways and
-> for the non-ADA pair, then folds into BLUEPRINT §5.2.1.
+> **Status:** IMPLEMENTED (Rev 10), spec text still being fleshed out. `clearing.ak`
+> handles the general `(asset_a, asset_b)` pair both directions, incl. **selling ADA**
+> (the hard case: one lovelace field = traded + tip + min) and the **token/token pair**
+> (the easy case: lovelace = tip + min only, never traded). The mechanism is a
+> **full-value pin via input transform** — each owner/remainder/pool output is pinned
+> as the corresponding input value shifted by the trade deltas, so the three roles
+> never leak regardless of which side is ADA. `spend.reserve_of` carves `pool_min_ada`
+> out only when the reserve side is ADA. Remaining: write the exact rounding rules +
+> property tests.
 
 ## The three roles (must never leak into one another)
 

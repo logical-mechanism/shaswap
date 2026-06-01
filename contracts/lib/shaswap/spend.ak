@@ -5,11 +5,33 @@
 use aiken/collection/list
 use aiken/math
 use cardano/address.{Credential, Script, VerificationKey}
-use cardano/assets
+use cardano/assets.{Value, ada_policy_id}
 use cardano/transaction.{Output, OutputReference, Transaction}
 use shaswap/constants.{lp_name, min_liq, nft_name, pool_min_ada, total_lp}
 use shaswap/types.{AssetId, PoolDatum}
 use shaswap/utils
+
+/// A pool reserve read from the UTXO value: for the ADA side the per-UTXO min-ADA
+/// is carved out (overhead, never tradeable/withdrawable liquidity, §5.2.1); for a
+/// native-token side it is the raw quantity. When neither side is ADA the pool's
+/// lovelace is pure overhead and is not a reserve at all.
+pub fn reserve_of(v: Value, a: AssetId) -> Int {
+  if a.policy == ada_policy_id {
+    assets.lovelace_of(v) - pool_min_ada
+  } else {
+    utils.asset_qty(v, a)
+  }
+}
+
+/// Positive part (0 for non-positive). Used to charge the trading fee only on the
+/// side the pool *gained* (its net input), never on the side it paid out.
+fn pos(x: Int) -> Int {
+  if x > 0 {
+    x
+  } else {
+    0
+  }
+}
 
 /// Order `Settle`: defer to settlement, but self-enforce that our own input is
 /// tagged with `s` so we can only ride in a settlement that will enumerate us
@@ -46,16 +68,33 @@ pub fn pool_settle(
       o.address == own.output.address && utils.asset_qty(o.value, d.nft) == 1
     },
   )
-  // reserves with the per-UTXO min-ADA carved out (consistent with the LP path)
-  let k_in = ( assets.lovelace_of(own.output.value) - pool_min_ada ) * utils.asset_qty(
-    own.output.value,
-    d.token,
-  )
-  let k_out = ( assets.lovelace_of(out.value) - pool_min_ada ) * utils.asset_qty(
-    out.value,
-    d.token,
-  )
-  k_out >= k_in
+  // pool identity/params unchanged across the settlement (nft, pair, fee) — the
+  // settlement anchor also pins this, but the pool owns its own continuity
+  expect out.datum == own.output.datum
+
+  // reserves with the per-UTXO min-ADA carved out of whichever side is ADA
+  let res_a_in = reserve_of(own.output.value, d.asset_a)
+  let res_b_in = reserve_of(own.output.value, d.asset_b)
+  let res_a_out = reserve_of(out.value, d.asset_a)
+  let res_b_out = reserve_of(out.value, d.asset_b)
+
+  // Static trading fee φ = fee_num/fee_den (0 ≤ φ < 1), charged Uniswap-v2 style on
+  // the net amount that flowed INTO the pool — and ONLY that. The settlement nets
+  // orders first (§5.2), so CoW-matched volume never reaches the pool and pays no
+  // fee; LPs are paid for the residual liquidity actually consumed. The fee is
+  // retained in reserves, so `k` grows and every LP share's redemption value rises
+  // (value-derived, §6 — no counter, no treasury). A perfectly-netted batch leaves
+  // the pool untouched (in_* = 0) and passes at k unchanged.
+  expect d.fee_den > 0
+  expect d.fee_num >= 0
+  expect d.fee_num < d.fee_den
+  let in_a = pos(res_a_out - res_a_in)
+  let in_b = pos(res_b_out - res_b_in)
+  // effective reserve on each side, ×fee_den: subtract the fee on its net input.
+  let eff_a = res_a_out * d.fee_den - d.fee_num * in_a
+  let eff_b = res_b_out * d.fee_den - d.fee_num * in_b
+  // (eff_a · eff_b) ≥ k_in, scaled by fee_den² to stay integer-exact (no floats).
+  eff_a * eff_b >= res_a_in * res_b_in * d.fee_den * d.fee_den
 }
 
 /// Pool `ClosePool`: tear down a created-but-never-seeded pool. Only valid when
@@ -112,35 +151,36 @@ pub fn lp_action(tx: Transaction, utxo: OutputReference, d: PoolDatum) -> Bool {
 
   let lp = AssetId { policy: d.nft.policy, name: lp_name }
 
-  let res_ada_in = assets.lovelace_of(own.output.value) - pool_min_ada
-  let res_tok_in = utils.asset_qty(own.output.value, d.token)
-  let res_ada_out = assets.lovelace_of(out.value) - pool_min_ada
-  let res_tok_out = utils.asset_qty(out.value, d.token)
+  let res_a_in = reserve_of(own.output.value, d.asset_a)
+  let res_b_in = reserve_of(own.output.value, d.asset_b)
+  let res_a_out = reserve_of(out.value, d.asset_a)
+  let res_b_out = reserve_of(out.value, d.asset_b)
 
   let held_in = utils.asset_qty(own.output.value, lp)
   let held_out = utils.asset_qty(out.value, lp)
   let circ_in = total_lp - held_in
   let circ_out = total_lp - held_out
 
-  // pool retains >= pool_min_ada lovelace; reserves never negative; held in range
-  expect res_ada_out >= 0
-  expect res_tok_out >= 0
+  // reserves never negative (ADA side also keeps >= pool_min_ada lovelace);
+  // held in range
+  expect res_a_out >= 0
+  expect res_b_out >= 0
   expect held_out >= 0
   expect held_out <= total_lp
 
   if circ_in == 0 {
     // first deposit: total shares minted == floor(sqrt(reserveA·reserveB))
-    expect res_ada_out > 0
-    expect res_tok_out > 0
-    expect math.is_sqrt(res_ada_out * res_tok_out, circ_out)
+    expect res_a_out > 0
+    expect res_b_out > 0
+    expect math.is_sqrt(res_a_out * res_b_out, circ_out)
     // permanently lock min_liq at the unspendable mint-policy address
     expect circ_out > min_liq
     lp_at(tx.outputs, Script(d.nft.policy), lp) >= min_liq
   } else {
     // deposit or withdraw: per-share reserve backing non-decreasing in BOTH
     // assets, and circulating never drops below the permanent lock.
-    expect res_ada_out * circ_in >= res_ada_in * circ_out
-    expect res_tok_out * circ_in >= res_tok_in * circ_out
+    expect res_a_out * circ_in >= res_a_in * circ_out
+    expect res_b_out * circ_in >= res_b_in * circ_out
     circ_out >= min_liq
   }
 }

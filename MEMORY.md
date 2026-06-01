@@ -122,6 +122,53 @@ High-signal pointers only:
   (one-level remainder, solver-supplied fills, limit-price-preserving remainder,
   pre-funded min-ADA, remainder outputs enumerated alongside the NFT pool) — ready to
   implement next.
+- **2026-05-31** — **Static trading fee → Blueprint Rev 11 (Option A, residual-only).**
+  User chose Option A. The pool `k`-check (`spend.pool_settle`) now enforces the
+  Uniswap-v2 fee on the **net** flow into the pool: `eff_in = res_in_after − φ·Δin`,
+  require `eff_a·eff_b ≥ k_in` with `φ = fee_num/fee_den`, scaled by `fee_den²` for
+  integer exactness; fee charged only on the side the pool *gained* (`pos(da)`), guarded
+  `0 ≤ φ < 1`. Fee retained in reserves → LP share value rises (value-derived, no
+  counter). **CoW-netted volume pays nothing** (pool untouched → passes at k unchanged);
+  the residual/heavy side pays from its traded asset (still ≥ its floor); solver never
+  touches it. `fee_num/den` (previously dead fields) are now load-bearing. **66 tests
+  green** (+5: fee-ok both directions, fee-short [k grows but < fee → rejected, the key
+  new behavior], zero-residual, k-drop; mutation-checked). **Accepted economics:** LP
+  yield tracks imbalance, not gross volume. `lp_action` deposits/withdrawals are
+  fee-free (not trades). Remaining gap: PA-AMM λ (deferred). Possible hardening:
+  validate `fee_num/den` at pool creation (`mint.create`) so a bricked-fee pool can't
+  be created (today a malformed fee just makes swaps fail; LPs can still withdraw).
+- **2026-05-31** — **Token/token pairs → Blueprint Rev 10.** Generalized the pool from
+  "ADA + one token" to an arbitrary `(asset_a, asset_b)` pair (either side may be ADA or
+  any native token), closing the §5.1/§11 "arbitrary pairs" gap (code was ADA-only).
+  `OrderDatum.sell_ada` → `sell_a`; `PoolDatum`/`SettlementRedeemer` now carry
+  `asset_a`/`asset_b`. New `spend.reserve_of` carves `pool_min_ada` only from an ADA
+  reserve (pure overhead when neither side is ADA). All owner/remainder/pool pins are
+  now **value-transforms of the corresponding input**, so ADA-as-reserve,
+  ADA-as-overhead, and incidental assets are handled uniformly (this also subsumes the
+  Rev 9 LP/datum pins). Guard `asset_a != asset_b` replaces `token != ADA`. **61 tests
+  green** (+4 token/token: settlement happy + strip-LP, LP deposit + over-withdraw).
+  Cost: N=20 mem 7.51M→7.64M (~mem-bound N≈36). **Decisions captured:** trading fee
+  put **on hold** pending CoW-fee economics (§5.4 forces residual-only if implemented —
+  fee_num/den remain carried-but-unenforced); PA-AMM **λ deferred** (λ=1 no-op);
+  best-response is floor-only (v1). ada-triple-role spec promoted from stub.
+- **2026-05-31** — **Security-review fixes → Blueprint Rev 9.** Adversarial review of
+  the on-chain v1 found a **Critical** reserve-drain: settlement pinned only the pool's
+  lovelace + traded token, not its **held LP** (`total_lp − circ`), so a solver could
+  strip the pool's LP into its change during any settlement (even zero-order) and then
+  drain reserves via `LpAction`. Same root cause leaked any **incidental asset** on an
+  order to the solver, and `pool_settle`/settlement let the **pool datum** be mutated
+  mid-settlement. Fix: `clearing.run` now pins the **exact full `Value`** of every
+  owner-output, remainder, and the pool (reserves + NFT + held-LP) + pool datum
+  continuity; owner/remainder values are derived from the spent order's own value so
+  incidental assets ride through to the owner. Also rejects `token == ADA` (role
+  collapse), and `pool_settle` pins datum continuity. No protocol-shape change.
+  Cost: N=20 mem 7.27M→7.51M (~3%), still mem-bound ~N≈37. **57 tests green** (+9:
+  LP-strip/skim, N=0 preserve/strip, junk-leak/return, datum-mutation, token==ADA).
+  **Still open (flagged, not fixed — acceptable under floor-only v1):** settlement does
+  not bind the pool input to a genuine pool-validator credential, so a solver can run a
+  fake-pool/CoW batch with no `k`-check (users still floor-protected); and `ClosePool`
+  needs no signature on an unseeded-but-reserved pool. Specs `ada-triple-role.md` /
+  `clearing-price.md` should be promoted from stub and capture the floor-rounding rule.
 - **2026-05-31** — **Partial fills implemented (Blueprint Rev 8).** User chose the
   **proportional-tip** variant (pay-per-fill). `clearing.ak`: solver declares per-order
   `fills`; `f < sell_amount` requires `partial==True` and produces a one-level

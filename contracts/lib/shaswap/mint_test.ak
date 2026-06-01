@@ -38,10 +38,11 @@ fn seed_input() -> Input {
 fn pool_datum() -> PoolDatum {
   PoolDatum {
     nft: AssetId { policy, name: nft_name },
-    token: AssetId {
+    asset_a: AssetId {
       policy: #"3333333333333333333333333333333333333333333333333333333d",
       name: #"54",
     },
+    asset_b: AssetId { policy: #"", name: #"" },
     fee_num: 3,
     fee_den: 1000,
   }

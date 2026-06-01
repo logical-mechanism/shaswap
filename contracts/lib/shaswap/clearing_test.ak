@@ -11,7 +11,7 @@ use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
 use shaswap/clearing
-use shaswap/constants.{order_min_ada}
+use shaswap/constants.{lp_name, order_min_ada, total_lp}
 use shaswap/spend
 use shaswap/types.{
   AssetId, BoundDatum, OrderDatum, PoolDatum, PoolSettle, Reclaim, Settle,
@@ -48,6 +48,9 @@ const nft =
     name: #"4e4654",
   }
 
+// ADA-paired pools: asset_a = the token, asset_b = ADA (policy/name = "").
+const ada = AssetId { policy: #"", name: #"" }
+
 const sell = 1_000_000
 
 const tip = 2_000_000
@@ -76,7 +79,8 @@ fn redeemer(fills: List<Int>) -> SettlementRedeemer {
   SettlementRedeemer {
     price_num: 1,
     price_den: 2,
-    token: tok,
+    asset_a: tok,
+    asset_b: ada,
     pool_nft: nft,
     fills,
   }
@@ -109,7 +113,7 @@ fn pool_ref() -> OutputReference {
 fn order_datum() -> OrderDatum {
   OrderDatum {
     owner: VerificationKey(owner_vkh),
-    sell_ada: False,
+    sell_a: True,
     sell_amount: sell,
     limit,
     tip,
@@ -119,7 +123,7 @@ fn order_datum() -> OrderDatum {
 }
 
 fn pool_datum() -> PoolDatum {
-  PoolDatum { nft, token: tok, fee_num: 3, fee_den: 1000 }
+  PoolDatum { nft, asset_a: tok, asset_b: ada, fee_num: 3, fee_den: 1000 }
 }
 
 // ---- builders -------------------------------------------------------------
@@ -185,7 +189,7 @@ fn solver_output(ada: Int) -> Output {
   }
 }
 
-// ADA-seller: sells `sell_ada_amt` lovelace, buys token (limit `lim` token).
+// ADA-seller: sells `sell_ada_amt` lovelace (asset_b), buys token (limit `lim`).
 fn ada_order_input(i: Int, sell_ada_amt: Int, lim: Int) -> Input {
   Input {
     output_reference: order_ref(i),
@@ -195,7 +199,7 @@ fn ada_order_input(i: Int, sell_ada_amt: Int, lim: Int) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
-          sell_ada: True,
+          sell_a: False,
           sell_amount: sell_ada_amt,
           limit: lim,
           tip,
@@ -561,7 +565,7 @@ fn partial_token_order(allow_partial: Bool) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
-          sell_ada: False,
+          sell_a: True,
           sell_amount: sell,
           limit,
           tip,
@@ -583,7 +587,7 @@ fn partial_ada_order() -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
-          sell_ada: True,
+          sell_a: False,
           sell_amount: 1_000_000,
           limit: 1_500_000,
           tip,
@@ -599,18 +603,19 @@ fn partial_ada_order() -> Input {
 fn remainder_output(
   is_ada: Bool,
   tok_amt: Int,
-  ada: Int,
+  ada_amt: Int,
   sell2: Int,
   lim2: Int,
   tip2: Int,
 ) -> Output {
   Output {
     address: tagged(Script(o_hash)),
-    value: tok_val(ada, tok_amt),
+    value: tok_val(ada_amt, tok_amt),
     datum: InlineDatum(
       OrderDatum {
         owner: VerificationKey(owner_vkh),
-        sell_ada: is_ada,
+        // is_ada = the order sells ADA (asset_b) ⟺ sell_a == False
+        sell_a: !is_ada,
         sell_amount: sell2,
         limit: lim2,
         tip: tip2,
@@ -702,4 +707,365 @@ test partial_remainder_bad_limit() fail {
     withdrawals: [Pair(s(), 0)],
   }
   clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// ---- pool held-LP continuity (C1: the reserve-drain blocker) --------------
+// A live pool holds `total_lp − circ` LP. The settlement must pin it so a solver
+// can't strip the held LP into its own change (and later drain reserves via an
+// LpAction). Earlier code pinned only the pool's ADA + token, not its LP.
+
+const lp_held = total_lp - 1_000_000
+
+fn pool_input_lp(held: Int) -> Input {
+  Input {
+    output_reference: pool_ref(),
+    output: Output {
+      address: tagged(Script(p_hash)),
+      value: pool_val(pool_ada_in, pool_tok_in)
+        |> assets.add(nft.policy, lp_name, held),
+      datum: InlineDatum(pool_datum()),
+      reference_script: None,
+    },
+  }
+}
+
+fn pool_output_lp(ada: Int, t: Int, held: Int) -> Output {
+  Output {
+    address: tagged(Script(p_hash)),
+    value: pool_val(ada, t) |> assets.add(nft.policy, lp_name, held),
+    datum: InlineDatum(pool_datum()),
+    reference_script: None,
+  }
+}
+
+// single token-seller settlement; pool carries its held LP both sides.
+fn build1_lp(pool_held_out: Int) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input_lp(lp_held)],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output_lp(pool_ada_in - received, pool_tok_in + sell, pool_held_out),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+// held LP preserved across the settlement: ok.
+test settlement_preserves_pool_lp() {
+  clearing.run(s(), redeemer([sell]), build1_lp(lp_held))
+}
+
+// solver strips the pool's held LP (output carries 0 LP): rejected.
+test settlement_strip_pool_lp() fail {
+  clearing.run(s(), redeemer([sell]), build1_lp(0))
+}
+
+// solver siphons even a single LP token off the pool: rejected.
+test settlement_skim_one_lp() fail {
+  clearing.run(s(), redeemer([sell]), build1_lp(lp_held - 1))
+}
+
+// ---- N=0 settlement (empty batch) -----------------------------------------
+// A pool-only settlement must still pin the pool exactly (incl. held LP).
+
+test settlement_n0_preserves_lp() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_input_lp(lp_held)],
+    outputs: [pool_output_lp(pool_ada_in, pool_tok_in, lp_held)],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([]), tx)
+}
+
+// an empty batch that strips LP from the pool: rejected.
+test settlement_n0_strip_lp() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_input_lp(lp_held)],
+    outputs: [pool_output_lp(pool_ada_in, pool_tok_in, 0)],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([]), tx)
+}
+
+// ---- incidental-asset pass-through (H2) -----------------------------------
+// An order UTXO that also carries an unrelated asset must return it to the owner;
+// the solver can't route it to itself. Owner/remainder/pool pin FULL value now.
+
+const junk =
+  AssetId {
+    policy: #"7777777777777777777777777777777777777777777777777777777f",
+    name: #"6a6e6b",
+  }
+
+fn order_input_junk() -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: tok_val(order_in_ada, sell)
+        |> assets.add(junk.policy, junk.name, 5),
+      datum: InlineDatum(order_datum()),
+      reference_script: None,
+    },
+  }
+}
+
+// owner output returns the incidental asset: ok.
+test settlement_junk_returned_ok() {
+  let owner_out = Output {
+    address: plain(VerificationKey(owner_vkh)),
+    value: assets.from_lovelace(owner_out_ada)
+      |> assets.add(junk.policy, junk.name, 5),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_junk(), pool_input(True)],
+    outputs: [
+      owner_out,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// owner output omits the incidental asset (solver keeps it): rejected.
+test settlement_junk_leak_rejected() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_junk(), pool_input(True)],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// ---- pool datum continuity (H3) -------------------------------------------
+// The pool's datum (identity / fee params) can't be mutated mid-settlement.
+
+test settlement_pool_datum_mutation() fail {
+  let bad_pool = Output {
+    address: tagged(Script(p_hash)),
+    value: pool_val(pool_ada_in - received, pool_tok_in + sell),
+    datum: InlineDatum(PoolDatum { ..pool_datum(), fee_num: 999 }),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [owner_output(0, owner_out_ada), bad_pool, solver_output(tip)],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// ---- declared pair must be non-degenerate (asset_a != asset_b) -------------
+
+test settlement_degenerate_pair() fail {
+  // asset_a == asset_b (both ADA) collapses the pair: rejected.
+  let bad = SettlementRedeemer { ..redeemer([sell]), asset_a: ada }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// ---- token/token pair (neither side is ADA) -------------------------------
+// asset_a = tok, asset_b = tokb; the pool's lovelace is pure min-ADA overhead.
+// Order sells 1000 tok for tokb at price 3 (tokb per tok) -> 3000 tokb.
+
+const tokb =
+  AssetId {
+    policy: #"888888888888888888888888888888888888888888888888888888ff",
+    name: #"42",
+  }
+
+fn tt_redeemer(fills: List<Int>) -> SettlementRedeemer {
+  SettlementRedeemer {
+    price_num: 3,
+    price_den: 1,
+    asset_a: tok,
+    asset_b: tokb,
+    pool_nft: nft,
+    fills,
+  }
+}
+
+fn tt_pool_value(res_a: Int, res_b: Int, held: Int) -> Value {
+  assets.from_lovelace(2_000_000)
+    |> assets.add(tok.policy, tok.name, res_a)
+    |> assets.add(tokb.policy, tokb.name, res_b)
+    |> assets.add(nft.policy, nft.name, 1)
+    |> assets.add(nft.policy, lp_name, held)
+}
+
+fn tt_pool_datum() -> PoolDatum {
+  PoolDatum { nft, asset_a: tok, asset_b: tokb, fee_num: 3, fee_den: 1000 }
+}
+
+fn settlement_tt(pool_held_out: Int) -> Transaction {
+  let held = total_lp - 1_000_000
+  let pool_in_tt = Input {
+    output_reference: pool_ref(),
+    output: Output {
+      address: tagged(Script(p_hash)),
+      value: tt_pool_value(1_000_000, 3_000_000, held),
+      datum: InlineDatum(tt_pool_datum()),
+      reference_script: None,
+    },
+  }
+  let order_in_tt = Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: assets.from_lovelace(tip + min_ada)
+        |> assets.add(tok.policy, tok.name, 1000),
+      datum: InlineDatum(
+        OrderDatum {
+          owner: VerificationKey(owner_vkh),
+          sell_a: True,
+          sell_amount: 1000,
+          limit: 2000,
+          tip,
+          partial: False,
+          deadline: None,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+  let owner_out = Output {
+    address: plain(VerificationKey(owner_vkh)),
+    value: assets.from_lovelace(min_ada)
+      |> assets.add(tokb.policy, tokb.name, 3000),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let pool_out_tt = Output {
+    address: tagged(Script(p_hash)),
+    value: tt_pool_value(1_000_000 + 1000, 3_000_000 - 3000, pool_held_out),
+    datum: InlineDatum(tt_pool_datum()),
+    reference_script: None,
+  }
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [order_in_tt, pool_in_tt],
+    outputs: [owner_out, pool_out_tt, solver_output(tip)],
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+// token/token settlement clears and pins everything (incl. held LP): ok.
+test settlement_token_token() {
+  clearing.run(s(), tt_redeemer([1000]), settlement_tt(total_lp - 1_000_000))
+}
+
+// the same full-value pin guards a token/token pool's LP: strip it -> rejected.
+test settlement_token_token_strip_lp() fail {
+  clearing.run(s(), tt_redeemer([1000]), settlement_tt(0))
+}
+
+// ---- static trading fee in the pool k-check (§7, Option A: residual-only) --
+// Pool (token/token, fee 3/1000) at reserves 1_000_000 / 1_000_000. The fee is
+// charged Uniswap-v2 style on the net amount that flows INTO the pool.
+
+fn fee_pool_value(res_a: Int, res_b: Int) -> Value {
+  assets.from_lovelace(2_000_000)
+    |> assets.add(tok.policy, tok.name, res_a)
+    |> assets.add(tokb.policy, tokb.name, res_b)
+    |> assets.add(nft.policy, nft.name, 1)
+}
+
+fn fee_settle_tx(
+  res_a_in: Int,
+  res_b_in: Int,
+  res_a_out: Int,
+  res_b_out: Int,
+) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      Input {
+        output_reference: pool_ref(),
+        output: Output {
+          address: tagged(Script(p_hash)),
+          value: fee_pool_value(res_a_in, res_b_in),
+          datum: InlineDatum(tt_pool_datum()),
+          reference_script: None,
+        },
+      },
+    ],
+    outputs: [
+      Output {
+        address: tagged(Script(p_hash)),
+        value: fee_pool_value(res_a_out, res_b_out),
+        datum: InlineDatum(tt_pool_datum()),
+        reference_script: None,
+      },
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+// pool gains 10_000 A, pays out 9_000 B: k grows well past the 0.3% fee -> ok.
+test pool_fee_ok() {
+  spend.pool_settle(
+    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 991_000),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+}
+
+// same the other direction (pool gains 10_000 B, pays 9_000 A): ok.
+test pool_fee_reverse_ok() {
+  spend.pool_settle(
+    fee_settle_tx(1_000_000, 1_000_000, 991_000, 1_010_000),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+}
+
+// pool gains 10_000 A but pays out 9_900 B: k *grows* (1.000001e12 > 1e12) yet the
+// fee is NOT covered. The old zero-fee `k_out >= k_in` accepted this; now rejected.
+test pool_fee_short() fail {
+  spend.pool_settle(
+    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 990_100),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+}
+
+// a perfectly-netted batch leaves the pool untouched: no residual, no fee -> ok.
+test pool_fee_no_residual() {
+  spend.pool_settle(
+    fee_settle_tx(1_000_000, 1_000_000, 1_000_000, 1_000_000),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+}
+
+// pool pays out far too much B (k actually drops): rejected.
+test pool_fee_k_drop() fail {
+  spend.pool_settle(
+    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 950_000),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
 }

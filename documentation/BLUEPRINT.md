@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 5 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 11 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -29,7 +29,38 @@
 > non-decreasing invariant; resolves the §5.1/§6 conflict and the §12 LP decision.**
 > **Rev 8: partial fills resolved + implemented (§7/§12.4) — proportional tip
 > (pay-per-fill), one-level remainder, pre-funded 2× min-ADA, limit-price preserved;
-> plus bidirectional netting and order deadlines implemented.**)
+> plus bidirectional netting and order deadlines implemented.**
+> **Rev 9: security-review fixes (§5.2.1) — settlement now pins the EXACT full `Value`
+> of every owner-output, remainder, and the pool (incl. the pool's held LP supply and
+> the pool datum), not just lovelace + traded token. Closes a reserve-drain where a
+> solver stripped the pool's held LP during a settlement (then withdrew reserves via
+> `LpAction`), an incidental-asset leak to the solver, and a pool-datum/fee mutation;
+> also rejects a declared `token == ADA`. Pool validator now also pins datum
+> continuity in `PoolSettle`. No protocol-shape change; tightens conservation
+> enforcement to match the §5.2.1 intent. +9 tests (57 green).**
+> **Rev 10: token/token pairs (§5.1) — the pool is now a general `(asset_a, asset_b)`
+> pair; either side may be ADA or any native token, so token/token pools are
+> first-class (matches the long-standing §5.1 "reserves of A and B"; the code was
+> previously ADA-only). `OrderDatum.sell_a` replaces `sell_ada`; `PoolDatum`/redeemer
+> carry `asset_a`/`asset_b`. Settlement reserve carve-out (`reserve_of`) removes
+> min-ADA only from whichever side is ADA (pure overhead when neither is). All
+> owner/remainder/pool pins are now value-transforms of the corresponding input, so
+> ADA-as-reserve, ADA-as-overhead, and incidental assets are handled uniformly. The
+> degenerate-pair guard (`asset_a != asset_b`) replaces the Rev 9 `token != ADA`
+> guard. +4 token/token tests (61 green). **NOT YET IMPLEMENTED / open:** the static
+> trading fee (§7) — `fee_num/den` are carried but unenforced, pending a decision on
+> CoW-netted volume (residual-only vs per-order, §5.4 split forces residual-only);
+> and PA-AMM `λ` (§5.6/§11) — deferred, `λ=1` no-op for now. Best-response (§5.2.4) is
+> enforced as the per-order floor only (v1 floor-only, §5.2.7).**
+> **Rev 11: static trading fee implemented (§7/§5.2.3, Option A — residual-only).** The
+> pool `k`-check now enforces the Uniswap-v2 fee `(res_in_after − φ·Δin)·res_out_after ≥
+> k_before` with `φ = fee_num/fee_den` on the **net** flow into the pool, retained in
+> reserves (LP earnings). CoW-netted volume reaches no fee; a perfectly-netted batch
+> passes at `k` unchanged. The residual/heavy side pays (from its traded asset, ≥ its
+> floor); the solver never touches it. `fee_num/den` are now load-bearing (guarded
+> `0 ≤ φ < 1`). +5 tests (66 green): fee covered both directions, fee-short (k grows but
+> < fee → now rejected), zero-residual, k-drop. **Accepted trade-off:** LP yield tracks
+> imbalance, not gross volume. Still open: PA-AMM `λ`.**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -190,15 +221,36 @@ witness — the validator checks algebra, never solves (Principle 4).
    simultaneously holds traded-ADA + tip + min-ADA and must be disambiguated by the
    datum, not inferred. The exact per-direction accounting is specified in
    [`spec/ada-triple-role.md`](spec/ada-triple-role.md) (A5).
+   - **Enforcement = exact full-value pinning, not scalar pinning (Rev 9).** The
+     anchor pins the **entire `Value`** of every owner-output, every remainder, and
+     the pool — not just its lovelace and the traded token. Owner/remainder values
+     are derived from the *spent order's own value* (sold side removed, bought side
+     added, tip/min-ADA moved), so **any incidental asset on an order rides through
+     to its owner** and can never be skimmed by the solver. The pool output is pinned
+     to `reserves + NFT + held-LP`: the pool's **held LP supply (`total_lp − circ`)
+     is read from the input and pinned across the settlement** — without this a solver
+     could strip the pool's LP into its own change and later drain reserves via an
+     `LpAction` (the Rev 8 scalar-only pin missed this; fixed Rev 9). Combined with
+     `mint == 0` and ledger value conservation, this forces the solver's net to equal
+     exactly the (proportional) tips for **every** asset class — no separate
+     global-conservation fold. The declared `token` must not be ADA itself
+     (`policy ≠ ∅`), and the pool **datum is pinned unchanged** so identity/fee params
+     can't be mutated mid-settlement (also re-checked by the pool validator).
 2. **Uniform price.** Every order in the (single-shard) batch fills at one clearing
    price. → eliminates intra-batch ordering MEV / sandwiching.
-3. **Pool invariant non-decreasing.** Checked by the **pool validator** (not the
-   settlement anchor), `k_after ≥ k_before` from actual reserves (§5.1). This is the
-   curve-specific check; keeping it in the pool validator is what makes pools
-   genuinely pluggable (§5.4 — responsibility split). The settlement anchor stays
+3. **Pool invariant non-decreasing (incl. the trading fee).** Checked by the **pool
+   validator** (not the settlement anchor) from actual reserves (§5.1). The curve is
+   constant-product with a **static fee** `φ = fee_num/fee_den`: the invariant is the
+   Uniswap-v2 form `(res_in_after − φ·Δin)·res_out_after ≥ k_before`, where `Δin` is
+   the **net** amount the batch pushed into the pool — so `k` must grow by the fee on
+   the residual, and the fee is retained in reserves (LP earnings, §7). Because orders
+   net first (§5.2), **only the residual reaches the pool**, so CoW-matched volume
+   pays no fee (Option A, residual-only). A perfectly-netted batch leaves the pool
+   untouched and passes at `k` unchanged. Keeping this in the pool validator is what
+   makes pools genuinely pluggable (§5.4 split). The settlement anchor stays
    **curve-agnostic**: it enforces rules 1/2/4/5/6 (conservation, uniform price,
-   best-response, floor, binding) and the input-accounting invariant, and reads the
-   pool's before/after reserves for conservation, but never the curve.
+   best-response, floor, binding) and the input-accounting invariant, and pins the
+   pool's before/after value for conservation, but never the curve or the fee.
 4. **Best-response for orders.** Each order gets the best-response trade at the
    clearing price, respecting its limit and partial-fill rule.
 5. **Per-order floor.** Every order receives **at least its own stated
@@ -419,7 +471,16 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
 
 ## 7. Economic design
 
-- **Trading fee → LPs**, a **low static rate** (captured in reserves / share value).
+- **Trading fee → LPs (IMPLEMENTED, Rev 11; Option A — residual-only).** A **low static
+  rate** `fee_num/fee_den` per pool (immutable, no governance; permissionless pool
+  creation makes fees a market). Enforced in the pool validator's `k`-check (§5.2.3),
+  Uniswap-v2 style on the **net** flow into the pool, retained in reserves so LP share
+  value rises (value-derived, §6). **Who pays:** the residual/heavy side of the batch,
+  out of their traded asset, as a marginally worse fill (still ≥ their own limit floor,
+  §5.2.5) — never the tip, never min-ADA, never the solver. **CoW-matched volume pays
+  no fee** (the pool isn't touched for it); the uniform price redistributes price-impact
+  within the batch. Consequence (accepted): LP yield tracks **imbalance**, not gross
+  volume — LPs are paid for liquidity actually consumed.
 - **Solver reward = ADA tips (no bespoke token).** Each Order UTXO posts a small ADA
   tip; settlement pays the included orders' tips to whoever submits. **Bounded**
   (only posted tips), **transparent**, **verified by conservation** (§5.2.1) — a
@@ -505,6 +566,15 @@ No module may call a specific provider directly — the abstraction is day-one.
 - **ADA solver rewards** (posted tips).
 - **Oracle-free LVR mitigation:** PA-AMM `λ` (default 1) + **low static fee**.
 - Reference **Rust/Pallas batcher**, **MeshJS React** frontend, data abstraction.
+
+**On-chain implementation status (Rev 11).** Implemented & tested: settlement anchor +
+order/pool/pool_mint validators, **arbitrary pairs incl. token/token and ADA pairs**,
+uniform-price batch + bidirectional netting, per-order floor, injective O(N) binding,
+partial fills (proportional tip), deadlines, value-derived LP (deposit/withdraw/first-
+deposit/close), **static trading fee (residual-only, §5.2.3/§7)**, non-custodial reclaim,
+withdraw-0 wiring. **Not yet implemented:** **PA-AMM `λ`** (deferred, `λ=1` no-op).
+**Best-response (§5.2.4)** is enforced as the floor only (v1 floor-only, §5.2.7).
+Off-chain (batcher/frontend/data layer) not started.
 
 **Explicitly NOT in v1 / never in core:** any oracle dependency; order privacy
 (intents and limit prices are public on-chain); cross-shard price unification;

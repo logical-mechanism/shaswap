@@ -4,10 +4,15 @@
 //// settlement staking credential `S` as their stake credential; the settlement
 //// validator is unparameterised and enumerates its input set by `S`.
 ////
-//// `OrderDatum` (5 fields) and `PoolDatum` (4 fields) are intentionally distinct
+//// `OrderDatum` (7 fields) and `PoolDatum` (5 fields) are intentionally distinct
 //// shapes so a well-formed order can NEVER be parsed as the pool — this is what
 //// makes the order-spend deferral safe against a solver relabelling an order as
 //// "the pool" to skip its checks (§5.4 role-identification).
+////
+//// Pairs are general **`asset_a`/`asset_b`** (Rev 10): either side may be ADA
+//// (the `policy == ""` asset) or any native token, so token/token pools are
+//// first-class. ADA's per-UTXO min-ADA is carved out of whichever reserve is ADA
+//// (pure overhead when neither is), keeping the §5.2.1 three roles separate.
 
 use cardano/address.{Credential}
 use cardano/assets.{AssetName, PolicyId}
@@ -19,14 +24,14 @@ pub type AssetId {
   name: AssetName,
 }
 
-/// Order UTXO datum — the intent (§5.1). Bidirectional against one pool:
-/// `sell_ada = False` sells `sell_amount` of the pool's token for ADA;
-/// `sell_ada = True` sells `sell_amount` lovelace for the token. `limit` is the
-/// minimum amount of the *bought* asset (ADA or token respectively) — the
-/// per-order floor (§5.2.5).
+/// Order UTXO datum — the intent (§5.1). Bidirectional against one pool whose
+/// pair is `(asset_a, asset_b)`: `sell_a = True` sells `sell_amount` of `asset_a`
+/// for `asset_b`; `sell_a = False` sells `sell_amount` of `asset_b` for `asset_a`.
+/// `limit` is the minimum amount of the *bought* asset — the per-order floor
+/// (§5.2.5). Either asset may be ADA or a native token.
 pub type OrderDatum {
   owner: Credential,
-  sell_ada: Bool,
+  sell_a: Bool,
   sell_amount: Int,
   limit: Int,
   tip: Int,
@@ -45,11 +50,12 @@ pub type OrderRedeemer {
 }
 
 /// Pool UTXO datum (§5.1). Reserves are read from the UTXO *value*; `k` is NOT
-/// stored. Identity (`nft`) + traded `token` + static fee. Distinct shape from
-/// `OrderDatum`.
+/// stored. Identity (`nft`) + the traded pair (`asset_a`, `asset_b`) + static fee.
+/// Either asset may be ADA. Distinct shape (5 fields) from `OrderDatum` (7).
 pub type PoolDatum {
   nft: AssetId,
-  token: AssetId,
+  asset_a: AssetId,
+  asset_b: AssetId,
   fee_num: Int,
   fee_den: Int,
 }
@@ -81,14 +87,16 @@ pub type MintRedeemer {
 }
 
 /// The solver-supplied settlement witness (the redeemer of the withdraw-0
-/// settlement validator). Clearing price is an exact rational (no floats).
-/// `token`/`pool_nft` are solver-declared identities, *verified* on-chain
-/// (token by conservation, NFT by continuity) so settlement never parses the
-/// PoolDatum and stays curve-agnostic.
+/// settlement validator). Clearing price is an exact rational (no floats):
+/// `price = price_num / price_den` is the amount of `asset_b` per unit of
+/// `asset_a`. `asset_a`/`asset_b`/`pool_nft` are solver-declared identities,
+/// *verified* on-chain (assets by conservation, NFT by continuity) so settlement
+/// never parses the PoolDatum and stays curve-agnostic.
 pub type SettlementRedeemer {
   price_num: Int,
   price_den: Int,
-  token: AssetId,
+  asset_a: AssetId,
+  asset_b: AssetId,
   pool_nft: AssetId,
   /// Per-order fill amount (canonical input order; one entry per order input).
   /// `fills[i] == sell_amount` is a full fill; `fills[i] < sell_amount` is a

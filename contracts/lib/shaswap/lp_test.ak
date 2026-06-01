@@ -29,8 +29,10 @@ const nft_policy = #"4444444444444444444444444444444444444444444444444444444e"
 
 const nft = AssetId { policy: nft_policy, name: #"4e4654" }
 
+const ada = AssetId { policy: #"", name: #"" }
+
 fn pool_datum() -> PoolDatum {
-  PoolDatum { nft, token: tok, fee_num: 3, fee_den: 1000 }
+  PoolDatum { nft, asset_a: tok, asset_b: ada, fee_num: 3, fee_den: 1000 }
 }
 
 fn pool_addr() -> Address {
@@ -159,6 +161,62 @@ test deposit_overmint() fail {
     pool_ref(),
     pool_datum(),
   )
+}
+
+// ---- token/token pool (neither reserve is ADA) ----------------------------
+// asset_a = tok, asset_b = tokb; lovelace is pure pool_min_ada overhead, never a
+// reserve. A proportional deposit must satisfy per-share backing in both tokens.
+
+const tokb =
+  AssetId {
+    policy: #"888888888888888888888888888888888888888888888888888888ff",
+    name: #"42",
+  }
+
+fn tt_datum() -> PoolDatum {
+  PoolDatum { nft, asset_a: tok, asset_b: tokb, fee_num: 3, fee_den: 1000 }
+}
+
+fn tt_pool(res_a: Int, res_b: Int, held: Int) -> Output {
+  Output {
+    address: pool_addr(),
+    value: assets.from_lovelace(pool_min_ada)
+      |> assets.add(tok.policy, tok.name, res_a)
+      |> assets.add(tokb.policy, tokb.name, res_b)
+      |> assets.add(nft.policy, nft.name, 1)
+      |> assets.add(nft.policy, lp_name, held),
+    datum: InlineDatum(tt_datum()),
+    reference_script: None,
+  }
+}
+
+// 10% proportional deposit into a token/token pool: ok.
+test deposit_token_token() {
+  let pin = Input {
+    output_reference: pool_ref(),
+    output: tt_pool(100_000_000, 200_000_000, total_lp - 1_000_000),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pin],
+    outputs: [tt_pool(110_000_000, 220_000_000, total_lp - 1_100_000)],
+  }
+  spend.lp_action(tx, pool_ref(), tt_datum())
+}
+
+// over-withdraw from a token/token pool (take more than shares entitle): rejected.
+test withdraw_token_token_too_much() fail {
+  let pin = Input {
+    output_reference: pool_ref(),
+    output: tt_pool(100_000_000, 200_000_000, total_lp - 1_000_000),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pin],
+    // return 10% of shares but take ~11% of reserve_a
+    outputs: [tt_pool(89_000_000, 180_000_000, total_lp - 900_000)],
+  }
+  spend.lp_action(tx, pool_ref(), tt_datum())
 }
 
 // ---- first deposit (circ_in == 0) -----------------------------------------
