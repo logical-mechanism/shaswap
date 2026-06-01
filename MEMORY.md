@@ -8,22 +8,21 @@ append-only-ish; don't restate blueprint content (it would drift).
 
 ## Current phase
 
-**On-chain implementation started (Rev 6 design).** Production trust anchor +
-order/pool validators exist in `contracts/` with a green test suite (14 tests: happy
-paths + safety negatives). The spike code has been **superseded/removed**. Still
-pre-production: LP deposit/withdraw, partial fills, bidirectional netting, LP/pool-NFT
-minting policies, and an emulator pass are not done.
+**On-chain implementation in progress (Rev 7 design).** Anchor + order/pool/pool_mint
+validators exist in `contracts/`, 31 tests green. LP deposit/withdraw + pool
+create/close mint are now implemented. Still pre-production: partial fills,
+bidirectional netting, and an emulator pass.
 
 ## Immediate next step
 
-**Continue the contract build on top of the green anchor.** Highest-value next pieces:
-(1) **LP path** on the pool validator (deposit/withdraw, share tokens, first-LP guard
-§6) — currently stubbed `fail`, MUST let LPs always exit before production; (2) the
-**pool-NFT + LP-token minting policies**; (3) **partial fills** (per `spec/partial-fills.md`)
-and **bidirectional netting** (orders both directions clearing at one price); (4) the
-clearing-price/ADA-triple-role specs into the validator. **Before finalizing:** spike
-**true-equilibrium** cost (§5.2.7); **emulator** re-measure with real `Data`
-ScriptContext + a partial-fill mix.
+**Continue the contract build.** Highest-value next pieces: (1) **partial fills** (per
+`spec/partial-fills.md`) — adds remainder outputs to settlement, currently full-fill
+only; (2) **bidirectional netting** (orders both directions clearing at one price —
+the netting benefit; v1 settlement is single-direction token->ADA); (3) fold the
+clearing-price + ADA-triple-role specs into the validators; (4) a **pool-close /
+full-exit** spend path tying the `Close` mint to the last withdrawal. **Before
+finalizing:** spike **true-equilibrium** cost (§5.2.7); **emulator** re-measure with
+real `Data` ScriptContext + a partial-fill mix.
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -94,4 +93,16 @@ High-signal pointers only:
   this version silently panics (exit 1, no diagnostic) on a validator/module name
   collision, an unimported annotated type, and `use`-ing a validator module from
   another module — factor validator logic into lib fns and test those.
+- **2026-05-31** — **LP path + pool minting (Blueprint Rev 7).** Resolved the §5.1/§6
+  LP-accounting conflict → **value-derived reserves + held-LP circulating supply**
+  (user-chosen): reserves from pool value with **min-ADA carved out**
+  (`reserve_ada = lovelace − pool_min_ada`, also applied to the swap `k`-check),
+  circulating = `total_lp − held`, first-deposit shares via `is_sqrt` with `min_liq`
+  permanently locked at the unspendable mint-policy address, and a single unified
+  invariant: **per-share reserve backing non-decreasing in both assets** (protects LPs
+  on deposit and withdraw). Implemented `spend.lp_action` + `mint.create/close` + the
+  `pool_mint` one-shot policy (seed-parameterised) + `constants`. Pool `LpAction` is
+  mutually exclusive with settlement. 31 tests green (added LP + mint suites). LP path
+  no longer stubbed; the lone remaining `fail` is pool `Close` via the mint policy
+  (full-exit spend path still TODO).
 </content>

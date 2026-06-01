@@ -9,6 +9,7 @@ use cardano/address.{Credential}
 use cardano/transaction.{OutputReference, Transaction}
 use shaswap/spend
 use shaswap/types.{LpAction, PoolDatum, PoolRedeemer, PoolSettle}
+use shaswap/utils
 
 validator pool(settlement_cred: Credential) {
   spend(
@@ -20,9 +21,13 @@ validator pool(settlement_cred: Credential) {
     expect Some(d) = datum
     when redeemer is {
       PoolSettle -> spend.pool_settle(self, utxo, d, settlement_cred)
-      // TODO(milestone): LP deposit/withdraw (share-token based, §5.1 spend path
-      // (b)). MUST guarantee LPs can always exit before production. Stubbed.
-      LpAction -> fail
+      // Standalone LP deposit/withdraw (§5.1 spend path (b), §6 LP model). Must
+      // NOT coincide with a settlement (mutual exclusion), then runs the
+      // value-derived LP invariant.
+      LpAction -> and {
+          !utils.withdrawal_present(self, settlement_cred),
+          spend.lp_action(self, utxo, d),
+        }
     }
   }
 

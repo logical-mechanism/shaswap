@@ -22,7 +22,11 @@
 > split (settlement curve-agnostic, pool owns `k`) (§5.2.3/§5.4); v1 batch cap ≈ 40
 > (§5.3); v1 = floor-only, equilibrium deferred (§5.2.7); spec stubs added for
 > partial fills, clearing-price encoding, and ADA triple-role both directions
-> (`spec/`).**)
+> (`spec/`).**
+> **Rev 7: LP model resolved (§5.1/§6) — value-derived reserves + held-LP circulating
+> supply (no counters), min-ADA carved out of reserves, first-deposit `is_sqrt`,
+> `MIN_LIQ` permanently locked at the unspendable mint-policy address, per-share-backing
+> non-decreasing invariant; resolves the §5.1/§6 conflict and the §12 LP decision.**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -141,7 +145,9 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
      id, optional PA-AMM `λ` + last-batch marker. **`k` is NOT stored** — the pool
      validator checks `reserveA_after · reserveB_after ≥ reserveA_before ·
      reserveB_before` from the UTXO's *actual* reserves, so there is no datum/reserve
-     desync. **No external references** (oracle pools are a variant — §5.4/§5.6).
+     desync. **LP supply is likewise value-derived** (= `TOTAL_LP − LP held in this
+     UTXO`); neither reserves nor share supply is stored as a counter (§6 LP model).
+     **No external references** (oracle pools are a variant — §5.4/§5.6).
    - *Identity:* a unique pool NFT — also the settlement anchor's discriminator for
      "which input is the pool" (§5.4 wiring).
    - *Address:* payment credential = pool validator; **stake credential = the
@@ -375,12 +381,27 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
 
 ## 6. End-to-end lifecycle
 
-1. **Provide liquidity.** Deposit A+B into a shard, mint LP tokens. The **first LP
-   sets the initial ratio.** To prevent the first-depositor share-inflation/donation
-   attack (ERC-4626 vector), a **minimum initial liquidity is locked** (first shares
-   burned) and **share value is computed from datum-tracked reserves, not raw UTXO
-   value**, so a direct token donation can't inflate it. Later deposits add at the
-   current reserve ratio.
+1. **Provide liquidity.** Deposit A+B into a shard and receive LP tokens. The **first
+   LP sets the initial ratio** — first-deposit shares = `⌊√(ΔA·ΔB)⌋`, verified
+   on-chain via `is_sqrt` (verify-don't-compute). The LP accounting is **fully
+   value-derived** (decision §12, consistent with §5.1 — no stored reserves, no supply
+   counter):
+   - **Reserves** are read from the pool UTXO value, with the per-UTXO **min-ADA carved
+     out** of the ADA reserve (`reserve_ada = lovelace − POOL_MIN_ADA`) so the pool's
+     own min-ADA is never counted as tradeable/withdrawable liquidity (§5.2.1 roles).
+   - **Circulating LP supply = `TOTAL_LP − LP held in the pool UTXO`.** The full
+     `TOTAL_LP` is minted into the pool at creation; deposits release shares from the
+     held balance, withdrawals return them.
+   - Every deposit/withdraw must keep **per-share reserve backing non-decreasing in
+     both assets**: `reserve_out · circ_in ≥ reserve_in · circ_out`. This single
+     inequality protects existing LPs in both directions (a depositor can't mint shares
+     not backed by proportional assets; a withdrawer can't take more than proportional).
+   - **First-depositor / donation attack (ERC-4626 vector) is bounded by a permanently
+     locked minimum:** on first deposit, `MIN_LIQ` LP is sent to an **unspendable
+     address — the pool's own minting-policy script, which has no spend path** — so
+     circulating supply can never return to ~0 and share-price inflation is uneconomic
+     (Uniswap-v2 style; bounded, not mathematically eliminated — the accepted trade-off
+     of the value-derived choice). Later deposits add at the current ratio.
 2. **Place order.** Wallet builds an Order UTXO (sell amount, limit/min-receive,
    partial-fill rule, ADA tip, optional deadline). Funds stay user-controlled.
 3. **(Optional) Cancel.** Owner spends the Order UTXO back at any time, on signature.
@@ -426,7 +447,7 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
 | Colluding block producer (SPO) | Picks which valid settlement lands; can delay/censor | Cannot violate §5.2; censored user self-solves (§5.3). |
 | Malicious pool variant | Trivial-invariant pool to rob takers | Users protected by their *own* limit via the immutable order validator (§5.4); the variant governs only its opt-in LPs. |
 | Input-smuggler | Slips an unvalidated order into a settlement tx | §5.4 invariant: the staking validator must account for **every** script input — none may slip past. |
-| First-depositor / donation | Inflates LP share value to round out small LPs | §6: minimum initial liquidity lock + shares from datum-tracked reserves. |
+| First-depositor / donation | Inflates LP share value to round out small LPs | §6: permanently-locked `MIN_LIQ` (sent to the unspendable mint-policy address) + value-derived per-share-backing-non-decreasing invariant; inflation bounded/uneconomic (Uniswap-v2 style). |
 | Manipulated / dead oracle | Only in an opt-in oracle variant | Constraint-never-authority + graceful fallback (§5.6): at worst invalidates settlements (liveness); never steals; **core unaffected**. |
 | Griefer | Malformed/datumless UTXOs at script addresses | Strictly rejected (§3.2): the malformed UTXO simply cannot be spent — only the sender's own funds are stranded, nothing else is affected. |
 | Arbitrageur vs. resting orders | Picks off stale/visible limit orders | Order-side free option (§5.6); levers = deadline, tight limit, tip. Acknowledged residual. |
@@ -510,8 +531,10 @@ double satisfaction closed by injective OutputReference binding **+ mandatory O(
 positional binding (§5.2.6, measured §13.1)**; `k` derived not stored **and owned by
 the pool validator, settlement is curve-agnostic (§5.4 split)**; **trust-anchor wiring
 = stake-credential tag `S`, settlement unparameterised (§5.4)**; **v1 batch cap ≈ 40
-(§5.3); v1 = floor-only (§5.2.7)**; malformed inputs strictly rejected (no `True`
-branch).
+(§5.3); v1 = floor-only (§5.2.7)**; **LP accounting = value-derived reserves +
+held-LP circulating supply, min-ADA carved out, `MIN_LIQ` locked at the unspendable
+mint-policy address, per-share-backing non-decreasing (§6, Rev 7)**; malformed inputs
+strictly rejected (no `True` branch).
 
 ---
 

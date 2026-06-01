@@ -60,6 +60,13 @@ pub type BoundDatum {
   order_ref: OutputReference,
 }
 
+/// Pool mint policy redeemer: create a pool (mint NFT + full LP supply into it)
+/// or close it (burn-only).
+pub type MintRedeemer {
+  Create
+  Close
+}
+
 /// The solver-supplied settlement witness (the redeemer of the withdraw-0
 /// settlement validator). Clearing price is an exact rational (no floats).
 /// `token`/`pool_nft` are solver-declared identities, *verified* on-chain
