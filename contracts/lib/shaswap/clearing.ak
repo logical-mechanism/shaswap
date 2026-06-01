@@ -28,10 +28,29 @@ use aiken/collection/list
 use aiken/interval.{Finite, Interval}
 use cardano/address.{Credential}
 use cardano/assets.{Value, ada_asset_name, ada_policy_id}
+use cardano/certificate.{Certificate, RegisterCredential}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use shaswap/constants.{order_min_ada}
 use shaswap/types.{BoundDatum, OrderDatum, PoolDatum, SettlementRedeemer}
 use shaswap/utils
+
+/// Authorize a certificate published against the settlement stake credential `S`.
+///
+/// On Conway, a *script* stake credential's own script must validate every
+/// certificate about it (registration, de-registration, delegation). `S` must be
+/// registered for the withdraw-0 trick to be valid (you can only withdraw from a
+/// registered reward account), so the anchor must permit its own registration —
+/// otherwise it can never be brought into existence. It permits **only**
+/// registration: `S` can be registered by anyone (enabling the anchor), but can
+/// **never** be de-registered or delegated. This keeps the trust anchor immortal
+/// and undelegatable (BLUEPRINT §5.4) — a griefer can neither un-register `S` to
+/// brick every settlement, nor delegate it to capture its (always-zero) rewards.
+pub fn allow_registration(certificate: Certificate) -> Bool {
+  when certificate is {
+    RegisterCredential { .. } -> True
+    _ -> False
+  }
+}
 
 fn parses_as_order(i: Input) -> Bool {
   when i.output.datum is {

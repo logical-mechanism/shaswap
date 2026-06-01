@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 19 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 20 — 2026-06-01. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -147,7 +147,20 @@
 > `pool_mint` close, `order` reclaim — re-audit I-04). The re-audit's I-01 (missing
 > blueprint/spec) is a **false positive** from auditing an extracted `contracts/`-only
 > copy; this repo ships `documentation/BLUEPRINT.md` + `spec/`. Tests-only; +2 tests, +4
-> benches (96 green).**)
+> benches (96 green).**
+> **Rev 20: settlement `publish` handler — the anchor authorizes its own registration
+> (§5.4).** Found while bootstrapping preprod: on Conway a *script* stake credential's
+> own staking script must validate every certificate about it, so registering `S`
+> invokes the settlement script for the `Certifying` purpose — which the old
+> `else -> fail` rejected, making `S` (hence the whole withdraw-0 anchor)
+> **undeployable**. Added a `publish` handler (`clearing.allow_registration`) that
+> permits **only** `RegisterCredential` and rejects de-registration/delegation, so `S`
+> is registerable by anyone yet **immortal and undelegatable**. Changes the settlement
+> script hash (`S`) and therefore the param-applied order/pool hashes + all tagged
+> addresses. Verified live on preprod (the registration tx succeeds with the handler,
+> fails without). Tests: 96 still green (the handler is validated on-chain; its
+> `RegisterCredential.deposit: Never` field is impractical to unit-test). No change to
+> the settlement/clearing logic or any Rust mirror.**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -487,6 +500,18 @@ witness — the validator checks algebra, never solves (Principle 4).
   settlement** — a permanent brick. The stake credential is used purely as an inert
   tag (below); since **spending is governed only by the payment credential**, tagging
   a UTXO with `stake = S` gives the settlement script **no control** over its funds.
+- **⚠ The anchor must authorize its own registration (Conway, verified live preprod).**
+  On Conway a *script* stake credential's own staking script must validate **every
+  certificate about it** (registration, de-registration, delegation) — registering `S`
+  invokes the settlement script for the `Certifying`/`publish` purpose. So the
+  settlement validator carries a **`publish` handler that permits ONLY
+  `RegisterCredential`** and rejects everything else. This is exactly what we want: `S`
+  can be registered by anyone (bringing the withdraw-0 anchor into existence), but can
+  **never** be de-registered (no griefer can un-register `S` to brick every settlement,
+  nor reclaim its ~2 ADA deposit) and **never** delegated (reinforcing the no-rewards
+  hazard above). The anchor is thus **immortal and undelegatable**. Without this handler
+  the validator's `else -> fail` rejects the registration cert and `S` can never be
+  created — the anchor would be undeployable. (Found while bootstrapping preprod.)
 - **Wiring — the stake-credential tag (A2; resolves the hash-bootstrapping circle).**
   Order and Pool UTXOs sit at addresses whose **stake credential is the settlement
   staking credential `S`**. Then:

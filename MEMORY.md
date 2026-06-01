@@ -65,6 +65,34 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **CRITICAL deploy fix → Blueprint Rev 20: settlement anchor must
+  authorize its own registration.** Found while bootstrapping preprod (cardano-node 11,
+  Conway PV10): registering `S` (the settlement script's hash, a *script* stake
+  credential) **invokes the settlement staking script for the `Certifying`/`publish`
+  purpose** — the node rejects an unwitnessed reg with `MissingScriptWitnessesUTXOW [S]`,
+  and witnessing it ran the script which hit `else -> fail`. So the original anchor was
+  **undeployable**: `S` could never be registered, and withdraw-0 requires a registered
+  reward account. Fix: added a `publish` handler to `validators/settlement.ak` →
+  `clearing.allow_registration(cert)` permitting **only** `RegisterCredential`, rejecting
+  de-registration + delegation → `S` is registerable by anyone yet **immortal +
+  undelegatable**. Verified live: registration tx `58ad2146…` succeeds WITH the handler
+  (failed without). Ripple: settlement hash `S` changed (now
+  `82039119bc85e1b8fb4fab8cfb0628f487e64f0b6338da842950500c`), hence new order hash
+  `65261b26…`, pool hash `dfa55af0…`, and all tagged addresses. No change to clearing
+  logic or any Rust crate (the batcher never publishes certs; bootstrap does). Couldn't
+  unit-test (`RegisterCredential.deposit: Never` is impractical to construct) — validated
+  on-chain. 96 aiken tests still green.
+- **2026-06-01** — **Live preprod bootstrap started (`contracts/happy_path/`).** Node at
+  `testnets/node-preprod` (socket `db-testnet/node.socket`), synced, Conway, magic 1.
+  Installed prebuilt **Ogmios v6.14.0 + Kupo v2.11.0** to `testnets/bin/` (the batcher's
+  ChainBackend; cardano-cli 11 + aiken 1.1.22 also present). Solver/bootstrap key at
+  `testnets/keys/solver.skey` (OUTSIDE the repo, never committed), addr
+  `addr_test1vq6vymyr2plj92javazvvxfqj5aaqxhk5u3u87ud4dc8u5gyasnly`, funded 10k tADA.
+  `happy_path/` holds `env.sh` (paths/identities/constants), `scripts/` (param-applied
+  `.plutus` envelopes + tagged order/pool addresses + S stake addr), numbered bootstrap
+  scripts. **Done:** UTXO split, S registered. **Next:** mint test token, deploy
+  reference scripts, create+seed pool, post orders, launch Ogmios+Kupo, live settlement.
+  `happy_path/work/` (tx drafts, pparams) is gitignored.
 - **2026-06-01** — **Batcher `chain` foundations (chain access).** New `chain` crate
   (solver-core, txbuild, pallas-primitives/codec, serde/serde_json). Modules:
   `backend` (the `ChainBackend` trait — tip/params/find_orders/find_pool/evaluate

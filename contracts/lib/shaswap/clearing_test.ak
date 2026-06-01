@@ -353,6 +353,11 @@ test neg_floor_breach() fail {
   clearing.run(s(), redeemer([sell]), tx)
 }
 
+// NB: `clearing.allow_registration` (settlement `publish` handler — S authorizes
+// ONLY its own registration, never dereg/deleg) is verified on-chain by the live
+// preprod bootstrap rather than here: the `RegisterCredential.deposit: Never` field
+// is impractical to construct in a unit test. See contracts/happy_path.
+
 // ---- order validator logic ------------------------------------------------
 
 test order_settle_ok() {
