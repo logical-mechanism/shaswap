@@ -81,6 +81,22 @@ High-signal pointers only:
   stitch (funding/collateral, tip-change, script_data_hash over cost models, fee
   balancing, signing) + the orchestrator loop. Those are the next concrete step,
   gated by the bootstrap dependency.
+- **2026-06-01** — **Forked pallas-txbuilder for withdraw-0 (new `shaswap-txbuilder`
+  crate).** Resolved the earlier blocker by vendoring pallas-txbuilder 1.0.0 source into
+  `batcher/crates/txbuilder` (Apache-2.0, attributed in lib.rs) and adding the missing
+  withdrawal/reward-redeemer support — the ShaSwap anchor is a withdraw-0 staking script
+  and is otherwise unbuildable. Surgical additions (all tagged "ShaSwap fork"):
+  `StagingTransaction.withdrawals` field + `.withdrawal()`/`.remove_withdrawal()`/
+  `.add_withdraw_redeemer()` builders, `RedeemerPurpose::Reward(Vec<u8>)`, the body
+  `withdrawals` BTreeMap, the `Reward` redeemer arm (index = account's position in the
+  canonical withdrawals order), and `"withdraw:{hex}"` (de)serialization. `build_conway_raw`
+  already computes `script_data_hash` from language views and does NOT balance fees/
+  ex-units (matches our chain-layer split). Proof test (`tests/withdraw.rs`): builds a
+  withdraw-0 + reward redeemer, re-decodes the CBOR, asserts the body withdrawal + the
+  Reward redeemer at index 0; a dangling reward redeemer (no matching withdrawal) is
+  rejected. Vendored crate is exempt from our `-D warnings` profile (`[lints.clippy]
+  all=allow`); our authored crates stay clean. **54 batcher tests total.** Track upstream
+  for unrelated fixes; our diff vs 1.0.0 is just the tagged additions.
 - **2026-06-01** — **Batcher `txbuild` skeleton (chain-independent tx building).**
   New `txbuild` crate (pallas-primitives/codec/crypto/addresses). Modules: `plutus`
   (every datum/redeemer → Plutus Data matching `plutus.json` constructor indices/field

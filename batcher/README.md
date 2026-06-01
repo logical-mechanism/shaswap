@@ -16,6 +16,7 @@ ADA tips posted on orders — anyone may run their own.
 | Crate / path | What | Status |
 |---|---|---|
 | `crates/solver-core` | Pure clearing arithmetic + v1 solver + sim. No IO. | **implemented** |
+| `crates/txbuilder` | Vendored fork of `pallas-txbuilder` 1.0 + **withdrawal/reward-redeemer support** (the withdraw-0 mechanism upstream lacks). | **implemented (fork)** |
 | `crates/txbuild` | Lower a `Settlement` into the chain-independent tx skeleton (Plutus Data, addresses, values, canonical outputs, redeemer/withdraw-0 plan). | **implemented (skeleton)** |
 | `crates/chain` | `ChainBackend` trait + typed fail-fast `Config` + on-chain datum decoder + body-finalization arithmetic. Kupo/Ogmios HTTP transport still to wire (needs a node). | **implemented (foundations)** |
 | `crates/orchestrator` (planned) | Live loop: discover → solve → build → evaluate → submit (preprod). | later |
@@ -97,7 +98,13 @@ The chain-independent half of building a settlement tx — fully unit-tested off
 
 > Note: `pallas-txbuilder` 1.0 can't build a ShaSwap settlement — it has no
 > withdrawals/reward-redeemer support, which is exactly the anchor's withdraw-0
-> mechanism. Hence the hand-rolled Conway path.
+> mechanism (upstream hard-codes `withdrawals: None`). We **vendored and forked it**
+> into `crates/txbuilder` (`shaswap-txbuilder`) and added that support:
+> `.withdrawal()`, `.add_withdraw_redeemer()`, `RedeemerPurpose::Reward`, the body
+> withdrawals map, and the `Reward` redeemer arm (index = the account's position in
+> the canonical withdrawals order). A round-trip test builds a withdraw-0 + reward
+> redeemer and re-decodes it to confirm both land. The chain layer drives this
+> builder to assemble the final body.
 
 ## `chain` (foundations done)
 
