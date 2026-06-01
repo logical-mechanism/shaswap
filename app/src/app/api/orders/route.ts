@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { providerJson } from "@/lib/api";
 import { getDataProvider } from "@/lib/data";
 
 /**
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const provider = getDataProvider();
-  const orders = await provider.walletPositions(address);
-  return NextResponse.json({ orders });
+  return providerJson("orders", async () => ({
+    orders: await getDataProvider().walletPositions(address),
+  }));
 }

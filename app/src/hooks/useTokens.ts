@@ -13,7 +13,9 @@ export function useTokens() {
   useEffect(() => {
     const ac = new AbortController();
     fetchTokens(ac.signal)
-      .then((t) => setTokens(t))
+      .then((t) => {
+        if (!ac.signal.aborted) setTokens(t);
+      })
       .catch((e: unknown) => {
         if (!ac.signal.aborted) setError(String(e));
       })

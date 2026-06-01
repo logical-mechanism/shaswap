@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { providerJson } from "@/lib/api";
 import { getDataProvider } from "@/lib/data";
 
 /**
  * GET /api/quote?in=<unit>&out=<unit>&amount=<baseUnits>
  *
- * Returns a price quote through the data abstraction. In the skeleton the
- * MockProvider answers with a toy curve — NOT the protocol's clearing math, and
- * nothing is built or submitted.
+ * Returns a price quote through the data abstraction. `amount` must be a
+ * non-negative integer base-unit string; junk is rejected at this trust
+ * boundary with a 400 (rather than relying on the provider to coerce it). In
+ * the skeleton the MockProvider answers with a toy curve — NOT the protocol's
+ * clearing math, and nothing is built or submitted.
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
@@ -20,11 +23,15 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
-
-  const provider = getDataProvider();
-  const quote = await provider.priceQuote(tokenIn, tokenOut, amount);
-  if (!quote) {
-    return NextResponse.json({ quote: null });
+  if (!/^\d+$/.test(amount)) {
+    return NextResponse.json(
+      { error: "amount must be a non-negative integer (base units)" },
+      { status: 400 },
+    );
   }
-  return NextResponse.json({ quote });
+
+  return providerJson("quote", async () => {
+    const quote = await getDataProvider().priceQuote(tokenIn, tokenOut, amount);
+    return { quote: quote ?? null };
+  });
 }

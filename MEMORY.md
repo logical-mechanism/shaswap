@@ -102,8 +102,16 @@ High-signal pointers only:
   `/pools`, `/orders` (200) and `/api/*` return mock JSON (quote 10 ADA→~13.7 TEST, impact
   1.44%); CardanoWallet button renders. (Full browser wallet-connect needs a real extension —
   not headless-testable here.) Docs: `app/README.md` (stack/run/seam/scope). MeshJS Agent
-  Skills already vendored in `.claude/skills/` (prior `chore/mesh-skills` merge). NOT
-  merged — left for the maintainer.
+  Skills already vendored in `.claude/skills/` (prior `chore/mesh-skills` merge).
+  **Code-review pass applied** (high-effort, 7 angles): fixed `Number()` precision loss
+  in `format.ts` (now BigInt-exact, matters for >2^53-lovelace balances/reserves), the
+  `/orders` wrong-empty "No orders yet." flash (`useOrders` now derives `loading` — no
+  deferred-timer), added provider-error guards + input validation on the `/api/*` routes
+  (shared `lib/api.ts` `providerJson`, 502 on throw / 400 on bad `amount`), made
+  `toBaseUnits` round (not truncate) and reject bare `.`, and added the missing abort guard
+  in `useTokens`. Left as noted/deferred: mock price `Number()` precision (mock-only),
+  single-token-list `toToken` guard, and the dedup cleanups (shared `Empty`/`useClickOutside`/
+  abortable-fetch hook). PR opened off `app/skeleton`; NOT merged — left for the maintainer.
 - **2026-06-01** — **Batcher production-readiness pass (v1 daemon hardening).** Made the
   reference solver safe to run unattended under systemd. (1) **Graceful shutdown:** added
   `signal-hook`; SIGTERM/SIGINT flip an `AtomicBool` checked **only between passes** (a

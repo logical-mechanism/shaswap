@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { providerJson } from "@/lib/api";
 import { getDataProvider } from "@/lib/data";
 
 /**
@@ -8,7 +8,7 @@ import { getDataProvider } from "@/lib/data";
  * provider SDK. Provider selection (and any keys) live behind getDataProvider().
  */
 export async function GET() {
-  const provider = getDataProvider();
-  const pools = await provider.listPools();
-  return NextResponse.json({ pools });
+  return providerJson("pools", async () => ({
+    pools: await getDataProvider().listPools(),
+  }));
 }
