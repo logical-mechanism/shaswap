@@ -40,6 +40,16 @@ SHASWAP_STRATEGY=round-robin   # drain order: round-robin | profit-greedy
 RUST_LOG=debug            # verbosity (default info); tracing w/ timestamps + levels
 ```
 
+```sh
+SHASWAP_DEPLOYMENT=../contracts/happy_path/deployment.json \
+SHASWAP_SUBMIT=1 \
+SHASWAP_INTERVAL_MS=500 \
+SHASWAP_MAX_ORDERS_PER_TX=20 \
+SHASWAP_STRATEGY=round-robin \
+RUST_LOG=info \
+./target/release/shaswap-batcher
+```
+
 **Daemon / systemd.** The poll is a cheap Kupo-checkpoint GET, so a small interval
 (e.g. 500 ms) keeps it reactive without reading ahead of what Kupo has indexed (the
 latency floor is Kupo's index lag, not the cadence). `SIGTERM`/`SIGINT` shut it down
