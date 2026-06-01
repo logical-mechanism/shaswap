@@ -15,7 +15,14 @@
 > oracle-mortality argument, axiom mapping; §3.2 malformed inputs → strict
 > default-deny. **Rev 5: §13.1 ex-unit spike MEASURED — ~40–50 orders/settlement
 > with mandatory O(N) positional binding; memory-bound; naive O(N²) caps at ~24;
-> withdraw-0 deferral confirmed negligible. Report: `documentation/spec/ex-unit-spike.md`.**)
+> withdraw-0 deferral confirmed negligible. Report: `documentation/spec/ex-unit-spike.md`.**
+> **Rev 6: pre-implementation design lock — O(N) positional binding promoted to a hard
+> invariant (§5.2.6); trust-anchor wiring resolved via the stake-credential tag `S`
+> with an unparameterised settlement validator (§5.4); settlement/pool responsibility
+> split (settlement curve-agnostic, pool owns `k`) (§5.2.3/§5.4); v1 batch cap ≈ 40
+> (§5.3); v1 = floor-only, equilibrium deferred (§5.2.7); spec stubs added for
+> partial fills, clearing-price encoding, and ADA triple-role both directions
+> (`spec/`).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -135,15 +142,21 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
      validator checks `reserveA_after · reserveB_after ≥ reserveA_before ·
      reserveB_before` from the UTXO's *actual* reserves, so there is no datum/reserve
      desync. **No external references** (oracle pools are a variant — §5.4/§5.6).
-   - *Identity:* a unique pool NFT.
+   - *Identity:* a unique pool NFT — also the settlement anchor's discriminator for
+     "which input is the pool" (§5.4 wiring).
+   - *Address:* payment credential = pool validator; **stake credential = the
+     settlement credential `S`** (the §5.4 tag that makes the pool part of a
+     settlement's accountable input set).
    - *Spend paths:* (a) **settlement** (§5.2); (b) **LP withdraw/deposit** — total,
      share-token-based, independent of fragile datum fields, so LPs can always exit.
 
 2. **Order UTXO (intent)** — one order, locked by the **immutable order validator**
-   (the trust anchor, §5.4).
+   (§5.4).
    - *Datum:* owner credential, sell asset + amount, **limit / min-receive** (the
      user's own floor; "market" = a loose slippage bound), partial-fill rule, **ADA
      tip** (§7), optional deadline.
+   - *Address:* payment credential = order validator (signature-reclaimable);
+     **stake credential = the settlement credential `S`** (§5.4 tag).
    - *Spend paths:* (a) **owner reclaim/cancel** on signature alone (well-formed
      datum); (b) **settlement** (§5.2).
    - Funds stay user-controlled until settled. **Non-custodial.**
@@ -163,11 +176,20 @@ witness — the validator checks algebra, never solves (Principle 4).
    intended LP tokens. **ADA is accounted in three distinct roles that must not leak
    into one another:** *traded-ADA* (when ADA is one side of the pair), *tip-ADA*
    (solver reward), and *min-ADA* (per-UTXO overhead). The solver takes **only** the
-   posted tips.
+   posted tips. **Both trade directions and the non-ADA pair must be specified
+   exactly** — the hard case is *selling* ADA, where one order's lovelace field
+   simultaneously holds traded-ADA + tip + min-ADA and must be disambiguated by the
+   datum, not inferred. The exact per-direction accounting is specified in
+   [`spec/ada-triple-role.md`](spec/ada-triple-role.md) (A5).
 2. **Uniform price.** Every order in the (single-shard) batch fills at one clearing
    price. → eliminates intra-batch ordering MEV / sandwiching.
-3. **Pool invariant non-decreasing.** Pool validator checks `k_after ≥ k_before`
-   from actual reserves (§5.1).
+3. **Pool invariant non-decreasing.** Checked by the **pool validator** (not the
+   settlement anchor), `k_after ≥ k_before` from actual reserves (§5.1). This is the
+   curve-specific check; keeping it in the pool validator is what makes pools
+   genuinely pluggable (§5.4 — responsibility split). The settlement anchor stays
+   **curve-agnostic**: it enforces rules 1/2/4/5/6 (conservation, uniform price,
+   best-response, floor, binding) and the input-accounting invariant, and reads the
+   pool's before/after reserves for conservation, but never the curve.
 4. **Best-response for orders.** Each order gets the best-response trade at the
    clearing price, respecting its limit and partial-fill rule.
 5. **Per-order floor.** Every order receives **at least its own stated
@@ -180,17 +202,33 @@ witness — the validator checks algebra, never solves (Principle 4).
    **injective order→output mapping**, so one output can never be counted toward two
    orders' floors. *(This is the canonical eUTXO settlement bug; it is closed here by
    construction.)*
+   - **The binding MUST be O(N), not O(N²) — hard invariant (measured, §13.1).** A
+     naive "for each order, scan all outputs for its match" is O(N²) and collapses the
+     batch at ~24 orders; the O(N) **positional bijection** (owner-outputs presented in
+     canonical input order, zipped one-to-one with the ordered order-inputs) reaches
+     ~40–50. The validator therefore **requires canonical output ordering** and pairs
+     by position (position itself is the injective key; the per-output bound
+     `OutputReference` is still checked to confirm the solver's claimed pairing).
+     Writing the O(N²) scan is a correctness-of-design error, not just slow.
 7. **Surplus / equilibrium (intent; cost-bounded by §13.1).** To route netting
    surplus to *traders* not LPs, the clearing should be required to be the **true
-   uniform-price equilibrium**. Whether that fits the ex-unit budget is open
-   (§12.2/§13.1); else we fall back to the §5.2.5 floor (Uniswap parity) + a fixed
-   split.
+   uniform-price equilibrium**. **v1 decision (post-§13.1 measurement):** **ship the
+   §5.2.5 floor-only path** (Uniswap parity guaranteed, ~40–50 orders/settlement) and
+   **defer equilibrium** — its added per-order verification cost is not yet measured
+   and would lower N. Equilibrium (and a surplus split) becomes a later upgrade once
+   its own spike (§13.1 follow-up) bounds the cost. This resolves the v1 fork in
+   §12.2; the floor never makes a user worse than a plain AMM, so deferring surplus
+   capture costs only upside, never safety.
 
 ### 5.3 Solver model — first-valid-wins, fully permissionless
 
 - **A "batch" is the orders a settlement includes**, bounded by tx size / ex-units.
   No global boundary, **no coordinator** — uniform price holds *within each
   settlement*. Excluded orders stay open.
+- **v1 batch cap ≈ 40 orders/settlement** (headroom to ~50), from the §13.1
+  measurement — **memory-bound**, with the mandatory O(N) binding (§5.2.6). Solvers
+  may include fewer; the cap is the ceiling a single settlement should target. Orders
+  beyond the cap roll over to the next settlement (rollover mechanics: §12.3).
 - **Anyone can be a solver.** Reads open orders + the pool, computes a clearing
   satisfying §5.2, submits.
 - **First valid settlement to land wins.** Competing settlements over the same UTXOs
@@ -215,16 +253,23 @@ witness — the validator checks algebra, never solves (Principle 4).
 
 ### 5.4 Pluggable pools, the trust anchor & the once-per-tx validator
 
-- **The order validator (and the settlement logic it enforces) is the immutable
-  trust root.** Orders commit to its hash and can only be consumed in a settlement
-  satisfying §5.2. This is the thing we can *never* change.
-- **Pool variants plug in *underneath* the anchor.** The order/settlement layer is
-  agnostic to a pool's curve (it enforces §5.2); **each pool validator checks its own
-  invariant.** New curves (stableswap, PA-AMM, oracle-enhanced, am-AMM) are variants
-  whose logic lives entirely in their own validator.
+- **The settlement (withdraw-0) validator is the immutable trust root.** It carries
+  the §5.2 curve-agnostic rules and has a **stable, unparameterised hash** — it must
+  never change, and (see wiring below) it does **not** bake in any other script's
+  hash, so it has nothing to be circular with. The order validator is the user-facing
+  anchor that *defers* to it; together they are the thing we can never change.
+- **Responsibility split (A3) — settlement is curve-agnostic; the pool owns its
+  curve.** The settlement anchor enforces **conservation (5.2.1), uniform price
+  (5.2.2), best-response (5.2.4), per-order floor (5.2.5), injective O(N) binding
+  (5.2.6), and the input-accounting invariant (below)**. It reads the pool's
+  before/after reserves *only* for conservation. **The pool validator owns its
+  invariant (5.2.3, `k_after ≥ k_before`)** and any curve-specific logic. This split
+  is what makes pools genuinely pluggable: a new curve (stableswap, PA-AMM,
+  oracle-enhanced, am-AMM) ships entirely in its own pool validator and reuses the
+  unchanged settlement anchor.
 - **A malicious pool variant cannot rob users**, because users are protected by
-  *their own limit* (§5.2.5) via the immutable order validator — not by trusting the
-  pool. A trivial-invariant pool only governs its own opt-in LPs.
+  *their own limit* (§5.2.5) enforced in the curve-agnostic settlement anchor — not by
+  trusting the pool. A trivial-invariant pool only governs its own opt-in LPs.
 - **Amortization via a withdraw-0 staking validator.** The §5.2 batch checks run
   **once per transaction** in a single withdraw-0 staking validator (the settlement
   validator) that orders/pool *defer* to via a cheap O(1) "is the settlement
@@ -232,10 +277,53 @@ witness — the validator checks algebra, never solves (Principle 4).
   minting hook because the ledger forbids a zero-quantity mint (a minting hook would
   always emit a token to manage); a 0-ADA withdrawal is genuinely zero, idiomatic,
   no artifact. One-time ~2 ADA refundable stake registration at deployment.
+- **⚠ Register `S`, but NEVER delegate it — or withdraw-0 bricks (hard hazard).** The
+  ledger requires a reward withdrawal to take the **entire** reward balance, so
+  `Withdraw(S, 0)` is only *legal* while `S`'s reward balance is exactly 0. Rewards
+  accrue only to a credential that is registered **and delegated to a pool**; we
+  register `S` (required to withdraw at all) but **delegate it to nothing**, so its
+  balance stays 0 forever and the 0-withdrawal stays valid forever. Delegating `S`
+  would let rewards accumulate, make `Withdraw(S, 0)` illegal, and **stop every
+  settlement** — a permanent brick. The stake credential is used purely as an inert
+  tag (below); since **spending is governed only by the payment credential**, tagging
+  a UTXO with `stake = S` gives the settlement script **no control** over its funds.
+- **Wiring — the stake-credential tag (A2; resolves the hash-bootstrapping circle).**
+  Order and Pool UTXOs sit at addresses whose **stake credential is the settlement
+  staking credential `S`**. Then:
+  - The **order validator** is *parameterised by `S`* and its O(1) deferral is "is
+    `Withdraw(S)` present?". The **pool validator** likewise defers to `S`.
+  - The **settlement validator is parameterised by nothing.** At run time it receives
+    its own credential `S` as the withdraw purpose's account, and identifies the
+    protocol input set as **every input whose stake credential is `S`** — which *is*
+    the "account for every input" mechanism below, for free. It need not (and must
+    not) bake in the order or pool hashes. This breaks the circularity: `O = f(S)` and
+    `P = f(S)`, while `S` depends on nothing, so no hash references itself.
+  - Within that set, the **pool input/output is identified by its unique pool NFT**
+    (§5.1); everything else delegated to `S` is treated as an **order** and must
+    present a well-formed `OrderDatum` or the tx is rejected (§3.2 default-deny).
+    Being payment-credential-agnostic about orders is *safe* — every order is
+    protected by its own floor and owner-bound output regardless of where it sits — so
+    the anchor stays minimal; real orders use the order validator `O` to remain
+    signature-reclaimable.
+  - **Role identification must be unforgeable (closes a deferral theft path).**
+    Settlement classifies every tagged input by **datum shape**: any input presenting a
+    well-formed `OrderDatum` *is* an order and is fully checked (floor, binding,
+    conservation); **exactly one** tagged input must *not* parse as an order — that is
+    the pool, whose reserves settlement reads from **value** (never its curve/datum, so
+    it stays agnostic). `OrderDatum` and any `PoolDatum` MUST be encoded so an order can
+    never be parsed as the pool (distinct constructors). This is what makes the
+    order-spend deferral safe: because a real order always parses as an order, a solver
+    can **never** relabel a user's order as "the pool" to skip its checks and drain it.
+    Combined with the order validator's `Settle` path requiring **its own input to be
+    tagged `S`** (so nothing can defer without landing in the enumerated set), no order
+    can be smuggled past or mis-roled. The pool **output** is the tagged output
+    recreated at the pool input's payment credential carrying the same pool NFT
+    (continuity).
 - **It MUST validate every script input — no input may slip past.** The deferral is
-  only safe if the staking validator **enumerates and accounts for every order and
-  pool input** at the protocol addresses in the tx. Otherwise an unvalidated order
-  could ride along inside a settlement. This is a hard invariant of the design.
+  only safe because the settlement validator **enumerates every input tagged with `S`
+  and accounts for each** (exactly one pool by NFT; all others as orders). Otherwise
+  an unvalidated order could ride along inside a settlement. This is a hard invariant
+  of the design, and the stake-tag enumeration is how it is met.
 
 ### 5.5 Sharding (SAMM) — scaling lever (and its price-dispersion cost)
 
@@ -405,19 +493,25 @@ privileged operator, any mortal external dependency in the core.
 ## 12. Open design decisions
 
 1. **Solver tip mechanics.** User-set + protocol minimum vs. fixed; datum encoding.
-2. **Surplus-distribution rule & verification cost.** True equilibrium (§5.2.7) vs.
-   floor + fixed pro-rata split — *gated by* §13.1.
-3. **Batch/settlement size bounds** and order rollover.
-4. **Partial-fill semantics:** remainder rules, integer rounding, min-ADA funding.
-5. **Clearing-price representation:** exact rational encoding for bit-exact
-   solve/verify.
+2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7): floor-only; equilibrium
+   deferred** pending its own cost spike.
+3. **Order rollover** mechanics (the size *bound* is resolved: ~40/settlement, §5.3).
+4. **Partial-fill semantics:** remainder rules, integer rounding, min-ADA funding —
+   being specified in [`spec/partial-fills.md`](spec/partial-fills.md) (A4).
+5. **Clearing-price representation:** exact rational encoding + rounding for bit-exact
+   solve/verify — being specified in
+   [`spec/clearing-price.md`](spec/clearing-price.md) (A4).
 6. **PA-AMM `λ` defaults** and the static fee rate.
 7. **Sharding defaults:** launch `n`; SAMM fee parameters.
 8. **Hosted data provider** to start with.
 
 *Resolved:* reward = ADA tips; once-per-tx hook = withdraw-0; fees static & low;
-double satisfaction closed by injective OutputReference binding; `k` derived not
-stored; malformed inputs strictly rejected (no `True` branch).
+double satisfaction closed by injective OutputReference binding **+ mandatory O(N)
+positional binding (§5.2.6, measured §13.1)**; `k` derived not stored **and owned by
+the pool validator, settlement is curve-agnostic (§5.4 split)**; **trust-anchor wiring
+= stake-credential tag `S`, settlement unparameterised (§5.4)**; **v1 batch cap ≈ 40
+(§5.3); v1 = floor-only (§5.2.7)**; malformed inputs strictly rejected (no `True`
+branch).
 
 ---
 

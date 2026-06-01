@@ -9,6 +9,15 @@
 >
 > **Date:** 2026-05-31 · **Toolchain:** Aiken v1.1.22, Plutus v3, stdlib v3.1.0 ·
 > **Status:** throwaway measurement code; representative cost, not production.
+>
+> **Superseded (2026-05-31):** the spike validators/tests (`naive`/`indexed`
+> binding, hardcoded-hash enumeration) have been replaced by the production
+> contracts (`validators/{settlement,order,pool}.ak`, `lib/shaswap/`) built against
+> Blueprint Rev 6 (stake-credential-tag wiring, O(N) positional binding). The §9
+> "Reproduce" test names below no longer exist; the **measured numbers in this
+> report stand as the record**. A production sanity check (settlement at N=20:
+> mem ≈ 7.29M, cpu ≈ 2.33B) lands at the conservative end of the estimate — the real
+> validator is mem-bound at ~40 orders, consistent with §6.
 
 Cardano per-tx limits used as the budget:
 

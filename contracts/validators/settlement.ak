@@ -1,37 +1,16 @@
-//// The once-per-tx settlement validator (BLUEPRINT §5.4): a withdraw-0 staking
-//// script that runs the full §5.2 batch checks a single time per transaction.
-//// Two handlers expose the two order->output binding strategies so the spike
-//// can measure both. In production only one would ship.
+//// The once-per-tx settlement validator — the immutable trust anchor (§5.4).
+//// A withdraw-0 staking script, **unparameterised** (stable hash, nothing to be
+//// circular with). It learns its own credential `S` at run time as the withdraw
+//// purpose's account and enumerates/accounts for every input tagged with `S`.
 
 use cardano/address.{Credential}
 use cardano/transaction.{Transaction}
+use shaswap/clearing
 use shaswap/types.{SettlementRedeemer}
-use shaswap/validation
 
-/// Naive O(N^2) binding: each order scans every output for its bound output.
-validator settlement_naive {
-  withdraw(
-    redeemer: SettlementRedeemer,
-    _account: Credential,
-    self: Transaction,
-  ) {
-    validation.validate_naive(redeemer, self)
-  }
-
-  else(_) {
-    fail
-  }
-}
-
-/// Indexed O(N) binding: owner-outputs occupy the first N output positions in
-/// canonical input order; positional bijection gives injectivity.
-validator settlement_indexed {
-  withdraw(
-    redeemer: SettlementRedeemer,
-    _account: Credential,
-    self: Transaction,
-  ) {
-    validation.validate_indexed(redeemer, self)
+validator settlement {
+  withdraw(redeemer: SettlementRedeemer, account: Credential, self: Transaction) {
+    clearing.run(account, redeemer, self)
   }
 
   else(_) {
