@@ -66,6 +66,21 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher loop is now block-driven (was a blind timer).** Chain state
+  only changes on a new block, so the daemon now does a settle pass exactly when **Kupo's
+  checkpoint advances** rather than every N seconds. `SHASWAP_INTERVAL_SECS` is reinterpreted
+  as the cheap checkpoint-poll cadence; between blocks the loop only hits Kupo's
+  `/checkpoints` (tiny) and does no discover/settle work. Keying off *Kupo's* checkpoint
+  (not the Ogmios node tip) also closes a read-stale-data race — it guarantees Kupo has
+  indexed the block before we read it. Added `kupo_ogmios::parse_kupo_checkpoint` +
+  `KupoOgmios::kupo_checkpoint` (GET `/checkpoints`, newest-first; fixture-tested). Loop
+  fires on `last != cp` so it also re-passes on a rollback. **Proven live:** ran the daemon
+  (poll 5s) with no orders; over ~90s it polled ~18× but ran only **3 passes — one per new
+  block** (tip 124659762→…796→…854); posted an order mid-run and it settled on the block
+  Kupo indexed it (tx `0dfedf07…`), reusing the self-provisioned 5-ADA collateral
+  (`5fda1b6d#0`) — confirming steady-state self-maintenance. Future optimization (noted, not
+  done): Ogmios chain-sync over WebSocket for true push instead of checkpoint-polling.
+  **67 tests, clippy -D + fmt clean.**
 - **2026-06-01** — **Batcher turnkey collateral self-provisioning.** Decision (user):
   the reference solver should be turnkey — an operator just funds the solver address
   with ADA (any shape) and the batcher manages its own UTXOs. Key insight: a settlement

@@ -13,9 +13,12 @@
 //! 5. **submit** — only when `SHASWAP_SUBMIT=1` (otherwise a dry run: build +
 //!    evaluate + print, for cross-checking before going live).
 //!
-//! Runs one pass by default. Set `SHASWAP_INTERVAL_SECS=<n>` to loop every `n`
-//! seconds; the loop tracks just-submitted orders as in-flight and won't re-settle
-//! them until they confirm (drop out of discovery), so it never double-spends.
+//! Runs one pass by default. Set `SHASWAP_INTERVAL_SECS=<n>` to run as a daemon:
+//! it polls Kupo's checkpoint every `n` seconds and does a settle pass **only when
+//! a new block has been indexed** (block-driven, not a blind timer — no wasted work
+//! between blocks, and no reading stale data ahead of Kupo). The loop tracks
+//! just-submitted orders as in-flight and won't re-settle them until they confirm
+//! (drop out of discovery), so it never double-spends.
 //!
 //! Config path: `$SHASWAP_DEPLOYMENT` or argv[1] (default
 //! `../contracts/happy_path/deployment.json`).
@@ -97,8 +100,9 @@ fn run() -> Result<(), Err> {
     // Orders we've submitted but not yet seen confirmed-spent (loop only).
     let mut in_flight: HashSet<Key> = HashSet::new();
 
-    loop {
-        match settle_once(
+    // One-shot: a single pass, propagate any error.
+    let Some(poll) = interval else {
+        return settle_once(
             &backend,
             &cfg,
             &skey,
@@ -106,17 +110,36 @@ fn run() -> Result<(), Err> {
             ref_bytes,
             submit,
             &mut in_flight,
-        ) {
-            Ok(()) => {}
-            // In loop mode a transient failure (e.g. a UTXO spent out from under
-            // us, Kupo lag) shouldn't kill the daemon — log and retry next tick.
-            Err(e) if interval.is_some() => eprintln!("pass failed (will retry): {e}"),
-            Err(e) => return Err(e),
+        );
+    };
+
+    // Loop: **block-driven**. Chain state only changes on a new block, so we do a
+    // pass exactly when Kupo's checkpoint advances (which also means Kupo has that
+    // block's data — no read-stale-data race against the node tip), and otherwise
+    // just cheaply re-poll the checkpoint every `poll` seconds. A transient pass
+    // failure logs and waits for the next block rather than killing the daemon.
+    let mut last_block: Option<u64> = None;
+    loop {
+        match backend.kupo_checkpoint() {
+            // New block indexed (or first iteration, or a rollback) → settle.
+            Ok(cp) if last_block != Some(cp) => {
+                if let Err(e) = settle_once(
+                    &backend,
+                    &cfg,
+                    &skey,
+                    &solver_addr,
+                    ref_bytes,
+                    submit,
+                    &mut in_flight,
+                ) {
+                    eprintln!("pass failed (will retry next block): {e}");
+                }
+                last_block = Some(cp);
+            }
+            Ok(_) => {} // no new block since last pass — nothing to do
+            Err(e) => eprintln!("checkpoint poll failed (will retry): {e:?}"),
         }
-        match interval {
-            Some(n) => std::thread::sleep(Duration::from_secs(n)),
-            None => return Ok(()),
-        }
+        std::thread::sleep(Duration::from_secs(poll));
     }
 }
 

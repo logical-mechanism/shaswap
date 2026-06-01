@@ -264,6 +264,16 @@ pub fn parse_kupo_match(m: &Json) -> Result<KupoMatch, ChainError> {
     })
 }
 
+/// Parse `GET /checkpoints` → the latest indexed checkpoint slot (the list is
+/// newest-first). This is the "new block indexed by Kupo" signal the loop watches.
+pub fn parse_kupo_checkpoint(reply: &Json) -> Result<u64, ChainError> {
+    let latest = reply
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or_else(|| ChainError::Shape("empty checkpoints".into()))?;
+    as_u64(field(latest, "slot_no")?, "checkpoint.slot_no")
+}
+
 /// Parse a `GET /matches/...` array.
 pub fn parse_kupo_matches(arr: &Json) -> Result<Vec<KupoMatch>, ChainError> {
     arr.as_array()
@@ -394,6 +404,14 @@ impl KupoOgmios {
     fn all_unspent(&self) -> Result<Vec<KupoMatch>, ChainError> {
         let reply = self.kupo_get("/matches/*?unspent")?;
         parse_kupo_matches(&reply)
+    }
+
+    /// Kupo's latest indexed checkpoint slot — a cheap "has a new block been
+    /// indexed?" probe. The orchestrator loop watches this so it does a full
+    /// discover/settle pass exactly once per new block (and only after Kupo has
+    /// the block's data), rather than on a blind fixed timer.
+    pub fn kupo_checkpoint(&self) -> Result<u64, ChainError> {
+        parse_kupo_checkpoint(&self.kupo_get("/checkpoints")?)
     }
 
     /// Decode a match at the order address into an [`OrderInput`], or `None`
@@ -609,6 +627,18 @@ mod tests {
         assert_eq!(p.cost_model_v3[0], 100_788);
         assert_eq!(p.ref_script_range, 25_600);
         assert!((p.ref_script_base - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parses_live_checkpoint_fixture() {
+        let reply: Json =
+            serde_json::from_str(include_str!("../tests/fixtures/kupo-checkpoints.json")).unwrap();
+        // newest-first: the first entry's slot is the latest.
+        assert_eq!(parse_kupo_checkpoint(&reply).unwrap(), 124_659_676);
+        assert!(matches!(
+            parse_kupo_checkpoint(&serde_json::json!([])),
+            Err(ChainError::Shape(_))
+        ));
     }
 
     #[test]

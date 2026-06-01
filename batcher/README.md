@@ -34,13 +34,18 @@ SHASWAP_DEPLOYMENT=../contracts/happy_path/deployment.json \
   cargo run -p orchestrator
 
 SHASWAP_SUBMIT=1        # actually submit the settlement
-SHASWAP_INTERVAL_SECS=30  # loop every 30s instead of one-shot
+SHASWAP_INTERVAL_SECS=5   # run as a daemon (else one-shot)
 ```
 
 It discovers in **one atomic Kupo snapshot** per pass, settles one-sided and
 two-sided (netting) batches, skips (never aborts on) junk UTXOs parked at the
-public order address, and — in loop mode — tracks just-submitted orders as
-in-flight so it never double-spends before they confirm.
+public order address, and self-provisions a collateral UTXO on first run if the
+wallet is a single lump (so you can just send ADA to the solver address).
+
+In daemon mode the loop is **block-driven**: `SHASWAP_INTERVAL_SECS` is how often
+it polls Kupo's checkpoint, and it does a settle pass only when a new block has
+been indexed (no wasted work between blocks; never reads ahead of Kupo). It tracks
+just-submitted orders as in-flight so it never double-spends before they confirm.
 
 ## `solver-core` (done)
 
