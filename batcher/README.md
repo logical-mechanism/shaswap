@@ -17,7 +17,7 @@ ADA tips posted on orders — anyone may run their own.
 |---|---|---|
 | `crates/solver-core` | Pure clearing arithmetic + v1 solver + sim. No IO. | **implemented** |
 | `crates/txbuild` | Lower a `Settlement` into the chain-independent tx skeleton (Plutus Data, addresses, values, canonical outputs, redeemer/withdraw-0 plan). | **implemented (skeleton)** |
-| `crates/chain` (planned) | `ChainBackend` trait + Kupo/Ogmios impls (discovery, params, submit, **EvaluateTx** gate); finalizes the body (fee, collateral, `script_data_hash`, ex-units, sign). | next |
+| `crates/chain` | `ChainBackend` trait + typed fail-fast `Config` + on-chain datum decoder + body-finalization arithmetic. Kupo/Ogmios HTTP transport still to wire (needs a node). | **implemented (foundations)** |
 | `crates/orchestrator` (planned) | Live loop: discover → solve → build → evaluate → submit (preprod). | later |
 
 ## `solver-core` (done)
@@ -99,15 +99,31 @@ The chain-independent half of building a settlement tx — fully unit-tested off
 > withdrawals/reward-redeemer support, which is exactly the anchor's withdraw-0
 > mechanism. Hence the hand-rolled Conway path.
 
+## `chain` (foundations done)
+
+Node-independent, fully tested:
+
+- **`backend`** — the `ChainBackend` trait (tip, params, `find_orders`/`find_pool`,
+  the `evaluate` pre-submit gate, `submit`) + its data types. One swappable seam for
+  the provider (Kupo+Ogmios now, a local node later).
+- **`config`** — typed, fail-fast `Config`; `validate()` rejects malformed hex AND any
+  protocol constant that drifts from `constants.ak` (binds the pool NFT, parses ref
+  scripts).
+- **`decode`** — on-chain Plutus `Data` → `solver-core` datums, the inverse of
+  `txbuild::plutus`, **round-trip tested** against the encoder so they can't diverge.
+- **`fees`** — the pure body-finalization arithmetic: script-execution fee from
+  ex-units + prices, size fee, ex-unit summation, POSIX→slot.
+
 ## Not yet here (next milestones)
 
-1. **`chain`** finalizes the body (needs protocol params + a node): add the solver's
-   funding/collateral inputs + tip-change output, convert the POSIX bound to a slot
-   `ttl`, compute `script_data_hash` from cost models, fill ex-units via EvaluateTx,
-   balance the fee, sign. Plus Kupo (UTXO discovery by stake-cred `S` / pool NFT) and
-   Ogmios (tip, params, submit, and **EvaluateTx as a pre-submit gate** — every built
-   tx must pass local Phase-2 evaluation before it touches the network).
-2. **Bootstrap dependency** (blocks live preprod settlement): deploy reference
+1. **`chain` HTTP transport** (needs a live preprod node): the Kupo/Ogmios impls of
+   `ChainBackend` — discovery by stake-cred `S` / pool NFT, params, the EvaluateTx
+   pre-submit gate, submit — and the final body stitch (funding/collateral inputs,
+   tip-change output, `script_data_hash` over the cost models, fee balancing, signing).
+   Deliberately not fixture-tested blind: the external JSON shapes need verification
+   against the real APIs.
+2. **`orchestrator`**: the live loop discover → solve → build → evaluate → submit.
+3. **Bootstrap dependency** (blocks live preprod settlement): deploy reference
    scripts, register `S` and **never delegate it**, create + seed a pool. See
    `../contracts/happy_path/`.
 

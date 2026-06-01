@@ -15,18 +15,21 @@ bidirectional netting, and an emulator pass.
 
 ## Immediate next step
 
-**Off-chain reference solver started — `solver-core` (milestone-1 core) is done** on
-branch `batcher/reference-solver`. Next on the batcher: **`txbuild`** (lower a
-`Settlement` into a Pallas tx + CBOR matching `plutus.json`) and **`chain`** (Kupo
-discovery, Ogmios params/submit + **EvaluateTx pre-submit gate**), then the live
-preprod loop — which is gated by the **bootstrap dependency** (deploy ref scripts,
-register `S` and NEVER delegate it, create+seed a pool; scaffold in
-`contracts/happy_path/`). Still owed on-chain: an **emulator pass** with a real `Data`
-ScriptContext (confirms the ~40-order ceiling + decoding cost), and folding the
-clearing-price/ADA-triple-role specs into exact rounding rules. Later:
-**true-equilibrium** cost spike (§5.2.7), the **app** data-access layer. **Done:** trust
-anchor, order/pool/pool_mint validators, LP path, pool close, bidirectional netting,
-deadlines, partial fills; **solver-core** (clearing mirror + v1 floor-only solver + sim).
+**Off-chain reference solver in progress** on branch `batcher/reference-solver`.
+Batcher crates done & tested (50 tests, clippy clean): **`solver-core`** (clearing
+mirror + v1 floor-only solver + sim), **`txbuild`** (chain-independent skeleton: Plutus
+Data encoder, addresses, values, settlement plan + redeemer/withdraw-0 indexing),
+**`chain`** foundations (ChainBackend trait, fail-fast Config, Plutus decoder, fee
+arithmetic). **Next on the batcher (needs a live preprod node):** the Kupo/Ogmios HTTP
+transport behind `ChainBackend` + the final body stitch (funding/collateral, POSIX→slot
+ttl, script_data_hash, ex-units via EvaluateTx, fee balancing, signing) + the
+orchestrator loop. Gated by the **bootstrap dependency** (deploy ref scripts, register
+`S` and NEVER delegate it, create+seed a pool; scaffold in `contracts/happy_path/`).
+Still owed on-chain: an **emulator pass** with a real `Data` ScriptContext (confirms the
+~40-order ceiling + decoding cost), and folding the clearing-price/ADA-triple-role specs
+into exact rounding rules. Later: **true-equilibrium** cost spike (§5.2.7), the **app**
+data-access layer. **Done on-chain:** trust anchor, order/pool/pool_mint validators, LP
+path, pool close, bidirectional netting, deadlines, partial fills.
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -62,6 +65,22 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher `chain` foundations (chain access).** New `chain` crate
+  (solver-core, txbuild, pallas-primitives/codec, serde/serde_json). Modules:
+  `backend` (the `ChainBackend` trait — tip/params/find_orders/find_pool/evaluate
+  [the EvaluateTx pre-submit gate]/submit — the one swappable provider seam per the
+  data-access rule), `config` (typed fail-fast `Config`; `validate()` rejects malformed
+  hex AND any constant drifting from `constants.ak` — binds the pool NFT, parses ref
+  scripts; from JSON via serde), `decode` (on-chain Plutus Data → solver-core datums,
+  the **inverse of `txbuild::plutus`, round-trip tested** so encoder/decoder can't
+  drift; handles bignum + neg-bignum), `fees` (pure body-finalization arithmetic:
+  script-exec fee from ex-units+prices, size fee, ex-unit sum, POSIX→slot floor). 13
+  chain tests green; **50 batcher tests total**, clippy `-D warnings` clean.
+  **Deliberately NOT built (needs a live node; not fixture-tested blind to avoid false
+  confidence in guessed JSON shapes):** the Kupo/Ogmios HTTP transport + the final body
+  stitch (funding/collateral, tip-change, script_data_hash over cost models, fee
+  balancing, signing) + the orchestrator loop. Those are the next concrete step,
+  gated by the bootstrap dependency.
 - **2026-06-01** — **Batcher `txbuild` skeleton (chain-independent tx building).**
   New `txbuild` crate (pallas-primitives/codec/crypto/addresses). Modules: `plutus`
   (every datum/redeemer → Plutus Data matching `plutus.json` constructor indices/field
