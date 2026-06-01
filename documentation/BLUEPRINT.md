@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 13 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 14 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -80,7 +80,24 @@
 > creator can tear down their own unseeded pool. (2) `pool_mint` `Create` now validates
 > the new pool's `PoolDatum` (NFT identity, non-degenerate external pair, valid fee) so
 > a misconfigured pool fails fast at creation instead of silently bricking. Datum-shape
-> change (the `creator` field) + validator-logic change; +1 test (73 green).**)
+> change (the `creator` field) + validator-logic change; +1 test (73 green).**
+> **Rev 14: settlement identity binding (§5.2.1/§5.4) — closes audit criticals C-01/C-02.**
+> The settlement anchor now parses the spent `PoolDatum` **once** to **bind** the
+> solver-declared `(asset_a, asset_b, pool_nft)` to the pool's *real* pair/NFT
+> (`r.asset_a == d.asset_a`, `r.asset_b == d.asset_b`, `r.pool_nft == d.nft`), and
+> `OrderDatum` gains a **`pool_nft`** field (now **8 fields**, still distinct from
+> `PoolDatum`'s 6) that **every order must match**. This shuts two solver-substitution
+> theft paths the threat model (§8) explicitly admits: **(C-01)** a solver could declare
+> the pool's own **LP/NFT** as a traded asset, so the value-pin routed LP out of the pool
+> (invisible to the `k`-check, which reads only the datum pair) and the attacker drained
+> reserves via a follow-up `LpAction`; **(C-02)** the order bound neither its bought-asset
+> nor its target pool, so a solver could settle a victim against an attacker-created
+> worthless-pair pool and pay them a junk token while capturing the real deposit. The
+> bound pair is guaranteed **external** (mint `Create` rejects any pair under the pool's
+> own policy), so C-01 is closed transitively; the per-order `pool_nft` consent closes
+> C-02. The anchor still reads **neither the curve nor the fee** from the datum, so it
+> stays curve-agnostic (§5.4 split intact). Datum-shape change (`OrderDatum.pool_nft`) +
+> settlement-logic change; +6 negative tests (79 green).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -232,9 +249,12 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
 
 2. **Order UTXO (intent)** — one order, locked by the **immutable order validator**
    (§5.4).
-   - *Datum:* owner credential, sell asset + amount, **limit / min-receive** (the
-     user's own floor; "market" = a loose slippage bound), partial-fill rule, **ADA
-     tip** (§7), optional deadline.
+   - *Datum:* owner credential, **target `pool_nft`** (the pool this order consents
+     to — Rev 14), sell-direction + amount, **limit / min-receive** (the user's own
+     floor; "market" = a loose slippage bound), partial-fill rule, **ADA tip** (§7),
+     optional deadline. The order does **not** name its bought/sold asset directly:
+     those follow from the sell-direction + the pool's *bound* pair (§5.2.1), so a
+     solver cannot substitute either identity.
    - *Address:* payment credential = order validator (signature-reclaimable);
      **stake credential = the settlement credential `S`** (§5.4 tag).
    - *Spend paths:* (a) **owner reclaim/cancel** on signature alone (well-formed
@@ -283,6 +303,18 @@ witness — the validator checks algebra, never solves (Principle 4).
      global-conservation fold. The declared `token` must not be ADA itself
      (`policy ≠ ∅`), and the pool **datum is pinned unchanged** so identity/fee params
      can't be mutated mid-settlement (also re-checked by the pool validator).
+   - **Identity binding (Rev 14, closes C-01/C-02).** The solver-declared
+     `(asset_a, asset_b, pool_nft)` are not taken on faith: the anchor parses the spent
+     `PoolDatum` once and asserts they **equal the pool's real `(asset_a, asset_b, nft)`**,
+     and every order's datum `pool_nft` must equal the settled NFT. Because pool creation
+     forbids a pair under the pool's own policy (§5.1 / mint `Create`), the bound pair is
+     always **external** — so a solver can neither (C-01) alias the pool's own **LP/NFT**
+     as a traded asset to siphon it out (the `k`-check, reading only the datum pair, would
+     never see LP leave), nor (C-02) settle an order against a **foreign worthless-pair
+     pool** and pay the owner a junk token. The `limit` floor alone cannot prevent C-02 (it
+     counts units of a *solver-chosen* asset); the binding does. This is the anchor's **only**
+     read of the `PoolDatum` — it still never reads the curve or fee, so it stays
+     curve-agnostic (§5.4).
 2. **Uniform price.** Every order in the (single-shard) batch fills at one clearing
    price. → eliminates intra-batch ordering MEV / sandwiching.
 3. **Pool invariant non-decreasing (incl. the trading fee).** Checked by the **pool
@@ -417,8 +449,9 @@ witness — the validator checks algebra, never solves (Principle 4).
     Settlement classifies every tagged input by **datum shape**: any input presenting a
     well-formed `OrderDatum` *is* an order and is fully checked (floor, binding,
     conservation); **exactly one** tagged input must *not* parse as an order — that is
-    the pool, whose reserves settlement reads from **value** (never its curve/datum, so
-    it stays agnostic). `OrderDatum` and any `PoolDatum` MUST be encoded so an order can
+    the pool, whose reserves settlement reads from **value**, and whose datum it parses
+    **only** to bind the traded pair/NFT (§5.2.1, Rev 14) — never its curve or fee, so it
+    stays agnostic. `OrderDatum` and any `PoolDatum` MUST be encoded so an order can
     never be parsed as the pool (distinct constructors). This is what makes the
     order-spend deferral safe: because a real order always parses as an order, a solver
     can **never** relabel a user's order as "the pool" to skip its checks and drain it.

@@ -113,6 +113,7 @@ fn pool_ref() -> OutputReference {
 fn order_datum() -> OrderDatum {
   OrderDatum {
     owner: VerificationKey(owner_vkh),
+    pool_nft: nft,
     sell_a: True,
     sell_amount: sell,
     limit,
@@ -206,6 +207,7 @@ fn ada_order_input(i: Int, sell_ada_amt: Int, lim: Int) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: False,
           sell_amount: sell_ada_amt,
           limit: lim,
@@ -572,6 +574,7 @@ fn partial_token_order(allow_partial: Bool) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: True,
           sell_amount: sell,
           limit,
@@ -594,6 +597,7 @@ fn partial_ada_order() -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: False,
           sell_amount: 1_000_000,
           limit: 1_500_000,
@@ -621,6 +625,7 @@ fn remainder_output(
     datum: InlineDatum(
       OrderDatum {
         owner: VerificationKey(owner_vkh),
+        pool_nft: nft,
         // is_ada = the order sells ADA (asset_b) ⟺ sell_a == False
         sell_a: !is_ada,
         sell_amount: sell2,
@@ -889,6 +894,104 @@ test settlement_degenerate_pair() fail {
   )
 }
 
+// ---- identity binding: redeemer pair/NFT bound to the PoolDatum (C-01/C-02) ---
+// The solver-declared `asset_a`/`asset_b`/`pool_nft` are pinned to the spent pool's
+// real datum pair, and each order consents to `pool_nft`. This closes (C-01) the
+// LP/NFT-alias reserve drain and (C-02) the unbound-bought-asset owner rug.
+
+// (C-01) declaring the pool's own LP token as the traded `asset_b` is rejected:
+// it doesn't equal the pool's real `asset_b` (ada), so the binding bites.
+test settlement_alias_lp_as_asset_b() fail {
+  let bad = SettlementRedeemer {
+    ..redeemer([sell]),
+    asset_b: AssetId { policy: nft.policy, name: lp_name },
+  }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (C-01) aliasing `asset_a` to the pool's own NFT is likewise rejected.
+test settlement_alias_nft_as_asset_a() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), asset_a: nft }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (C-02) the solver swaps in a worthless bought asset (`asset_b` != the pool's
+// real `asset_b`): the PoolDatum pair-binding rejects it, so the owner can never
+// be paid a token of the solver's choosing.
+test settlement_wrong_bought_asset() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), asset_b: junk }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (C-02) a sold-asset substitution (`asset_a` != the pool's real `asset_a`) is
+// rejected by the same binding.
+test settlement_wrong_sold_asset() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), asset_a: junk }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// A pool nft distinct from the one this order/redeemer target.
+const other_nft =
+  AssetId {
+    policy: #"1212121212121212121212121212121212121212121212121212121a",
+    name: #"4e4654",
+  }
+
+fn order_input_pool(pn: AssetId) -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: tok_val(order_in_ada, sell),
+      datum: InlineDatum(OrderDatum { ..order_datum(), pool_nft: pn }),
+      reference_script: None,
+    },
+  }
+}
+
+// (C-02) an order that consents to a DIFFERENT pool than the one being settled is
+// rejected — it can't be dragged into a pool it never agreed to.
+test settlement_order_wrong_pool() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_pool(other_nft), pool_input(True)],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (C-02) the redeemer's `pool_nft` must equal the spent pool's datum NFT — a
+// redeemer naming a foreign NFT (that the pool input doesn't carry) is rejected.
+test settlement_redeemer_wrong_pool_nft() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), pool_nft: other_nft }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
 // ---- token/token pair (neither side is ADA) -------------------------------
 // asset_a = tok, asset_b = tokb; the pool's lovelace is pure min-ADA overhead.
 // Order sells 1000 tok for tokb at price 3 (tokb per tok) -> 3000 tokb.
@@ -949,6 +1052,7 @@ fn settlement_tt(pool_held_out: Int) -> Transaction {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: True,
           sell_amount: 1000,
           limit: 2000,
@@ -1128,6 +1232,7 @@ fn ts_settlement(
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: True,
           sell_amount,
           limit: 0,
@@ -1162,6 +1267,7 @@ fn ts_settlement(
         datum: InlineDatum(
           OrderDatum {
             owner: VerificationKey(owner_vkh),
+            pool_nft: nft,
             sell_a: True,
             sell_amount: unsold,
             limit: 0,
@@ -1207,6 +1313,7 @@ fn as_settlement(
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: False,
           sell_amount,
           limit: 0,
@@ -1241,6 +1348,7 @@ fn as_settlement(
         datum: InlineDatum(
           OrderDatum {
             owner: VerificationKey(owner_vkh),
+            pool_nft: nft,
             sell_a: False,
             sell_amount: unsold,
             limit: 0,
