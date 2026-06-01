@@ -113,6 +113,7 @@ fn pool_ref() -> OutputReference {
 fn order_datum() -> OrderDatum {
   OrderDatum {
     owner: VerificationKey(owner_vkh),
+    pool_nft: nft,
     sell_a: True,
     sell_amount: sell,
     limit,
@@ -206,6 +207,7 @@ fn ada_order_input(i: Int, sell_ada_amt: Int, lim: Int) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: False,
           sell_amount: sell_ada_amt,
           limit: lim,
@@ -400,6 +402,26 @@ test pool_settle_k_drop() fail {
   spend.pool_settle(tx, pool_ref(), pool_datum(), s())
 }
 
+// (H2 defense-in-depth) pool_settle rejects when the SPENT INPUT doesn't carry the
+// pool NFT — the pool owns its own continuity, independent of the settlement anchor.
+test pool_settle_input_no_nft() fail {
+  let tx = build1(
+    owner_out_ada,
+    0,
+    pool_ada_in - received,
+    pool_tok_in + sell,
+    False,
+  )
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// (H3 defense-in-depth) pool_settle rejects an output whose ADA reserve is driven
+// below zero (lovelace < pool_min_ada): explicit guard (also caught by the k-check).
+test pool_settle_negative_reserve() fail {
+  let tx = build1(owner_out_ada, 0, 1, pool_tok_in + sell, True)
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
 // ---- bidirectional netting (the batch-auction benefit) --------------------
 // price p = 1/2 ADA per token, so 1 token -> 0.5 ADA and 1 ADA -> 2 token.
 
@@ -572,6 +594,7 @@ fn partial_token_order(allow_partial: Bool) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: True,
           sell_amount: sell,
           limit,
@@ -594,6 +617,7 @@ fn partial_ada_order() -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: False,
           sell_amount: 1_000_000,
           limit: 1_500_000,
@@ -621,6 +645,7 @@ fn remainder_output(
     datum: InlineDatum(
       OrderDatum {
         owner: VerificationKey(owner_vkh),
+        pool_nft: nft,
         // is_ada = the order sells ADA (asset_b) ⟺ sell_a == False
         sell_a: !is_ada,
         sell_amount: sell2,
@@ -889,6 +914,272 @@ test settlement_degenerate_pair() fail {
   )
 }
 
+// ---- identity binding: redeemer pair/NFT bound to the PoolDatum (C-01/C-02) ---
+// The solver-declared `asset_a`/`asset_b`/`pool_nft` are pinned to the spent pool's
+// real datum pair, and each order consents to `pool_nft`. This closes (C-01) the
+// LP/NFT-alias reserve drain and (C-02) the unbound-bought-asset owner rug.
+
+// (C-01) declaring the pool's own LP token as the traded `asset_b` is rejected:
+// it doesn't equal the pool's real `asset_b` (ada), so the binding bites.
+test settlement_alias_lp_as_asset_b() fail {
+  let bad = SettlementRedeemer {
+    ..redeemer([sell]),
+    asset_b: AssetId { policy: nft.policy, name: lp_name },
+  }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (C-01) aliasing `asset_a` to the pool's own NFT is likewise rejected.
+test settlement_alias_nft_as_asset_a() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), asset_a: nft }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (H1 defense-in-depth) Even a MALFORMED pool whose own datum declares a traded
+// asset under the pool's OWN policy — which `mint.create` rejects, but the immutable
+// anchor must not depend on that — is fenced off by the anchor's own self-check. Here
+// the redeemer matches the (bad) datum pair, so the PoolDatum binding passes, yet the
+// `asset.policy != pool_nft.policy` guard still bites.
+test settlement_anchor_fences_pool_policy_asset() fail {
+  let bad_asset = AssetId { policy: nft.policy, name: #"54" }
+  let pool_in = Input {
+    output_reference: pool_ref(),
+    output: Output {
+      address: tagged(Script(p_hash)),
+      value: pool_val(pool_ada_in, pool_tok_in),
+      datum: InlineDatum(PoolDatum { ..pool_datum(), asset_a: bad_asset }),
+      reference_script: None,
+    },
+  }
+  let r = SettlementRedeemer { ..redeemer([sell]), asset_a: bad_asset }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_in],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), r, tx)
+}
+
+// (C-02) the solver swaps in a worthless bought asset (`asset_b` != the pool's
+// real `asset_b`): the PoolDatum pair-binding rejects it, so the owner can never
+// be paid a token of the solver's choosing.
+test settlement_wrong_bought_asset() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), asset_b: junk }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (C-02) a sold-asset substitution (`asset_a` != the pool's real `asset_a`) is
+// rejected by the same binding.
+test settlement_wrong_sold_asset() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), asset_a: junk }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// A pool nft distinct from the one this order/redeemer target.
+const other_nft =
+  AssetId {
+    policy: #"1212121212121212121212121212121212121212121212121212121a",
+    name: #"4e4654",
+  }
+
+fn order_input_pool(pn: AssetId) -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: tok_val(order_in_ada, sell),
+      datum: InlineDatum(OrderDatum { ..order_datum(), pool_nft: pn }),
+      reference_script: None,
+    },
+  }
+}
+
+// (C-02) an order that consents to a DIFFERENT pool than the one being settled is
+// rejected — it can't be dragged into a pool it never agreed to.
+test settlement_order_wrong_pool() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_pool(other_nft), pool_input(True)],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (C-02) the redeemer's `pool_nft` must equal the spent pool's datum NFT — a
+// redeemer naming a foreign NFT (that the pool input doesn't carry) is rejected.
+test settlement_redeemer_wrong_pool_nft() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), pool_nft: other_nft }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// ---- output perimeter: stake-cred + reference-script pins (M-01 / L-01) ------
+// Owner payouts pin payment-cred + stake=None + no ref script; the recreated pool
+// and re-locked remainders pin their full address + no ref script. These block a
+// solver hijacking payout staking rewards (M-01) or bloating outputs with an
+// attached reference script (L-01).
+
+const some_script = #"abababababababababababababababababababababababababababab"
+
+// (M-01) owner payout carrying a solver-chosen stake credential: rejected (the
+// payout's stake credential is pinned to None).
+test settlement_owner_stake_hijack() fail {
+  let owner_out = Output {
+    address: Address {
+      payment_credential: VerificationKey(owner_vkh),
+      stake_credential: Some(Inline(Script(s_hash))),
+    },
+    value: assets.from_lovelace(owner_out_ada),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [
+      owner_out,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (L-01) owner payout with an attached reference script: rejected.
+test settlement_owner_ref_script() fail {
+  let owner_out = Output {
+    address: plain(VerificationKey(owner_vkh)),
+    value: assets.from_lovelace(owner_out_ada),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: Some(some_script),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [
+      owner_out,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (L-01) recreated pool output with an attached reference script: rejected.
+test settlement_pool_ref_script() fail {
+  let bad_pool = Output {
+    address: tagged(Script(p_hash)),
+    value: pool_val(pool_ada_in - received, pool_tok_in + sell),
+    datum: InlineDatum(pool_datum()),
+    reference_script: Some(some_script),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [owner_output(0, owner_out_ada), bad_pool, solver_output(tip)],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// (L-01) re-locked partial-fill remainder with an attached reference script:
+// rejected.
+test settlement_remainder_ref_script() fail {
+  let bad_rem = Output {
+    address: tagged(Script(o_hash)),
+    value: tok_val(3_200_000, 600_000),
+    datum: InlineDatum(
+      OrderDatum {
+        ..order_datum(),
+        sell_a: True,
+        sell_amount: 600_000,
+        limit: 240_000,
+        tip: 1_200_000,
+        partial: False,
+      },
+    ),
+    reference_script: Some(some_script),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      bad_rem,
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// ---- clearing price must be strictly positive (L-02) -----------------------
+// price_num/price_den are now explicitly guarded > 0, instead of relying on
+// emergent div-by-zero + the floor check.
+
+// (L-02) zero denominator: rejected by the explicit guard (was: div-by-zero).
+test settlement_price_den_zero() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), price_den: 0 }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (L-02) zero numerator (a 0-price fill that would pay the owner nothing for a
+// limit==0 order): rejected.
+test settlement_price_num_zero() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), price_num: 0 }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (L-02) negative price: rejected.
+test settlement_price_negative() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), price_num: -1 }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
 // ---- token/token pair (neither side is ADA) -------------------------------
 // asset_a = tok, asset_b = tokb; the pool's lovelace is pure min-ADA overhead.
 // Order sells 1000 tok for tokb at price 3 (tokb per tok) -> 3000 tokb.
@@ -949,6 +1240,7 @@ fn settlement_tt(pool_held_out: Int) -> Transaction {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: True,
           sell_amount: 1000,
           limit: 2000,
@@ -1128,6 +1420,7 @@ fn ts_settlement(
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: True,
           sell_amount,
           limit: 0,
@@ -1162,6 +1455,7 @@ fn ts_settlement(
         datum: InlineDatum(
           OrderDatum {
             owner: VerificationKey(owner_vkh),
+            pool_nft: nft,
             sell_a: True,
             sell_amount: unsold,
             limit: 0,
@@ -1207,6 +1501,7 @@ fn as_settlement(
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          pool_nft: nft,
           sell_a: False,
           sell_amount,
           limit: 0,
@@ -1241,6 +1536,7 @@ fn as_settlement(
         datum: InlineDatum(
           OrderDatum {
             owner: VerificationKey(owner_vkh),
+            pool_nft: nft,
             sell_a: False,
             sell_amount: unsold,
             limit: 0,
@@ -1318,4 +1614,127 @@ test prop_token_seller_short_owner(p via params()) fail {
     fuzz_redeemer(pn, pd, f),
     ts_settlement(sell_amount, f, pn, pd, tip, -1),
   )
+}
+
+// ---- adversarial property tests over the solver's degrees of freedom (I-02) ---
+// The fixtures above are stuck-at-default for the fields a solver actually controls
+// (declared pair, output stake credential, output reference script). These fuzz
+// those degrees of freedom and assert the hardened anchor rejects the whole space —
+// so a regression on C-01/C-02 (binding), M-01 (stake pin), or L-01 (ref-script
+// pin) is caught, not just the single hand-built sample.
+
+// a non-empty policy id (1..28 bytes) — anything here differs from the pool's real
+// asset_b (ADA = empty policy), and includes the pool's own policy as a sub-case.
+fn nonempty_policy() -> Fuzzer<ByteArray> {
+  fuzz.bytearray_between(1, 28)
+}
+
+// PROPERTY (C-01/C-02): any asset_b with a non-empty policy (≠ the pool's bound
+// asset_b = ADA) is rejected — the redeemer pair is pinned to the PoolDatum. This
+// space includes asset_b under the pool's own policy (the C-01 LP/NFT alias).
+test prop_reject_foreign_asset_b(pol via nonempty_policy()) fail {
+  let bad = SettlementRedeemer {
+    ..redeemer([sell]),
+    asset_b: AssetId { policy: pol, name: #"4c50" },
+  }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// PROPERTY (C-02): any order consenting to a pool_nft other than the settled one is
+// rejected — fuzz the order's target NFT policy across the whole non-matching space.
+test prop_reject_order_wrong_pool(pol via nonempty_policy()) fail {
+  let other = AssetId { policy: pol, name: #"4e4654" }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_pool(other), pool_input(True)],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// PROPERTY (M-01): any owner payout carrying a stake credential (the solver's choice)
+// is rejected — the payout's stake credential is pinned to None across the space.
+test prop_reject_owner_stake(h via fuzz.bytearray_fixed(28)) fail {
+  let owner_out = Output {
+    address: Address {
+      payment_credential: VerificationKey(owner_vkh),
+      stake_credential: Some(Inline(VerificationKey(h))),
+    },
+    value: assets.from_lovelace(owner_out_ada),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [
+      owner_out,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// PROPERTY (L-01): any reference script attached to the recreated pool output is
+// rejected across the whole script-hash space.
+test prop_reject_pool_ref_script(h via fuzz.bytearray_fixed(28)) fail {
+  let bad_pool = Output {
+    address: tagged(Script(p_hash)),
+    value: pool_val(pool_ada_in - received, pool_tok_in + sell),
+    datum: InlineDatum(pool_datum()),
+    reference_script: Some(h),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [owner_output(0, owner_out_ada), bad_pool, solver_output(tip)],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// ---- benchmarks: settlement hot path (I-01) --------------------------------
+// Baseline ex-unit measurements for the once-per-tx settlement anchor, the cost
+// that bounds the batch-size ceiling (BLUEPRINT §13.1, ~40-50 orders). The tx is
+// built inside the Sampler (generation phase, not measured), so the body measures
+// only `clearing.run`. Run: `aiken bench` (raise the ceiling with --max-size 50).
+
+// Sampler: an N-order happy settlement (N = bench size, clamped to >= 1).
+fn settlement_of_size(n0: Int) -> Fuzzer<(SettlementRedeemer, Transaction)> {
+  let n = if n0 < 1 {
+    1
+  } else {
+    n0
+  }
+  fuzz.constant((redeemer(list.repeat(sell, n)), build(n)))
+}
+
+bench settlement__run(p via settlement_of_size) {
+  let (r, tx) = p
+  clearing.run(s(), r, tx)
+}
+
+// Fixed-shape benches (size is irrelevant): the prepared tx is built in the
+// Sampler (generation phase), so the body measures only the lib function.
+fn one_order_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(build(1))
+}
+
+bench pool__pool_settle(tx via one_order_tx) {
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+bench order__order_settle(tx via one_order_tx) {
+  spend.order_settle(tx, order_ref(0), s())
 }

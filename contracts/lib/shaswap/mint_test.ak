@@ -1,5 +1,6 @@
 //// Tests for pool create/close mint logic (`shaswap/mint`).
 
+use aiken/fuzz
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
 use cardano/transaction.{
@@ -126,6 +127,31 @@ test create_extra_asset() fail {
   mint.create(seed(), policy, tx)
 }
 
+// (I-03) creator is a Script credential, not a VK: rejected at create. ClosePool
+// authorizes the pre-seed teardown by signature, so a Script creator would
+// silently brick that path — fail fast at the only validating gate instead.
+test create_script_creator() fail {
+  let pool_v = assets.from_lovelace(2_000_000)
+    |> assets.add(policy, nft_name, 1)
+    |> assets.add(policy, lp_name, total_lp)
+  let bad_output = Output {
+    address: Address {
+      payment_credential: Script(p_hash),
+      stake_credential: Some(Inline(Script(p_hash))),
+    },
+    value: pool_v,
+    datum: InlineDatum(PoolDatum { ..pool_datum(), creator: Script(p_hash) }),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [seed_input()],
+    outputs: [bad_output],
+    mint: mint_val(1, total_lp),
+  }
+  mint.create(seed(), policy, tx)
+}
+
 // NFT and LP do not land together in one output: rejected.
 test create_split_output() fail {
   let pool_v = assets.from_lovelace(2_000_000)
@@ -153,4 +179,24 @@ test close_ok() {
 test close_positive() fail {
   let tx = Transaction { ..transaction.placeholder, mint: mint_val(-1, 7) }
   mint.close(policy, tx)
+}
+
+// ---- benchmark: pool creation (I-01) --------------------------------------
+
+fn create_tx(_n: Int) -> Fuzzer<Transaction> {
+  let pool_v = assets.from_lovelace(2_000_000)
+    |> assets.add(policy, nft_name, 1)
+    |> assets.add(policy, lp_name, total_lp)
+  fuzz.constant(
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [seed_input()],
+      outputs: [pool_seed_output(pool_v)],
+      mint: mint_val(1, total_lp),
+    },
+  )
+}
+
+bench pool_mint__create(tx via create_tx) {
+  mint.create(seed(), policy, tx)
 }

@@ -410,3 +410,36 @@ test prop_deposit_overmint(p via deposit_params()) fail {
   }
   spend.lp_action(tx, pool_ref(), pool_datum())
 }
+
+// ---- benchmarks: LP deposit/withdraw + worst-case first-deposit sqrt (I-01) --
+
+fn deposit_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(
+    lp_tx(
+      pool_in(100_000_000, 200_000_000, total_lp - 1_000_000),
+      pool_out(110_000_000, 220_000_000, total_lp - 1_100_000, True),
+    ),
+  )
+}
+
+bench pool__lp_action__deposit(tx via deposit_tx) {
+  spend.lp_action(tx, pool_ref(), pool_datum())
+}
+
+fn first_deposit_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [pool_in(0, 0, total_lp)],
+      outputs: [
+        pool_out(100_000_000, 100_000_000, total_lp - 100_000_000, True),
+        burn_out(min_liq),
+      ],
+    },
+  )
+}
+
+// worst-case path: the first-deposit `is_sqrt` check.
+bench pool__lp_action__first_deposit(tx via first_deposit_tx) {
+  spend.lp_action(tx, pool_ref(), pool_datum())
+}

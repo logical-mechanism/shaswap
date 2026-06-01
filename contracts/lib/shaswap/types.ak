@@ -4,7 +4,7 @@
 //// settlement staking credential `S` as their stake credential; the settlement
 //// validator is unparameterised and enumerates its input set by `S`.
 ////
-//// `OrderDatum` (7 fields) and `PoolDatum` (6 fields) are intentionally distinct
+//// `OrderDatum` (8 fields) and `PoolDatum` (6 fields) are intentionally distinct
 //// shapes so a well-formed order can NEVER be parsed as the pool — this is what
 //// makes the order-spend deferral safe against a solver relabelling an order as
 //// "the pool" to skip its checks (§5.4 role-identification).
@@ -29,8 +29,17 @@ pub type AssetId {
 /// for `asset_b`; `sell_a = False` sells `sell_amount` of `asset_b` for `asset_a`.
 /// `limit` is the minimum amount of the *bought* asset — the per-order floor
 /// (§5.2.5). Either asset may be ADA or a native token.
+///
+/// `pool_nft` **binds the order to the exact pool it consents to** (§5.2 identity
+/// binding). The settlement anchor pins the solver-declared pair/NFT to the spent
+/// `PoolDatum` and then requires every order's `pool_nft` to equal it — so a solver
+/// can neither settle the order against an attacker-created worthless-pair pool nor
+/// pay the owner a token of the solver's choosing (closes the unbound-bought-asset
+/// rug). The bought/sold asset identities then follow from `sell_a` + the verified
+/// pair, so no separate buy/sell field is needed.
 pub type OrderDatum {
   owner: Credential,
+  pool_nft: AssetId,
   sell_a: Bool,
   sell_amount: Int,
   limit: Int,
@@ -51,7 +60,7 @@ pub type OrderRedeemer {
 
 /// Pool UTXO datum (§5.1). Reserves are read from the UTXO *value*; `k` is NOT
 /// stored. Identity (`nft`) + the traded pair (`asset_a`, `asset_b`) + static fee.
-/// Either asset may be ADA. Distinct shape (6 fields) from `OrderDatum` (7).
+/// Either asset may be ADA. Distinct shape (6 fields) from `OrderDatum` (8).
 ///
 /// `creator` is the credential that may tear down a created-but-never-seeded pool
 /// via `ClosePool` (§5.1 path c). It authorizes the teardown by **signature**, so it
@@ -96,9 +105,11 @@ pub type MintRedeemer {
 /// The solver-supplied settlement witness (the redeemer of the withdraw-0
 /// settlement validator). Clearing price is an exact rational (no floats):
 /// `price = price_num / price_den` is the amount of `asset_b` per unit of
-/// `asset_a`. `asset_a`/`asset_b`/`pool_nft` are solver-declared identities,
-/// *verified* on-chain (assets by conservation, NFT by continuity) so settlement
-/// never parses the PoolDatum and stays curve-agnostic.
+/// `asset_a`. `asset_a`/`asset_b`/`pool_nft` are solver-declared identities, but
+/// they are **bound to the spent `PoolDatum`** (the anchor asserts they equal the
+/// pool's real `(asset_a, asset_b, nft)`) and each order consents to `pool_nft` —
+/// so the solver cannot substitute asset identities. The anchor still reads the
+/// curve/fee from neither datum nor redeemer, staying curve-agnostic (§5.4 split).
 pub type SettlementRedeemer {
   price_num: Int,
   price_den: Int,

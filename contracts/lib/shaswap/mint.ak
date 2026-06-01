@@ -4,6 +4,7 @@
 //// pool NFT — is unique, and `Create` can fire only once (the seed is consumed).
 
 use aiken/collection/list
+use cardano/address.{VerificationKey}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, OutputReference, Transaction}
 use shaswap/constants.{lp_name, nft_name, total_lp}
@@ -51,7 +52,12 @@ pub fn create(
   // static fee in range 0 <= phi = fee_num/fee_den < 1
   expect d.fee_den > 0
   expect d.fee_num >= 0
-  d.fee_num < d.fee_den
+  expect d.fee_num < d.fee_den
+  // (I-03) `creator` authorizes ClosePool by SIGNATURE, so it must be a VK
+  // credential — assert it at create (the only fail-fast gate) rather than let a
+  // Script-credential creator silently brick the pre-seed teardown path.
+  expect VerificationKey(_) = d.creator
+  True
 }
 
 /// Close: burn-only — no positive quantity may be minted under this policy.

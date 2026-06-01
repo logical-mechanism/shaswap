@@ -16,7 +16,10 @@
 //// `tip − tip·f/sell`; the solver collects `tip·f/sell` now. The pre-funded second
 //// min-ADA (which on a full fill simply returns to the owner) funds the remainder.
 ////
-//// It does NOT check `k` (pool validator's job, §5.4) and never parses PoolDatum.
+//// It does NOT check `k` (pool validator's job, §5.4). It parses the spent
+//// PoolDatum only to BIND the solver-declared pair/NFT to the pool's real
+//// `(asset_a, asset_b, nft)` (and each order consents to that NFT) — it never
+//// reads the curve or fee, so it stays curve-agnostic.
 //// Safety without a global-conservation pass: every owner output, every remainder,
 //// and the pool are pinned exactly, `mint == 0`, and ledger value conservation then
 //// forces the solver to take only the (proportional) tips.
@@ -27,7 +30,7 @@ use cardano/address.{Credential}
 use cardano/assets.{Value, ada_asset_name, ada_policy_id}
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
 use shaswap/constants.{order_min_ada}
-use shaswap/types.{BoundDatum, OrderDatum, SettlementRedeemer}
+use shaswap/types.{BoundDatum, OrderDatum, PoolDatum, SettlementRedeemer}
 use shaswap/utils
 
 fn parses_as_order(i: Input) -> Bool {
@@ -77,7 +80,9 @@ fn consume_remainder(
   order_addr,
 ) -> List<Output> {
   expect [rem, ..rest] = remainders
-  expect rem.address == order_addr
+  // remainder is a continuing order at the SAME address (stays tagged S), with no
+  // attached reference script (L-01).
+  expect utils.is_protocol_output(rem, order_addr)
   // full-value pin: the remainder holds EXACTLY the unsold asset + pre-funded
   // min-ADA + leftover tip and nothing else (no junk asset rides along to the
   // solver, and the unsold side can't be shorted).
@@ -109,12 +114,19 @@ fn check_one(
   expect InlineDatum(od) = input.output.datum
   expect order: OrderDatum = od
 
+  // (C-02) the order consents to THIS pool only. `r.pool_nft` is bound to the
+  // spent PoolDatum in `run`, so this transitively binds the order's traded pair
+  // to the pool's real pair — the solver can't settle it against a worthless-pair
+  // pool or pay out a token of its own choosing.
+  expect order.pool_nft == r.pool_nft
+
   expect deadline_ok(order.deadline, tx_upper)
   // (6) injective binding: this output is bound to THIS order's unique ref
   expect InlineDatum(bd) = bound.datum
   expect b: BoundDatum = bd
   expect b.order_ref == input.output_reference
-  expect bound.address.payment_credential == order.owner
+  // owner payout: payment cred = owner, stake = None, no ref script (M-01/L-01)
+  expect utils.is_payout_output(bound, order.owner)
 
   expect f >= 1
   expect f <= order.sell_amount
@@ -224,8 +236,16 @@ fn process(
 }
 
 pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool {
+  // (L-02) the clearing price must be strictly positive. Safety was previously
+  // only emergent (div-by-zero on a 0 denominator + the floor rejecting a
+  // non-positive price for limit ≥ 1); make it an explicit invariant so a 0-price
+  // fill of a `limit == 0` order can't pay the owner nothing.
+  expect r.price_num > 0
+  expect r.price_den > 0
+
   // the two declared assets must be distinct (a degenerate `asset_a == asset_b`
-  // would collapse the pair). Either may be ADA; at most one can be.
+  // would collapse the pair). Either may be ADA; at most one can be. (Now also
+  // implied by the PoolDatum binding below, but kept as a cheap early guard.)
   expect r.asset_a != r.asset_b
 
   // (7) enumerate the protocol input set by the stake tag S = our own credential
@@ -244,6 +264,26 @@ pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool 
 
   expect utils.asset_qty(pool_in.output.value, r.pool_nft) == 1
 
+  // (C-01/C-02) Bind the solver-declared identities to the pool's REAL datum. The
+  // pool's `(asset_a, asset_b)` are guaranteed external (mint.create rejects any
+  // pair sharing the pool's own policy), so binding here forbids aliasing the pool
+  // NFT/LP as a traded asset (C-01) and forces every order's bought/sold asset to
+  // be the pool's real pair (C-02). This is the only use of the PoolDatum — the
+  // curve/fee are still never read here (§5.4 split).
+  expect InlineDatum(pd) = pool_in.output.datum
+  expect d: PoolDatum = pd
+  expect r.pool_nft == d.nft
+  expect r.asset_a == d.asset_a
+  expect r.asset_b == d.asset_b
+
+  // Defense-in-depth: the anchor is the IMMUTABLE trust root and pools are pluggable
+  // underneath it (§5.4), so it must not rely on any one pool validator's create-time
+  // checks. Re-assert here that neither traded asset shares the pool's own policy
+  // (= the NFT/LP policy) — `mint.create` already enforces this for the v1 pool, but
+  // a future pool type reusing this anchor might not, and that would reopen C-01.
+  expect r.asset_a.policy != r.pool_nft.policy
+  expect r.asset_b.policy != r.pool_nft.policy
+
   // tagged outputs = the pool (carries the NFT) + remainder UTXOs (no NFT).
   let tagged_outputs = list.filter(
     tx.outputs,
@@ -254,7 +294,8 @@ pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool 
     fn(o) { utils.asset_qty(o.value, r.pool_nft) == 1 },
   )
   expect [pool_out] = pool_outs
-  expect pool_out.address == pool_in.output.address
+  // pool continuity: same address, no attached reference script (L-01)
+  expect utils.is_protocol_output(pool_out, pool_in.output.address)
 
   // (6) O(N) positional binding: owner-outputs are the first N outputs in
   // canonical (input) order; remainders follow the pool.
