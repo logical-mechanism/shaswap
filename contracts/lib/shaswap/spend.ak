@@ -62,6 +62,10 @@ pub fn pool_settle(
 ) -> Bool {
   expect utils.withdrawal_present(tx, s)
   expect Some(own) = list.find(tx.inputs, fn(i) { i.output_reference == utxo })
+  // the spent input must itself be the NFT-bearing pool (parity with lp_action,
+  // which checks this too). The settlement anchor also enforces a single
+  // NFT-bearing pool input, but the pool owns its own continuity (§5.4).
+  expect utils.asset_qty(own.output.value, d.nft) == 1
   expect [out] = list.filter(
     tx.outputs,
     fn(o) {
@@ -77,6 +81,11 @@ pub fn pool_settle(
   let res_b_in = reserve_of(own.output.value, d.asset_b)
   let res_a_out = reserve_of(out.value, d.asset_a)
   let res_b_out = reserve_of(out.value, d.asset_b)
+  // reserves never negative (the ADA side keeps >= pool_min_ada lovelace). Parity
+  // with lp_action; the k-check below would also reject a negative reserve, but
+  // make it an explicit invariant rather than emergent (cf. L-02).
+  expect res_a_out >= 0
+  expect res_b_out >= 0
 
   // Static trading fee φ = fee_num/fee_den (0 ≤ φ < 1), charged Uniswap-v2 style on
   // the net amount that flowed INTO the pool — and ONLY that. The settlement nets

@@ -402,6 +402,26 @@ test pool_settle_k_drop() fail {
   spend.pool_settle(tx, pool_ref(), pool_datum(), s())
 }
 
+// (H2 defense-in-depth) pool_settle rejects when the SPENT INPUT doesn't carry the
+// pool NFT — the pool owns its own continuity, independent of the settlement anchor.
+test pool_settle_input_no_nft() fail {
+  let tx = build1(
+    owner_out_ada,
+    0,
+    pool_ada_in - received,
+    pool_tok_in + sell,
+    False,
+  )
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// (H3 defense-in-depth) pool_settle rejects an output whose ADA reserve is driven
+// below zero (lovelace < pool_min_ada): explicit guard (also caught by the k-check).
+test pool_settle_negative_reserve() fail {
+  let tx = build1(owner_out_ada, 0, 1, pool_tok_in + sell, True)
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
 // ---- bidirectional netting (the batch-auction benefit) --------------------
 // price p = 1/2 ADA per token, so 1 token -> 0.5 ADA and 1 ADA -> 2 token.
 
@@ -921,6 +941,36 @@ test settlement_alias_nft_as_asset_a() fail {
     bad,
     build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
   )
+}
+
+// (H1 defense-in-depth) Even a MALFORMED pool whose own datum declares a traded
+// asset under the pool's OWN policy — which `mint.create` rejects, but the immutable
+// anchor must not depend on that — is fenced off by the anchor's own self-check. Here
+// the redeemer matches the (bad) datum pair, so the PoolDatum binding passes, yet the
+// `asset.policy != pool_nft.policy` guard still bites.
+test settlement_anchor_fences_pool_policy_asset() fail {
+  let bad_asset = AssetId { policy: nft.policy, name: #"54" }
+  let pool_in = Input {
+    output_reference: pool_ref(),
+    output: Output {
+      address: tagged(Script(p_hash)),
+      value: pool_val(pool_ada_in, pool_tok_in),
+      datum: InlineDatum(PoolDatum { ..pool_datum(), asset_a: bad_asset }),
+      reference_script: None,
+    },
+  }
+  let r = SettlementRedeemer { ..redeemer([sell]), asset_a: bad_asset }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_in],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), r, tx)
 }
 
 // (C-02) the solver swaps in a worthless bought asset (`asset_b` != the pool's

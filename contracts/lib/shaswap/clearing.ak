@@ -276,6 +276,14 @@ pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool 
   expect r.asset_a == d.asset_a
   expect r.asset_b == d.asset_b
 
+  // Defense-in-depth: the anchor is the IMMUTABLE trust root and pools are pluggable
+  // underneath it (§5.4), so it must not rely on any one pool validator's create-time
+  // checks. Re-assert here that neither traded asset shares the pool's own policy
+  // (= the NFT/LP policy) — `mint.create` already enforces this for the v1 pool, but
+  // a future pool type reusing this anchor might not, and that would reopen C-01.
+  expect r.asset_a.policy != r.pool_nft.policy
+  expect r.asset_b.policy != r.pool_nft.policy
+
   // tagged outputs = the pool (carries the NFT) + remainder UTXOs (no NFT).
   let tagged_outputs = list.filter(
     tx.outputs,

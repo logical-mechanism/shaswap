@@ -124,7 +124,18 @@
 > identity-binding/perimeter checks. **O-01 (fuse the input/output classification passes)
 > is deferred:** it targets list traversals (CPU), where there is ~2× headroom, and would
 > not lift the memory-bound ceiling — so the hot-path refactor risk is not justified now.
-> Test-only; benches recorded as the baseline for any future optimization (91 green).**)
+> Test-only; benches recorded as the baseline for any future optimization (91 green).**
+> **Rev 18: second-pass defense-in-depth hardening (§5.2.1/§5.4).** A second audit pass
+> found no new exploitable issues; these three changes make the immutable anchor and the
+> pool validator **self-sufficient** rather than reliant on cross-validator invariants
+> (the anchor outlives any single pool type, §5.4). (1) `clearing.run` re-asserts
+> `asset_a.policy != pool_nft.policy` and `asset_b.policy != pool_nft.policy` itself — it
+> already binds the pair to the `PoolDatum`, but no longer *depends* on `mint.create`'s
+> external-pair check, so a future pluggable pool wired to the same anchor can't reopen
+> C-01. (2) `pool_settle` now asserts the **spent input** carries the pool NFT (parity
+> with `lp_action`). (3) `pool_settle` asserts `res_*_out >= 0` explicitly (parity with
+> `lp_action`; previously only emergent via the `k`-check, cf. L-02). No behaviour change
+> for valid txs; +3 negative tests (94 green).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
