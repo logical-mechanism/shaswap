@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 5 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 13 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -29,7 +29,58 @@
 > non-decreasing invariant; resolves the §5.1/§6 conflict and the §12 LP decision.**
 > **Rev 8: partial fills resolved + implemented (§7/§12.4) — proportional tip
 > (pay-per-fill), one-level remainder, pre-funded 2× min-ADA, limit-price preserved;
-> plus bidirectional netting and order deadlines implemented.**)
+> plus bidirectional netting and order deadlines implemented.**
+> **Rev 9: security-review fixes (§5.2.1) — settlement now pins the EXACT full `Value`
+> of every owner-output, remainder, and the pool (incl. the pool's held LP supply and
+> the pool datum), not just lovelace + traded token. Closes a reserve-drain where a
+> solver stripped the pool's held LP during a settlement (then withdrew reserves via
+> `LpAction`), an incidental-asset leak to the solver, and a pool-datum/fee mutation;
+> also rejects a declared `token == ADA`. Pool validator now also pins datum
+> continuity in `PoolSettle`. No protocol-shape change; tightens conservation
+> enforcement to match the §5.2.1 intent. +9 tests (57 green).**
+> **Rev 10: token/token pairs (§5.1) — the pool is now a general `(asset_a, asset_b)`
+> pair; either side may be ADA or any native token, so token/token pools are
+> first-class (matches the long-standing §5.1 "reserves of A and B"; the code was
+> previously ADA-only). `OrderDatum.sell_a` replaces `sell_ada`; `PoolDatum`/redeemer
+> carry `asset_a`/`asset_b`. Settlement reserve carve-out (`reserve_of`) removes
+> min-ADA only from whichever side is ADA (pure overhead when neither is). All
+> owner/remainder/pool pins are now value-transforms of the corresponding input, so
+> ADA-as-reserve, ADA-as-overhead, and incidental assets are handled uniformly. The
+> degenerate-pair guard (`asset_a != asset_b`) replaces the Rev 9 `token != ADA`
+> guard. +4 token/token tests (61 green). **NOT YET IMPLEMENTED / open:** the static
+> trading fee (§7) — `fee_num/den` are carried but unenforced, pending a decision on
+> CoW-netted volume (residual-only vs per-order, §5.4 split forces residual-only);
+> and PA-AMM `λ` (§5.6/§11) — deferred, `λ=1` no-op for now. Best-response (§5.2.4) is
+> enforced as the per-order floor only (v1 floor-only, §5.2.7).**
+> **Rev 11: static trading fee implemented (§7/§5.2.3, Option A — residual-only).** The
+> pool `k`-check now enforces the Uniswap-v2 fee `(res_in_after − φ·Δin)·res_out_after ≥
+> k_before` with `φ = fee_num/fee_den` on the **net** flow into the pool, retained in
+> reserves (LP earnings). CoW-netted volume reaches no fee; a perfectly-netted batch
+> passes at `k` unchanged. The residual/heavy side pays (from its traded asset, ≥ its
+> floor); the solver never touches it. `fee_num/den` are now load-bearing (guarded
+> `0 ≤ φ < 1`). +5 tests (66 green): fee covered both directions, fee-short (k grows but
+> < fee → now rejected), zero-residual, k-drop. **Accepted trade-off:** LP yield tracks
+> imbalance, not gross volume. Still open: PA-AMM `λ`.**
+> **Rev 12: pre-audit doc reconciliation (no code change).** Closes three code↔blueprint
+> divergences found in the pre-handoff implementation audit: (1) §5.1 now documents the
+> `ClosePool` pool spend path (c) — unseeded-only teardown, with its permissionless/
+> unauthenticated seed-griefing caveat tracked in the new §13.10; (2) §5.1 now states the
+> v1 `OrderDatum.owner` is a **VK** credential (reclaim is signature-based; script owners
+> can be settled but not reclaim), aligning the §3 non-custodial claim with the code; (3)
+> §5.1 trims the pool datum to the actual v1 `PoolDatum` (`nft`, `(asset_a, asset_b)`,
+> `fee_num/den`; LP policy derived) and marks the **shard index** and **PA-AMM `λ`** as
+> deferred/variant fields not in the core datum. Also notes (§13.10) that `Create` does
+> not yet validate the `PoolDatum` (self-brick only, never theft). No protocol-shape or
+> validator change; documentation caught up to Rev 9–11 code.**
+> **Rev 13: pool teardown authorization + create-time datum validation (§5.1/§13.10).**
+> Closes the two code-impact findings from the audit. (1) `PoolDatum` gains a `creator`
+> VK credential (now **6 fields**, still distinct from `OrderDatum`'s 7) and `ClosePool`
+> requires the creator's signature — so the unseeded-pool teardown is no longer
+> permissionless and the pre-deposit seed-griefing vector (§13.10) is closed; only the
+> creator can tear down their own unseeded pool. (2) `pool_mint` `Create` now validates
+> the new pool's `PoolDatum` (NFT identity, non-degenerate external pair, valid fee) so
+> a misconfigured pool fails fast at creation instead of silently bricking. Datum-shape
+> change (the `creator` field) + validator-logic change; +1 test (73 green).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -144,20 +195,40 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
 ### 5.1 On-chain objects (UTXO types)
 
 1. **Pool UTXO** — reserves of A and B for one pair (one shard).
-   - *Datum:* pair identity, shard index, **static fee rate** (low), LP-token policy
-     id, optional PA-AMM `λ` + last-batch marker. **`k` is NOT stored** — the pool
-     validator checks `reserveA_after · reserveB_after ≥ reserveA_before ·
-     reserveB_before` from the UTXO's *actual* reserves, so there is no datum/reserve
-     desync. **LP supply is likewise value-derived** (= `TOTAL_LP − LP held in this
-     UTXO`); neither reserves nor share supply is stored as a counter (§6 LP model).
-     **No external references** (oracle pools are a variant — §5.4/§5.6).
+   - *Datum (v1 `PoolDatum`):* `nft` (pool identity), the pair `(asset_a, asset_b)`,
+     the **static fee rate** `fee_num/fee_den` (low), and `creator` (the VK credential
+     authorized to `ClosePool` an unseeded pool — path (c) below). The LP-token policy
+     id is **derived** (= `nft.policy`; LP and the NFT share one mint policy), not a
+     separate field. **`k` is NOT stored** — the pool validator checks `reserveA_after ·
+     reserveB_after ≥ reserveA_before · reserveB_before` from the UTXO's *actual*
+     reserves, so there is no datum/reserve desync. **LP supply is likewise
+     value-derived** (= `TOTAL_LP − LP held in this UTXO`); neither reserves nor share
+     supply is stored as a counter (§6 LP model). **No external references** (oracle
+     pools are a variant — §5.4/§5.6).
+     - *Deferred datum fields (NOT in the v1 datum):* a **shard index** and the
+       **optional PA-AMM `λ` + last-batch marker**. Sharding is realized as independent
+       pool UTXOs (distinct NFTs; default `n = 1`, §5.5) so no shard-index field is
+       needed in v1, and `λ` is deferred (`λ = 1` no-op, §5.6/§11). Under pluggable
+       pools (§5.4) a PA-AMM or shard-aware variant ships its **own** pool validator and
+       datum, leaving the unchanged settlement anchor intact — so these live in a future
+       variant's datum, not the core v1 `PoolDatum`.
    - *Identity:* a unique pool NFT — also the settlement anchor's discriminator for
      "which input is the pool" (§5.4 wiring).
    - *Address:* payment credential = pool validator; **stake credential = the
      settlement credential `S`** (the §5.4 tag that makes the pool part of a
      settlement's accountable input set).
    - *Spend paths:* (a) **settlement** (§5.2); (b) **LP withdraw/deposit** — total,
-     share-token-based, independent of fragile datum fields, so LPs can always exit.
+     share-token-based, independent of fragile datum fields, so LPs can always exit;
+     (c) **`ClosePool` teardown** — tear down a **created-but-never-seeded** pool (valid
+     **only** while `held == TOTAL_LP` ⟺ circulating LP `= 0`, i.e. no LP claim is
+     outstanding), burning the NFT + full LP supply. After the first deposit
+     `held < TOTAL_LP` and the permanently-locked `MIN_LIQ` can never be reassembled, so
+     `ClosePool` can **never** close a live pool or touch real reserves — only the
+     creator's own pre-seed UTXO (NFT + LP + its seed min-ADA) is ever spendable this
+     way. **Authorized by the `creator` signature (Rev 13).** The teardown requires the
+     pool's `creator` (a VK credential set in the datum at creation) to sign, so a
+     stranger can neither grief an unseeded pool nor pocket its seed in the pre-deposit
+     window; the creator alone may close it and redirect the seed (§13.10 resolved).
 
 2. **Order UTXO (intent)** — one order, locked by the **immutable order validator**
    (§5.4).
@@ -168,6 +239,13 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
      **stake credential = the settlement credential `S`** (§5.4 tag).
    - *Spend paths:* (a) **owner reclaim/cancel** on signature alone (well-formed
      datum); (b) **settlement** (§5.2).
+   - **Owner credential is a verification-key hash in v1.** Reclaim (path a) checks the
+     owner's signature in `extra_signatories`, so the `owner` field must be a VK
+     credential; a script-credential owner can still be *settled* and receive its bound
+     output, but cannot reclaim by signature. The §3 non-custodial guarantee ("every
+     well-formed order is reclaimable by its owner on signature") therefore presumes a
+     VK owner; a script owner that wants reclaimability is a future extension (it would
+     need its own spending logic, not a signature).
    - Funds stay user-controlled until settled. **Non-custodial.**
 
 3. **LP-position token** — minted on deposit (per-shard), burned on withdrawal.
@@ -190,15 +268,36 @@ witness — the validator checks algebra, never solves (Principle 4).
    simultaneously holds traded-ADA + tip + min-ADA and must be disambiguated by the
    datum, not inferred. The exact per-direction accounting is specified in
    [`spec/ada-triple-role.md`](spec/ada-triple-role.md) (A5).
+   - **Enforcement = exact full-value pinning, not scalar pinning (Rev 9).** The
+     anchor pins the **entire `Value`** of every owner-output, every remainder, and
+     the pool — not just its lovelace and the traded token. Owner/remainder values
+     are derived from the *spent order's own value* (sold side removed, bought side
+     added, tip/min-ADA moved), so **any incidental asset on an order rides through
+     to its owner** and can never be skimmed by the solver. The pool output is pinned
+     to `reserves + NFT + held-LP`: the pool's **held LP supply (`total_lp − circ`)
+     is read from the input and pinned across the settlement** — without this a solver
+     could strip the pool's LP into its own change and later drain reserves via an
+     `LpAction` (the Rev 8 scalar-only pin missed this; fixed Rev 9). Combined with
+     `mint == 0` and ledger value conservation, this forces the solver's net to equal
+     exactly the (proportional) tips for **every** asset class — no separate
+     global-conservation fold. The declared `token` must not be ADA itself
+     (`policy ≠ ∅`), and the pool **datum is pinned unchanged** so identity/fee params
+     can't be mutated mid-settlement (also re-checked by the pool validator).
 2. **Uniform price.** Every order in the (single-shard) batch fills at one clearing
    price. → eliminates intra-batch ordering MEV / sandwiching.
-3. **Pool invariant non-decreasing.** Checked by the **pool validator** (not the
-   settlement anchor), `k_after ≥ k_before` from actual reserves (§5.1). This is the
-   curve-specific check; keeping it in the pool validator is what makes pools
-   genuinely pluggable (§5.4 — responsibility split). The settlement anchor stays
+3. **Pool invariant non-decreasing (incl. the trading fee).** Checked by the **pool
+   validator** (not the settlement anchor) from actual reserves (§5.1). The curve is
+   constant-product with a **static fee** `φ = fee_num/fee_den`: the invariant is the
+   Uniswap-v2 form `(res_in_after − φ·Δin)·res_out_after ≥ k_before`, where `Δin` is
+   the **net** amount the batch pushed into the pool — so `k` must grow by the fee on
+   the residual, and the fee is retained in reserves (LP earnings, §7). Because orders
+   net first (§5.2), **only the residual reaches the pool**, so CoW-matched volume
+   pays no fee (Option A, residual-only). A perfectly-netted batch leaves the pool
+   untouched and passes at `k` unchanged. Keeping this in the pool validator is what
+   makes pools genuinely pluggable (§5.4 split). The settlement anchor stays
    **curve-agnostic**: it enforces rules 1/2/4/5/6 (conservation, uniform price,
-   best-response, floor, binding) and the input-accounting invariant, and reads the
-   pool's before/after reserves for conservation, but never the curve.
+   best-response, floor, binding) and the input-accounting invariant, and pins the
+   pool's before/after value for conservation, but never the curve or the fee.
 4. **Best-response for orders.** Each order gets the best-response trade at the
    clearing price, respecting its limit and partial-fill rule.
 5. **Per-order floor.** Every order receives **at least its own stated
@@ -419,7 +518,16 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
 
 ## 7. Economic design
 
-- **Trading fee → LPs**, a **low static rate** (captured in reserves / share value).
+- **Trading fee → LPs (IMPLEMENTED, Rev 11; Option A — residual-only).** A **low static
+  rate** `fee_num/fee_den` per pool (immutable, no governance; permissionless pool
+  creation makes fees a market). Enforced in the pool validator's `k`-check (§5.2.3),
+  Uniswap-v2 style on the **net** flow into the pool, retained in reserves so LP share
+  value rises (value-derived, §6). **Who pays:** the residual/heavy side of the batch,
+  out of their traded asset, as a marginally worse fill (still ≥ their own limit floor,
+  §5.2.5) — never the tip, never min-ADA, never the solver. **CoW-matched volume pays
+  no fee** (the pool isn't touched for it); the uniform price redistributes price-impact
+  within the batch. Consequence (accepted): LP yield tracks **imbalance**, not gross
+  volume — LPs are paid for liquidity actually consumed.
 - **Solver reward = ADA tips (no bespoke token).** Each Order UTXO posts a small ADA
   tip; settlement pays the included orders' tips to whoever submits. **Bounded**
   (only posted tips), **transparent**, **verified by conservation** (§5.2.1) — a
@@ -506,6 +614,15 @@ No module may call a specific provider directly — the abstraction is day-one.
 - **Oracle-free LVR mitigation:** PA-AMM `λ` (default 1) + **low static fee**.
 - Reference **Rust/Pallas batcher**, **MeshJS React** frontend, data abstraction.
 
+**On-chain implementation status (Rev 11).** Implemented & tested: settlement anchor +
+order/pool/pool_mint validators, **arbitrary pairs incl. token/token and ADA pairs**,
+uniform-price batch + bidirectional netting, per-order floor, injective O(N) binding,
+partial fills (proportional tip), deadlines, value-derived LP (deposit/withdraw/first-
+deposit/close), **static trading fee (residual-only, §5.2.3/§7)**, non-custodial reclaim,
+withdraw-0 wiring. **Not yet implemented:** **PA-AMM `λ`** (deferred, `λ=1` no-op).
+**Best-response (§5.2.4)** is enforced as the floor only (v1 floor-only, §5.2.7).
+Off-chain (batcher/frontend/data layer) not started.
+
 **Explicitly NOT in v1 / never in core:** any oracle dependency; order privacy
 (intents and limit prices are public on-chain); cross-shard price unification;
 dynamic/volatility-responsive fees (deferred, §5.6).
@@ -577,6 +694,18 @@ strictly rejected (no `True` branch).
 7. **Partial-fill min-ADA** overhead and funding (§7).
 8. **No order privacy in v1** — intents and limit prices are public on-chain.
 9. **LVR is not cured, only mitigated** — accepted by design (§5.6).
+10. **Unseeded-pool `ClosePool` seed griefing — RESOLVED (Rev 13).** Previously
+    `ClosePool` (§5.1 path c) was permissionless, so in the window between `Create` and
+    the first deposit anyone could tear down an unseeded pool and pocket its ~min-ADA
+    seed (bounded to the seed — circulating LP is 0 by the teardown precondition and
+    post-seed pools are immortal, so never reserve/LP theft). **Fix (chosen option a):**
+    `PoolDatum` gains a `creator` VK credential and `ClosePool` now requires the
+    creator's signature, so only the creator can close an unseeded pool. **Also fixed
+    (Rev 13):** `pool_mint` `Create` now validates the pool output's `PoolDatum`
+    (fail-fast) — NFT identity (`nft = {policy_id, nft_name}`), a non-degenerate
+    external pair (`asset_a ≠ asset_b`, neither side under `policy_id`), and a valid fee
+    (`0 ≤ fee_num < fee_den`, `fee_den > 0`) — so a misconfigured pool can't be created
+    rather than silently bricking later. (+1 test, 73 green.)
 
 ---
 

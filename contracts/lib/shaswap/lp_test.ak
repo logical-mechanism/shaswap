@@ -3,7 +3,9 @@
 //// rejection of over-mint / over-withdraw / missing-lock / bad-sqrt / NFT-drop /
 //// stray-mint.
 
-use cardano/address.{Address, Inline, Script}
+use aiken/fuzz
+use aiken/math
+use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
@@ -29,8 +31,19 @@ const nft_policy = #"4444444444444444444444444444444444444444444444444444444e"
 
 const nft = AssetId { policy: nft_policy, name: #"4e4654" }
 
+const ada = AssetId { policy: #"", name: #"" }
+
+const creator_vkh = #"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+
 fn pool_datum() -> PoolDatum {
-  PoolDatum { nft, token: tok, fee_num: 3, fee_den: 1000 }
+  PoolDatum {
+    nft,
+    asset_a: tok,
+    asset_b: ada,
+    fee_num: 3,
+    fee_den: 1000,
+    creator: VerificationKey(creator_vkh),
+  }
 }
 
 fn pool_addr() -> Address {
@@ -161,6 +174,69 @@ test deposit_overmint() fail {
   )
 }
 
+// ---- token/token pool (neither reserve is ADA) ----------------------------
+// asset_a = tok, asset_b = tokb; lovelace is pure pool_min_ada overhead, never a
+// reserve. A proportional deposit must satisfy per-share backing in both tokens.
+
+const tokb =
+  AssetId {
+    policy: #"888888888888888888888888888888888888888888888888888888ff",
+    name: #"42",
+  }
+
+fn tt_datum() -> PoolDatum {
+  PoolDatum {
+    nft,
+    asset_a: tok,
+    asset_b: tokb,
+    fee_num: 3,
+    fee_den: 1000,
+    creator: VerificationKey(creator_vkh),
+  }
+}
+
+fn tt_pool(res_a: Int, res_b: Int, held: Int) -> Output {
+  Output {
+    address: pool_addr(),
+    value: assets.from_lovelace(pool_min_ada)
+      |> assets.add(tok.policy, tok.name, res_a)
+      |> assets.add(tokb.policy, tokb.name, res_b)
+      |> assets.add(nft.policy, nft.name, 1)
+      |> assets.add(nft.policy, lp_name, held),
+    datum: InlineDatum(tt_datum()),
+    reference_script: None,
+  }
+}
+
+// 10% proportional deposit into a token/token pool: ok.
+test deposit_token_token() {
+  let pin = Input {
+    output_reference: pool_ref(),
+    output: tt_pool(100_000_000, 200_000_000, total_lp - 1_000_000),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pin],
+    outputs: [tt_pool(110_000_000, 220_000_000, total_lp - 1_100_000)],
+  }
+  spend.lp_action(tx, pool_ref(), tt_datum())
+}
+
+// over-withdraw from a token/token pool (take more than shares entitle): rejected.
+test withdraw_token_token_too_much() fail {
+  let pin = Input {
+    output_reference: pool_ref(),
+    output: tt_pool(100_000_000, 200_000_000, total_lp - 1_000_000),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pin],
+    // return 10% of shares but take ~11% of reserve_a
+    outputs: [tt_pool(89_000_000, 180_000_000, total_lp - 900_000)],
+  }
+  spend.lp_action(tx, pool_ref(), tt_datum())
+}
+
 // ---- first deposit (circ_in == 0) -----------------------------------------
 
 // sqrt(100M · 100M) = 100M shares; lock 1000.
@@ -232,8 +308,19 @@ fn close_mint(nft_qty: Int, lp_qty: Int) -> Value {
     |> assets.add(nft_policy, lp_name, lp_qty)
 }
 
-// unseeded pool (holds all LP): burn NFT + full LP supply.
+// unseeded pool (holds all LP): creator signs, burn NFT + full LP supply.
 test close_ok() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(0, 0, total_lp)],
+    mint: close_mint(-1, -total_lp),
+    extra_signatories: [creator_vkh],
+  }
+  spend.pool_close(tx, pool_ref(), pool_datum())
+}
+
+// creator did NOT sign: a stranger cannot tear down / grief the pool (§13.10).
+test close_no_creator_sig() fail {
   let tx = Transaction {
     ..transaction.placeholder,
     inputs: [pool_in(0, 0, total_lp)],
@@ -248,6 +335,7 @@ test close_live_pool() fail {
     ..transaction.placeholder,
     inputs: [pool_in(100_000_000, 200_000_000, total_lp - 1_000_000)],
     mint: close_mint(-1, -total_lp),
+    extra_signatories: [creator_vkh],
   }
   spend.pool_close(tx, pool_ref(), pool_datum())
 }
@@ -258,6 +346,67 @@ test close_no_nft_burn() fail {
     ..transaction.placeholder,
     inputs: [pool_in(0, 0, total_lp)],
     mint: close_mint(0, -total_lp),
+    extra_signatories: [creator_vkh],
   }
   spend.pool_close(tx, pool_ref(), pool_datum())
+}
+
+// ---- property / fuzz tests (aiken/fuzz) -----------------------------------
+// Pair convention here: asset_a = tok, asset_b = ada, so pool_in/pool_out's
+// (ada_res, tok_amt) map to (res_b, res_a). All LP arithmetic is value-derived.
+
+// PROPERTY: a first deposit's minted shares == floor(sqrt(res_a · res_b)) across
+// random reserves — the on-chain `is_sqrt` agrees with `math.sqrt` everywhere.
+// (reserves ≥ 2000 ⇒ product ≥ 4e6 ⇒ sqrt ≥ 2000 > min_liq, so the lock holds.)
+test prop_first_deposit_sqrt(
+  p via fuzz.both(
+    fuzz.int_between(2000, 1_000_000_000),
+    fuzz.int_between(2000, 1_000_000_000),
+  ),
+) {
+  let (ada_res, tok_amt) = p
+  expect Some(c) = math.sqrt(ada_res * tok_amt)
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(0, 0, total_lp)],
+    outputs: [pool_out(ada_res, tok_amt, total_lp - c, True), burn_out(min_liq)],
+  }
+  spend.lp_action(tx, pool_ref(), pool_datum())
+}
+
+fn deposit_params() -> Fuzzer<(Int, Int, Int)> {
+  fuzz.map3(
+    fuzz.int_between(1, 1_000_000),
+    fuzz.int_between(1, 1_000_000),
+    fuzz.int_between(2, 50),
+    fn(a, b, c) { (a, b, c) },
+  )
+}
+
+// PROPERTY: an exactly-proportional deposit (scale reserves AND circulating by m)
+// is always accepted — per-share backing is preserved across random reserves/scale.
+test prop_deposit_proportional(p via deposit_params()) {
+  let (ada_res, tok_amt, m) = p
+  let circ_in = 1_000_000
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(ada_res, tok_amt, total_lp - circ_in)],
+    outputs: [pool_out(ada_res * m, tok_amt * m, total_lp - circ_in * m, True)],
+  }
+  spend.lp_action(tx, pool_ref(), pool_datum())
+}
+
+// PROPERTY (tightness): minting one share beyond proportional is ALWAYS rejected
+// (dilutes existing LPs) — for every reserve/scale.
+test prop_deposit_overmint(p via deposit_params()) fail {
+  let (ada_res, tok_amt, m) = p
+  let circ_in = 1_000_000
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(ada_res, tok_amt, total_lp - circ_in)],
+    outputs: [
+      pool_out(ada_res * m, tok_amt * m, total_lp - ( circ_in * m + 1 ), True),
+    ],
+  }
+  spend.lp_action(tx, pool_ref(), pool_datum())
 }
