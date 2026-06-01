@@ -11,6 +11,7 @@ solver-core = { path = "../solver-core" }
 pallas-primitives = "1.0.0"
 pallas-codec = "1.0.0"
 pallas-crypto = "1.0.0"
+pallas-addresses = "1.0.0"
 
 [lints]
 workspace = true

@@ -62,17 +62,26 @@ High-signal pointers only:
 
 ## Log
 
-- **2026-06-01** — **Batcher `txbuild` started: Plutus `Data` encoder.** New `txbuild`
-  crate (pallas-primitives/codec/crypto). `plutus.rs` encodes every datum/redeemer to
-  Plutus Data matching `plutus.json` constructor indices/field order exactly
-  (byte-verified: Settle/PoolSettle = `d87980`, ADA AssetId = `d8799f4040ff`; round-trip
-  decode test). **Key finding: `pallas-txbuilder` 1.0 CANNOT build a ShaSwap settlement
-  — it only supports Spend/Mint redeemers, with no withdrawals field or reward-redeemer
-  purpose.** The settlement anchor is a withdraw-0 staking script (its redeemer is a
-  *reward* redeemer), so the tx must be **hand-rolled on the Conway `pallas-primitives`
-  model** (which has `withdrawals` + the full Redeemers incl. reward tag). Order/pool
-  spend redeemers (Settle/PoolSettle) would be fine in txbuilder; the anchor is the
-  keystone it lacks. (Don't retry pallas-txbuilder for this.)
+- **2026-06-01** — **Batcher `txbuild` skeleton (chain-independent tx building).**
+  New `txbuild` crate (pallas-primitives/codec/crypto/addresses). Modules: `plutus`
+  (every datum/redeemer → Plutus Data matching `plutus.json` constructor indices/field
+  order exactly — byte-verified: Settle/PoolSettle = `d87980`, ADA AssetId =
+  `d8799f4040ff`; round-trip decode), `address` (solver Address/Credential → raw
+  Cardano address bytes + reward account for `S`), `value` (solver Value → Conway
+  `Value` coin+canonical multiasset), `plan` (`plan()` → canonical outputs [owners,
+  pool, remainders] + script spends [Settle/PoolSettle] + withdraw-0 account/redeemer +
+  POSIX validity bound; `compute_redeemers()` assigns Spend/Reward indices against the
+  FINAL canonically-sorted input/withdrawal set — so it composes with the funding inputs
+  chain adds). 14 txbuild tests green; clippy `-D warnings` clean. **Key finding:
+  `pallas-txbuilder` 1.0 CANNOT build a ShaSwap settlement — only Spend/Mint redeemers,
+  no withdrawals/reward-redeemer purpose** (the anchor is a withdraw-0 staking script),
+  so the body is hand-rolled on the Conway `pallas-primitives` model. **Deliberately
+  deferred to `chain` (needs protocol params + a node, can't be tested offline):** the
+  final body stitch — funding/collateral inputs, tip-change output, POSIX→slot `ttl`,
+  `script_data_hash` from cost models, ex-units via EvaluateTx, fee balancing, signing.
+  Conway `TransactionOutput`/`WitnessSet` use decode-oriented `KeepRaw<'b>` lifetimes;
+  the plan stores OWNED output components (addr bytes + Conway Value + inline-datum CBOR)
+  to sidestep them — chain assembles the concrete borrow-typed body.
 - **2026-06-01** — **Batcher milestone-1: `solver-core` (off-chain reference solver
   core).** New Cargo workspace under `batcher/` (`crates/solver-core`, pure/IO-free,
   deps: num-bigint/integer/traits only) on branch `batcher/reference-solver` (cut off
