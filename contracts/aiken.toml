@@ -1,9 +1,9 @@
 name = "logicalmechanism/contracts"
-version = "0.0.0"
+version = "0.1.0"
 compiler = "v1.1.22"
 plutus = "v3"
 license = "Apache-2.0"
-description = "Aiken contracts for project 'logicalmechanism/contracts'"
+description = "ShaSwap on-chain validators — batch-auction DEX (settlement anchor, order, pool, pool_mint)"
 
 [repository]
 user = "logicalmechanism"
