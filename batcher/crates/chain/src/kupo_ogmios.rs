@@ -362,6 +362,29 @@ impl KupoOgmios {
         parse_kupo_datum(&reply)
     }
 
+    /// The serialized byte size of the script with `hash` (hex), via Kupo
+    /// `/scripts/{hash}` — the size the Conway reference-script fee is charged on.
+    pub fn script_size(&self, hash: &str) -> Result<u64, ChainError> {
+        let reply = self.kupo_get(&format!("/scripts/{hash}"))?;
+        let s = reply
+            .get("script")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ChainError::Shape(format!("script {hash} not found")))?;
+        Ok((s.len() / 2) as u64)
+    }
+
+    /// Total serialized byte size of the 3 referenced validator scripts
+    /// (settlement + order + pool) — the reference-script fee basis.
+    pub fn ref_script_total_bytes(&self) -> Result<u64, ChainError> {
+        let settlement_hash = match &self.cfg.settlement_cred {
+            Credential::Script(h) | Credential::VerificationKey(h) => h.clone(),
+        };
+        let s = self.script_size(&hex_encode(&settlement_hash))?;
+        let o = self.script_size(&hex_encode(&self.cfg.order_script_hash))?;
+        let p = self.script_size(&hex_encode(&self.cfg.pool_script_hash))?;
+        Ok(s + o + p)
+    }
+
     /// All unspent matches at a bech32 address. Kupo rejects full-address path
     /// patterns (`/matches/<addr>` → "invalid pattern"), so we query the wildcard
     /// `/matches/*?unspent` — which returns only the configured, bounded set

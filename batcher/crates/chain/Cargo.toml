@@ -9,8 +9,11 @@ description = "ShaSwap chain access — ChainBackend trait, typed Config, on-cha
 [dependencies]
 solver-core = { path = "../solver-core" }
 txbuild = { path = "../txbuild" }
+shaswap-txbuilder = { path = "../txbuilder" }
 pallas-primitives = "1.0.0"
 pallas-codec = "1.0.0"
+pallas-crypto = "1.0.0"
+hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json"] }

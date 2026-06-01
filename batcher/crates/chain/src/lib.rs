@@ -16,6 +16,7 @@
 //! pre-submit gate, submit) and the final body stitch (fee, collateral,
 //! `script_data_hash`, ex-units, sign).
 
+pub mod assemble;
 pub mod backend;
 pub mod config;
 pub mod decode;

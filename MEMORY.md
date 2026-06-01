@@ -65,6 +65,33 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **🎉 FIRST FULLY-PROGRAMMATIC LIVE SETTLEMENT — the Rust batcher
+  reproduces `06-settle.sh` end-to-end.** Settlement tx
+  `05d990637b95dc056262683be7049fad27128690afe1948f7bd4711c5776dbf9` built, evaluated,
+  signed, and submitted by the **orchestrator** (`crates/orchestrator`, bin
+  `shaswap-batcher`) — discover (Kupo) → solve (`solver-core`) → assemble (withdraw-0
+  Conway tx) → **EvaluateTx gate** (Ogmios accepts phase-2) → submit. Verified on-chain:
+  order `fb4bacae…#0` (sell 100M TEST, floor 50M ADA, tip 2M) consumed; **owner** paid
+  52,000,000 (4 ADA order + 50 ADA received − 2 ADA tip, TEST fully sold, inline
+  BoundDatum); **pool** moved ADA 911,338,911→861,338,911 (−50M), TEST 1.1e9→1.2e9
+  (+100M), NFT+full LP+datum preserved; **solver** took the 2 ADA tip into its change.
+  Solver picked price 1/2 = the order's own floor (v1 floor-only routes a one-sided
+  residual at the boundary — user gets ≥ floor, pool keeps surplus; netting is the real
+  win, see task 5). ex-units mem≈980k steps≈363M, fee 446,242, 1064-byte tx.
+  **Body assembler** = `chain::assemble` (drives the `shaswap-txbuilder` fork):
+  inputs(orders+pool+funding) + collateral + 3 ref-script reference inputs; outputs
+  owners[0,N)→pool→remainders→**solver change LAST** (change computed by us — the fork
+  doesn't auto-balance); withdraw-0 `S` + redeemers; **two-pass flow** draft(exu 0)→
+  EvaluateTx fills per-redeemer ex-units (mapped back by canonical sorted index)→fee
+  (script-exec + tiered ref-script[7347 B] + size + margin)→rebuild→sign (loads the
+  cardano-cli `5820…` ed25519 skey). **Key bug found & fixed live:** `build_staging`
+  computed change from the fee but never set the tx `fee` field → first submit hit
+  `code 3122 providedFee:0`; added `.fee(fee)`. (Benign: the fork stores redeemers in a
+  HashMap, so the redeemer-list order — hence tx_hash — varies run-to-run; still valid,
+  self-consistent script_data_hash.) Orchestrator guards submit behind `SHASWAP_SUBMIT=1`
+  (else dry-run build+evaluate, for cross-checking). **66 batcher tests, clippy -D + fmt
+  clean.** **Next:** task 5 — two-sided NETTING (post an ADA-seller + TEST-seller, settle
+  both in one tx; pool moves only by the residual).
 - **2026-06-01** — **Batcher live transport: Kupo+Ogmios `ChainBackend` (chain crate).**
   Wired the live provider behind the existing trait (`crates/chain/src/kupo_ogmios.rs`,
   dep `ureq` blocking HTTP + `pallas-addresses`). Ogmios JSON-RPC :1337 → `tip`
