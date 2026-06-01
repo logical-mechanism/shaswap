@@ -17,6 +17,7 @@
 //// take exactly the tips (it cannot skim). That also drops two O(N) folds.
 
 use aiken/collection/list
+use aiken/interval.{Finite, Interval}
 use cardano/address.{Credential}
 use cardano/assets
 use cardano/transaction.{InlineDatum, Input, Output, Transaction}
@@ -35,11 +36,37 @@ fn parses_as_order(i: Input) -> Bool {
   }
 }
 
+/// The tx's finite upper validity bound, if any (None if open-ended).
+fn finite_upper(range: Interval) -> Option<Int> {
+  when range.upper_bound.bound_type is {
+    Finite(u) -> Some(u)
+    _ -> None
+  }
+}
+
+/// An order with a deadline can only be settled while the tx is bounded to end
+/// no later than the deadline (an open-ended tx can't honor it).
+fn deadline_ok(deadline: Option<Int>, tx_upper: Option<Int>) -> Bool {
+  when deadline is {
+    None -> True
+    Some(d) ->
+      when tx_upper is {
+        Some(u) -> u <= d
+        None -> False
+      }
+  }
+}
+
 /// Per-order checks at the uniform clearing price `p = price_num/price_den`
 /// (ADA per token). Returns this order's signed contribution to the pool's net
 /// reserve movement `(d_token_to_pool, d_ada_to_pool)`. Aborts on any violation
 /// (default-deny). `bound` is the positionally-paired owner-output.
-fn check_order(input: Input, bound: Output, r: SettlementRedeemer) -> (Int, Int) {
+fn check_order(
+  input: Input,
+  bound: Output,
+  r: SettlementRedeemer,
+  tx_upper: Option<Int>,
+) -> (Int, Int) {
   expect InlineDatum(od) = input.output.datum
   expect order: OrderDatum = od
   let in_ada = assets.lovelace_of(input.output.value)
@@ -47,6 +74,8 @@ fn check_order(input: Input, bound: Output, r: SettlementRedeemer) -> (Int, Int)
   let out_ada = assets.lovelace_of(bound.value)
   let out_tok = utils.asset_qty(bound.value, r.token)
 
+  // settlement must land before the order's deadline (if any)
+  expect deadline_ok(order.deadline, tx_upper)
   // (6) injective binding: this output is bound to THIS order's unique ref
   expect InlineDatum(bd) = bound.datum
   expect b: BoundDatum = bd
@@ -83,6 +112,7 @@ fn process_orders(
   orders: List<Input>,
   owner_outputs: List<Output>,
   r: SettlementRedeemer,
+  tx_upper: Option<Int>,
 ) -> (Int, Int) {
   list.foldl(
     list.zip(orders, owner_outputs),
@@ -90,7 +120,7 @@ fn process_orders(
     fn(pair, acc) {
       let (tok_acc, ada_acc) = acc
       let (input, bound) = pair
-      let (d_tok, d_ada) = check_order(input, bound, r)
+      let (d_tok, d_ada) = check_order(input, bound, r, tx_upper)
       (tok_acc + d_tok, ada_acc + d_ada)
     },
   )
@@ -134,7 +164,13 @@ pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool 
   let n = list.length(order_inputs)
   let owner_outputs = list.take(tx.outputs, n)
   expect list.length(owner_outputs) == n
-  let (net_tok, net_ada) = process_orders(order_inputs, owner_outputs, r)
+  let tx_upper = finite_upper(tx.validity_range)
+  let (net_tok, net_ada) = process_orders(
+    order_inputs,
+    owner_outputs,
+    r,
+    tx_upper,
+  )
 
   // no minting/burning in a settlement (LP mint only at create/close)
   expect assets.is_zero(tx.mint)

@@ -15,14 +15,14 @@ bidirectional netting, and an emulator pass.
 
 ## Immediate next step
 
-**Continue the contract build.** Highest-value next pieces: (1) **partial fills** (per
-`spec/partial-fills.md`) — adds remainder outputs to settlement, currently full-fill
-only; (2) fold the **clearing-price + ADA-triple-role** specs into the validators
-(exact rational/rounding rules, both-direction ADA accounting); (3) **deadlines**
-(order validity windows). **Before finalizing:** spike **true-equilibrium** cost
-(§5.2.7); **emulator** re-measure with real `Data` ScriptContext + a partial-fill mix.
-**Done:** trust anchor, order/pool/pool_mint validators, LP path, pool close,
-**bidirectional netting**.
+**Implement partial fills** — the policy is now decided in `spec/partial-fills.md`
+(one-level remainder, solver-supplied `fills`, limit-price-preserving remainder,
+pre-funded min-ADA, tagged remainder outputs alongside the NFT-bearing pool). Then:
+fold the **clearing-price + ADA-triple-role** specs into the validators (exact
+rational/rounding rules); **emulator** re-measure with real `Data` ScriptContext.
+Later: **true-equilibrium** cost spike (§5.2.7). **Done:** trust anchor,
+order/pool/pool_mint validators, LP path, pool close, **bidirectional netting**,
+**deadlines**.
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -115,4 +115,12 @@ High-signal pointers only:
   conservation already force the solver to take only tips; this also **lowered cost**
   (N=20: mem 7.29M→6.30M). 39 tests green (+8: close ×3, netting perfect/partial/solo,
   ada-floor + pool-shorted rejections). Cost confirms ~40-50 mem-bound ceiling holds.
+- **2026-05-31** — **Deadlines + partial-fill spec.** Added `OrderDatum.deadline:
+  Option<Int>`; settlement enforces per-order that the tx's finite upper validity
+  bound ≤ deadline (open-ended tx can't honor a deadline; owner reclaim stays
+  signature-only anytime, so expired orders are never stuck). 43 tests green (+4
+  deadline). Decided the v1 **partial-fill** policy in `spec/partial-fills.md`
+  (one-level remainder, solver-supplied fills, limit-price-preserving remainder,
+  pre-funded min-ADA, remainder outputs enumerated alongside the NFT pool) — ready to
+  implement next.
 </content>

@@ -4,6 +4,7 @@
 //// (floor breach, mis-binding, value theft, fake pool, untagged smuggle, k drop).
 
 use aiken/collection/list
+use aiken/interval.{Interval}
 use cardano/address.{Address, Credential, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
 use cardano/transaction.{
@@ -106,6 +107,7 @@ fn order_datum() -> OrderDatum {
     limit,
     tip,
     partial: False,
+    deadline: None,
   }
 }
 
@@ -191,6 +193,7 @@ fn ada_order_input(i: Int, sell_ada_amt: Int, lim: Int) -> Input {
           limit: lim,
           tip,
           partial: False,
+          deadline: None,
         },
       ),
       reference_script: None,
@@ -476,4 +479,52 @@ test netting_pool_shorted() fail {
     withdrawals: [Pair(s(), 0)],
   }
   clearing.run(s(), redeemer(), tx)
+}
+
+// ---- deadlines ------------------------------------------------------------
+
+fn order_input_deadline(d: Option<Int>) -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: tok_val(order_in_ada, sell),
+      datum: InlineDatum(OrderDatum { ..order_datum(), deadline: d }),
+      reference_script: None,
+    },
+  }
+}
+
+fn deadline_tx(d: Option<Int>, range: Interval) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_deadline(d), pool_input(True)],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+    validity_range: range,
+  }
+}
+
+// settled before the deadline: ok.
+test deadline_within() {
+  clearing.run(s(), redeemer(), deadline_tx(Some(1000), interval.before(900)))
+}
+
+// tx could be included after the deadline: rejected.
+test deadline_expired() fail {
+  clearing.run(s(), redeemer(), deadline_tx(Some(1000), interval.before(1500)))
+}
+
+// open-ended tx can't honor a deadline: rejected.
+test deadline_open_tx() fail {
+  clearing.run(s(), redeemer(), deadline_tx(Some(1000), interval.everything))
+}
+
+// no deadline: an open-ended tx is fine.
+test deadline_none_open_ok() {
+  clearing.run(s(), redeemer(), deadline_tx(None, interval.everything))
 }

@@ -31,6 +31,11 @@ pub type OrderDatum {
   limit: Int,
   tip: Int,
   partial: Bool,
+  /// Optional settlement deadline (POSIX ms). If `Some(d)`, a settlement may
+  /// only include this order while the tx is valid no later than `d` (the tx's
+  /// finite upper validity bound ≤ d). Owner reclaim is always allowed (§5.1),
+  /// so an expired order is never stuck.
+  deadline: Option<Int>,
 }
 
 /// Order spend redeemer: join a settlement (defer to `S`) or owner-reclaim.

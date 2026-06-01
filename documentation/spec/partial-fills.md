@@ -1,9 +1,36 @@
-# Spec stub — Partial-fill semantics (A4 / BLUEPRINT §12.4)
+# Spec — Partial-fill semantics (A4 / BLUEPRINT §12.4)
 
-> **Status:** stub. The ex-unit spike filled every order **fully**; partial fills are
-> unmeasured and unspecified. They change the settlement validator's output set,
-> per-order accounting, and size/cost budget, so they must be pinned before the deep
-> dive. Finalize and fold into BLUEPRINT §5.2.4/§7.
+> **Status:** design decided (2026-05-31), not yet implemented. The current
+> settlement is full-fill only. This locks the v1 policy so the implementation is
+> mechanical. Fold into BLUEPRINT §5.2.4/§7 when built.
+
+## Decided v1 policy (the short version)
+
+1. **One-level remainder.** An order with `partial == True` may be filled by any
+   amount `f ∈ [1, sell_amount]`. If `f < sell_amount`, the settlement produces a
+   **remainder UTXO** for `sell_amount − f`, re-locked at the order address (tagged
+   `S`), with **`partial == False`** — so a remainder is full-fill-only. This caps the
+   min-ADA blow-up at exactly one extra UTXO per order.
+2. **Solver supplies fills (verify-don't-compute).** `SettlementRedeemer` gains
+   `fills: List<Int>` (one per order, in canonical input order); `fills[i] == sell_amount`
+   means a full fill. The validator checks, never solves.
+3. **Floor = limit price (unchanged condition).** With `received = f·p`, honoring the
+   limit price `received·sell_amount ≥ limit·f` reduces to `sell_amount·p ≥ limit` —
+   the *same* check as the full-fill floor, independent of `f`. So no new floor math.
+4. **Remainder datum.** Same `owner`; `sell_amount' = sell_amount − f`; **limit price
+   preserved** by requiring `limit'·sell_amount ≥ limit·sell_amount'`; **tip
+   proportional** (`tip' ≤ tip`, with `tip − tip'` collectible now); `partial = False`;
+   `deadline` carried over.
+5. **min-ADA: pre-funded.** The order carries enough ADA to fund both the owner-output
+   and the remainder min-ADA (constant `order_min_ada`). On a full fill the spare
+   returns to the owner; on a partial it funds the remainder.
+6. **Enumeration change.** Tagged *outputs* are no longer just the pool: they are the
+   **pool (identified by its NFT) + the remainder UTXOs (no NFT, carry an OrderDatum)**.
+   Canonical layout: owner-outputs `[0,N)`, then the pool output, then the remainders
+   (one per partially-filled order, in order). Each remainder is pinned to its order's
+   unsold amount; conservation/net pinning extends to include remainder value.
+
+The rest of this document is the original analysis that informed these decisions.
 
 ## What a partial fill adds
 
