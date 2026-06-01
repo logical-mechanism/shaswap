@@ -390,6 +390,18 @@ test order_reclaim_no_sig() fail {
   spend.order_reclaim(VerificationKey(owner_vkh), transaction.placeholder)
 }
 
+// (audit L-01) an order created with a Script-credential owner can be SETTLED but
+// never RECLAIMED — reclaim requires a VK owner. Documents the lock-forever edge: it
+// is self-inflicted (the order creator chooses `owner`) and the off-chain builder
+// MUST use a VK owner to keep the §5.1 non-custodial reclaim guarantee.
+test reclaim_script_owner() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    extra_signatories: [owner_vkh],
+  }
+  spend.order_reclaim(Script(o_hash), tx)
+}
+
 // ---- pool validator logic (owns k) ----------------------------------------
 
 test pool_settle_ok() {
@@ -1737,4 +1749,15 @@ bench pool__pool_settle(tx via one_order_tx) {
 
 bench order__order_settle(tx via one_order_tx) {
   spend.order_settle(tx, order_ref(0), s())
+}
+
+// cold path: owner reclaim (audit I-04).
+fn reclaim_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(
+    Transaction { ..transaction.placeholder, extra_signatories: [owner_vkh] },
+  )
+}
+
+bench order__order_reclaim(tx via reclaim_tx) {
+  spend.order_reclaim(VerificationKey(owner_vkh), tx)
 }

@@ -443,3 +443,32 @@ fn first_deposit_tx(_n: Int) -> Fuzzer<Transaction> {
 bench pool__lp_action__first_deposit(tx via first_deposit_tx) {
   spend.lp_action(tx, pool_ref(), pool_datum())
 }
+
+// cold paths: LP withdraw branch + pre-seed teardown (audit I-04).
+fn withdraw_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(
+    lp_tx(
+      pool_in(100_000_000, 200_000_000, total_lp - 1_000_000),
+      pool_out(90_000_000, 180_000_000, total_lp - 900_000, True),
+    ),
+  )
+}
+
+bench pool__lp_action__withdraw(tx via withdraw_tx) {
+  spend.lp_action(tx, pool_ref(), pool_datum())
+}
+
+fn pool_close_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [pool_in(0, 0, total_lp)],
+      mint: close_mint(-1, -total_lp),
+      extra_signatories: [creator_vkh],
+    },
+  )
+}
+
+bench pool__pool_close(tx via pool_close_tx) {
+  spend.pool_close(tx, pool_ref(), pool_datum())
+}

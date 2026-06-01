@@ -181,6 +181,20 @@ test close_positive() fail {
   mint.close(policy, tx)
 }
 
+// (audit I-05) a holder may burn their OWN circulating LP via a standalone Close
+// (no pool input, no signer): a deliberate self-forfeiture. circ = total_lp - held
+// is value-derived from the pool UTXO, so this can't touch the pool's accounting or
+// other LPs — the burned shares' reserves just stay permanently locked (like
+// min_liq). Pinned here as an intended property, not a bug. (Combining a burn with
+// an LpAction is separately rejected by `lp_action`'s `mint == 0`, cf. stray_mint.)
+test close_burns_circulating_lp() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    mint: assets.from_asset(policy, lp_name, -5),
+  }
+  mint.close(policy, tx)
+}
+
 // ---- benchmark: pool creation (I-01) --------------------------------------
 
 fn create_tx(_n: Int) -> Fuzzer<Transaction> {
@@ -199,4 +213,15 @@ fn create_tx(_n: Int) -> Fuzzer<Transaction> {
 
 bench pool_mint__create(tx via create_tx) {
   mint.create(seed(), policy, tx)
+}
+
+// cold path: burn-only close (audit I-04).
+fn close_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(
+    Transaction { ..transaction.placeholder, mint: mint_val(-1, -total_lp) },
+  )
+}
+
+bench pool_mint__close(tx via close_tx) {
+  mint.close(policy, tx)
 }
