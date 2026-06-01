@@ -75,7 +75,7 @@ fn run() -> Result<(), Err> {
         "tip slot {} | orders {} | pool {}#{} ada={} | wallet {} utxos",
         tip.slot,
         orders.len(),
-        hex(&pool.output_reference.transaction_id),
+        hex::encode(&pool.output_reference.transaction_id),
         pool.output_reference.output_index,
         pool.value.lovelace_of(),
         wallet.len(),
@@ -83,7 +83,7 @@ fn run() -> Result<(), Err> {
     for (i, o) in orders.iter().enumerate() {
         println!(
             "  order[{i}] {}#{} sell_a={} sell={} limit={} tip={}",
-            hex(&o.output_reference.transaction_id),
+            hex::encode(&o.output_reference.transaction_id),
             o.output_reference.output_index,
             o.datum.sell_a,
             o.datum.sell_amount,
@@ -124,10 +124,10 @@ fn run() -> Result<(), Err> {
         .ok_or("no funding UTXO (distinct from collateral)")?;
     println!(
         "funding {}#{} ada={} | collateral {}#{} ada={}",
-        hex(&funding.output_reference.transaction_id),
+        hex::encode(&funding.output_reference.transaction_id),
         funding.output_reference.output_index,
         funding.value.lovelace_of(),
-        hex(&collateral.output_reference.transaction_id),
+        hex::encode(&collateral.output_reference.transaction_id),
         collateral.output_reference.output_index,
         collateral.value.lovelace_of(),
     );
@@ -162,7 +162,7 @@ fn run() -> Result<(), Err> {
         assemble::build_signed(&inp, &backend, &skey).map_err(|e| format!("assemble: {e:?}"))?;
     println!(
         "built + evaluated OK (gate passed): tx {} | fee {} | ex-units mem={} steps={} | ref_bytes {}",
-        hex(&built.signed.tx_hash.0),
+        hex::encode(built.signed.tx_hash.0),
         built.fee,
         built.total_ex_units.mem,
         built.total_ex_units.steps,
@@ -174,7 +174,7 @@ fn run() -> Result<(), Err> {
         let txid = backend
             .submit(&built.signed.tx_bytes.0)
             .map_err(|e| format!("submit: {e:?}"))?;
-        println!("SUBMITTED settlement tx {}", hex(&txid));
+        println!("SUBMITTED settlement tx {}", hex::encode(&txid));
     } else {
         println!(
             "dry run (set SHASWAP_SUBMIT=1 to submit). Signed tx bytes: {} bytes",
@@ -199,8 +199,4 @@ fn solver_address(
         ShelleyDelegationPart::Null,
     );
     Ok(addr.to_bech32()?)
-}
-
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }

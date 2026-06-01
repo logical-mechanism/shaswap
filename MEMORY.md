@@ -66,6 +66,22 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Code-review fixes (batcher).** Acted on a high-effort review of the
+  batcher diff. (1) **Griefing fix (find_orders):** the order script address is public, so
+  anyone can park a datumless/junk-datum UTXO there; the old `find_orders` returned `Err`
+  on the first undecodable UTXO → one bad UTXO bricked every settlement. Now it **skips +
+  logs** non-OrderDatum UTXOs (only a transport error propagates). **Proven live:** parked
+  a junk inline-datum UTXO (`2279ae9b…#0`) at the order address, posted a real order, and
+  the batcher logged `skip order utxo …: not a valid OrderDatum` then settled the real one
+  (tx `76f8cf6a…`); the junk stays parked + permanently ignored. (2) **Hard-fail on missing
+  ex-units (assemble::build_signed):** after EvaluateTx it now verifies every script input
+  (pool + each order) got a budget, erroring clearly instead of silently building a
+  zero-budget redeemer the node would reject phase-2 (the draft still uses zeros by design).
+  (3) **Reuse:** replaced the three hand-rolled hex codecs in `kupo_ogmios`/`orchestrator`
+  with the already-present `hex` crate. **Deferred (noted in review, low value/edge):**
+  single-fetch discovery (3× `/matches/*` per pass — only matters once it's a loop),
+  collateral sizing vs fee×collateral-percentage (only large batches), the 3× `build_staging`
+  encode. **66 tests, clippy -D + fmt clean.**
 - **2026-06-01** — **🎉 LIVE TWO-SIDED NETTING settlement (Rust batcher) — pool
   untouched.** Settlement tx
   `4e12d57fa928191ce4383a17db916c1c227aea7fd1cf7a6f83b9f6a4482f0b18` cleared a

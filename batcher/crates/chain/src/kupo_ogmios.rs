@@ -47,16 +47,7 @@ impl From<DecodeError> for ChainError {
 // ---------------------------------------------------------------------------
 
 fn hex_to_bytes(s: &str) -> Result<Vec<u8>, ChainError> {
-    if s.len() % 2 != 0 {
-        return Err(ChainError::Shape(format!("odd-length hex: {s}")));
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&s[i..i + 2], 16)
-                .map_err(|_| ChainError::Shape(format!("bad hex: {s}")))
-        })
-        .collect()
+    hex::decode(s).map_err(|e| ChainError::Shape(format!("bad hex `{s}`: {e}")))
 }
 
 /// Parse a `"num/den"` rational (Ogmios encodes prices this way).
@@ -379,9 +370,9 @@ impl KupoOgmios {
         let settlement_hash = match &self.cfg.settlement_cred {
             Credential::Script(h) | Credential::VerificationKey(h) => h.clone(),
         };
-        let s = self.script_size(&hex_encode(&settlement_hash))?;
-        let o = self.script_size(&hex_encode(&self.cfg.order_script_hash))?;
-        let p = self.script_size(&hex_encode(&self.cfg.pool_script_hash))?;
+        let s = self.script_size(&hex::encode(&settlement_hash))?;
+        let o = self.script_size(&hex::encode(&self.cfg.order_script_hash))?;
+        let p = self.script_size(&hex::encode(&self.cfg.pool_script_hash))?;
         Ok(s + o + p)
     }
 
@@ -418,11 +409,34 @@ impl ChainBackend for KupoOgmios {
     fn find_orders(&self, _s: &Credential) -> Result<Vec<OrderInput>, ChainError> {
         let mut out = Vec::new();
         for m in self.matches_at(&self.order_addr)? {
-            let hash = m
-                .datum_hash
-                .as_ref()
-                .ok_or_else(|| ChainError::Shape("order UTXO has no datum".into()))?;
-            let datum = decode::order_datum_cbor(&self.fetch_datum(hash)?)?;
+            // The order script address is public: anyone can pay a datumless or
+            // junk-datum UTXO there. SKIP (don't abort) anything that isn't a
+            // well-formed order, so a single bad UTXO can't brick the whole batch
+            // (a permissionless solver must stay live). Only a hard transport
+            // error propagates.
+            let r = &m.output_reference;
+            let Some(hash) = m.datum_hash.as_ref() else {
+                eprintln!(
+                    "skip order utxo {}#{}: no datum",
+                    hex::encode(&r.transaction_id),
+                    r.output_index
+                );
+                continue;
+            };
+            let datum = match self
+                .fetch_datum(hash)
+                .and_then(|cbor| decode::order_datum_cbor(&cbor).map_err(ChainError::from))
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!(
+                        "skip order utxo {}#{}: not a valid OrderDatum ({e:?})",
+                        hex::encode(&r.transaction_id),
+                        r.output_index
+                    );
+                    continue;
+                }
+            };
             out.push(OrderInput {
                 output_reference: m.output_reference,
                 address: Address {
@@ -483,13 +497,13 @@ impl ChainBackend for KupoOgmios {
     }
 
     fn evaluate(&self, tx_cbor: &[u8]) -> Result<Vec<RedeemerEval>, ChainError> {
-        let hex = hex_encode(tx_cbor);
+        let hex = hex::encode(tx_cbor);
         let reply = self.ogmios("evaluateTransaction", json!({"transaction": {"cbor": hex}}))?;
         parse_evaluate(&reply)
     }
 
     fn submit(&self, tx_cbor: &[u8]) -> Result<Vec<u8>, ChainError> {
-        let hex = hex_encode(tx_cbor);
+        let hex = hex::encode(tx_cbor);
         let reply = self.ogmios("submitTransaction", json!({"transaction": {"cbor": hex}}))?;
         parse_submit(&reply)
     }
@@ -503,14 +517,6 @@ impl KupoOgmios {
     pub fn config(&self) -> &ValidatedConfig {
         &self.cfg
     }
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 #[cfg(test)]

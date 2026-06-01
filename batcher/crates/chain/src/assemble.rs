@@ -324,6 +324,22 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
     let evals = backend.evaluate(&draft.tx_bytes.0)?;
     let (spend_exu, reward_exu) = map_exunits(inp, &evals)?;
 
+    // Every script input MUST have a real ex-units budget from EvaluateTx. The
+    // draft passes zeros deliberately, but the probe/final builds fall back to
+    // zero for any input missing here — which would silently produce a tx the
+    // node rejects phase-2. Fail loudly instead if EvaluateTx under-reported.
+    let mut script_refs = vec![&inp.pool.output_reference];
+    script_refs.extend(inp.orders.iter().map(|o| &o.output_reference));
+    for r in script_refs {
+        if !spend_exu.contains_key(&(r.transaction_id.clone(), r.output_index)) {
+            return Err(ChainError::Service(format!(
+                "EvaluateTx returned no ex-units for script input {}#{}",
+                hex::encode(&r.transaction_id),
+                r.output_index
+            )));
+        }
+    }
+
     // Total ex-units must fit the per-tx budget (the gate).
     let total = fees::total_ex_units(
         spend_exu
