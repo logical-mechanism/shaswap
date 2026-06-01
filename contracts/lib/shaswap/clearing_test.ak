@@ -124,7 +124,14 @@ fn order_datum() -> OrderDatum {
 }
 
 fn pool_datum() -> PoolDatum {
-  PoolDatum { nft, asset_a: tok, asset_b: ada, fee_num: 3, fee_den: 1000 }
+  PoolDatum {
+    nft,
+    asset_a: tok,
+    asset_b: ada,
+    fee_num: 3,
+    fee_den: 1000,
+    creator: VerificationKey(owner_vkh),
+  }
 }
 
 // ---- builders -------------------------------------------------------------
@@ -913,7 +920,14 @@ fn tt_pool_value(res_a: Int, res_b: Int, held: Int) -> Value {
 }
 
 fn tt_pool_datum() -> PoolDatum {
-  PoolDatum { nft, asset_a: tok, asset_b: tokb, fee_num: 3, fee_den: 1000 }
+  PoolDatum {
+    nft,
+    asset_a: tok,
+    asset_b: tokb,
+    fee_num: 3,
+    fee_den: 1000,
+    creator: VerificationKey(owner_vkh),
+  }
 }
 
 fn settlement_tt(pool_held_out: Int) -> Transaction {

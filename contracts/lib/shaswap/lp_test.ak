@@ -5,7 +5,7 @@
 
 use aiken/fuzz
 use aiken/math
-use cardano/address.{Address, Inline, Script}
+use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
@@ -33,8 +33,17 @@ const nft = AssetId { policy: nft_policy, name: #"4e4654" }
 
 const ada = AssetId { policy: #"", name: #"" }
 
+const creator_vkh = #"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+
 fn pool_datum() -> PoolDatum {
-  PoolDatum { nft, asset_a: tok, asset_b: ada, fee_num: 3, fee_den: 1000 }
+  PoolDatum {
+    nft,
+    asset_a: tok,
+    asset_b: ada,
+    fee_num: 3,
+    fee_den: 1000,
+    creator: VerificationKey(creator_vkh),
+  }
 }
 
 fn pool_addr() -> Address {
@@ -176,7 +185,14 @@ const tokb =
   }
 
 fn tt_datum() -> PoolDatum {
-  PoolDatum { nft, asset_a: tok, asset_b: tokb, fee_num: 3, fee_den: 1000 }
+  PoolDatum {
+    nft,
+    asset_a: tok,
+    asset_b: tokb,
+    fee_num: 3,
+    fee_den: 1000,
+    creator: VerificationKey(creator_vkh),
+  }
 }
 
 fn tt_pool(res_a: Int, res_b: Int, held: Int) -> Output {
@@ -292,8 +308,19 @@ fn close_mint(nft_qty: Int, lp_qty: Int) -> Value {
     |> assets.add(nft_policy, lp_name, lp_qty)
 }
 
-// unseeded pool (holds all LP): burn NFT + full LP supply.
+// unseeded pool (holds all LP): creator signs, burn NFT + full LP supply.
 test close_ok() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(0, 0, total_lp)],
+    mint: close_mint(-1, -total_lp),
+    extra_signatories: [creator_vkh],
+  }
+  spend.pool_close(tx, pool_ref(), pool_datum())
+}
+
+// creator did NOT sign: a stranger cannot tear down / grief the pool (§13.10).
+test close_no_creator_sig() fail {
   let tx = Transaction {
     ..transaction.placeholder,
     inputs: [pool_in(0, 0, total_lp)],
@@ -308,6 +335,7 @@ test close_live_pool() fail {
     ..transaction.placeholder,
     inputs: [pool_in(100_000_000, 200_000_000, total_lp - 1_000_000)],
     mint: close_mint(-1, -total_lp),
+    extra_signatories: [creator_vkh],
   }
   spend.pool_close(tx, pool_ref(), pool_datum())
 }
@@ -318,6 +346,7 @@ test close_no_nft_burn() fail {
     ..transaction.placeholder,
     inputs: [pool_in(0, 0, total_lp)],
     mint: close_mint(0, -total_lp),
+    extra_signatories: [creator_vkh],
   }
   spend.pool_close(tx, pool_ref(), pool_datum())
 }

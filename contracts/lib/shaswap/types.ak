@@ -4,7 +4,7 @@
 //// settlement staking credential `S` as their stake credential; the settlement
 //// validator is unparameterised and enumerates its input set by `S`.
 ////
-//// `OrderDatum` (7 fields) and `PoolDatum` (5 fields) are intentionally distinct
+//// `OrderDatum` (7 fields) and `PoolDatum` (6 fields) are intentionally distinct
 //// shapes so a well-formed order can NEVER be parsed as the pool — this is what
 //// makes the order-spend deferral safe against a solver relabelling an order as
 //// "the pool" to skip its checks (§5.4 role-identification).
@@ -51,13 +51,20 @@ pub type OrderRedeemer {
 
 /// Pool UTXO datum (§5.1). Reserves are read from the UTXO *value*; `k` is NOT
 /// stored. Identity (`nft`) + the traded pair (`asset_a`, `asset_b`) + static fee.
-/// Either asset may be ADA. Distinct shape (5 fields) from `OrderDatum` (7).
+/// Either asset may be ADA. Distinct shape (6 fields) from `OrderDatum` (7).
+///
+/// `creator` is the credential that may tear down a created-but-never-seeded pool
+/// via `ClosePool` (§5.1 path c). It authorizes the teardown by **signature**, so it
+/// must be a verification-key credential (like order reclaim); the field is otherwise
+/// inert (immutable across settlement/LP, pinned by datum continuity). Post-seed pools
+/// are immortal, so `creator` only ever governs the pre-seed UTXO (NFT + LP + seed).
 pub type PoolDatum {
   nft: AssetId,
   asset_a: AssetId,
   asset_b: AssetId,
   fee_num: Int,
   fee_den: Int,
+  creator: Credential,
 }
 
 /// Pool spend redeemer.

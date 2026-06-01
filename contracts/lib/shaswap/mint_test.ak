@@ -1,6 +1,6 @@
 //// Tests for pool create/close mint logic (`shaswap/mint`).
 
-use cardano/address.{Address, Inline, Script}
+use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
@@ -15,6 +15,8 @@ const seed_txid =
   #"7777777777777777777777777777777777777777777777777777777777777777"
 
 const p_hash = #"9999999999999999999999999999999999999999999999999999999c"
+
+const creator_vkh = #"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
 
 fn seed() -> OutputReference {
   OutputReference { transaction_id: seed_txid, output_index: 3 }
@@ -45,6 +47,7 @@ fn pool_datum() -> PoolDatum {
     asset_b: AssetId { policy: #"", name: #"" },
     fee_num: 3,
     fee_den: 1000,
+    creator: VerificationKey(creator_vkh),
   }
 }
 

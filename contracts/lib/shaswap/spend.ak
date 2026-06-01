@@ -99,14 +99,19 @@ pub fn pool_settle(
 
 /// Pool `ClosePool`: tear down a created-but-never-seeded pool. Only valid when
 /// the pool still holds the ENTIRE LP supply (`held == total_lp` ⟺ no LP is
-/// circulating, so nobody can be robbed), and the tx burns the NFT + full LP
-/// supply. After a first deposit `held < total_lp` and the locked MIN_LIQ can
-/// never be reassembled, so this can never close a live pool.
+/// circulating, so nobody can be robbed), the **creator signs** (so a stranger can't
+/// grief the pool or pocket its seed in the pre-deposit window — §13.10), and the tx
+/// burns the NFT + full LP supply. After a first deposit `held < total_lp` and the
+/// locked MIN_LIQ can never be reassembled, so this can never close a live pool.
 pub fn pool_close(tx: Transaction, utxo: OutputReference, d: PoolDatum) -> Bool {
   expect Some(own) = list.find(tx.inputs, fn(i) { i.output_reference == utxo })
   let p = d.nft.policy
   let lp = AssetId { policy: p, name: lp_name }
   expect utils.asset_qty(own.output.value, lp) == total_lp
+  // only the creator may tear down (and thereby redirect the seed value);
+  // signature-based, so `creator` must be a VK credential (§5.1).
+  expect VerificationKey(vkh) = d.creator
+  expect list.has(tx.extra_signatories, vkh)
   and {
     assets.quantity_of(tx.mint, p, nft_name) == -1,
     assets.quantity_of(tx.mint, p, lp_name) == -total_lp,
