@@ -15,21 +15,22 @@ bidirectional netting, and an emulator pass.
 
 ## Immediate next step
 
-**Off-chain reference solver in progress** on branch `batcher/reference-solver`.
-Batcher crates done & tested (50 tests, clippy clean): **`solver-core`** (clearing
-mirror + v1 floor-only solver + sim), **`txbuild`** (chain-independent skeleton: Plutus
-Data encoder, addresses, values, settlement plan + redeemer/withdraw-0 indexing),
-**`chain`** foundations (ChainBackend trait, fail-fast Config, Plutus decoder, fee
-arithmetic). **Next on the batcher (needs a live preprod node):** the Kupo/Ogmios HTTP
-transport behind `ChainBackend` + the final body stitch (funding/collateral, POSIX→slot
-ttl, script_data_hash, ex-units via EvaluateTx, fee balancing, signing) + the
-orchestrator loop. Gated by the **bootstrap dependency** (deploy ref scripts, register
-`S` and NEVER delegate it, create+seed a pool; scaffold in `contracts/happy_path/`).
-Still owed on-chain: an **emulator pass** with a real `Data` ScriptContext (confirms the
-~40-order ceiling + decoding cost), and folding the clearing-price/ADA-triple-role specs
-into exact rounding rules. Later: **true-equilibrium** cost spike (§5.2.7), the **app**
-data-access layer. **Done on-chain:** trust anchor, order/pool/pool_mint validators, LP
-path, pool close, bidirectional netting, deadlines, partial fills.
+**Off-chain reference solver WORKS LIVE end-to-end** on branch
+`batcher/reference-solver` (66 tests, clippy -D + fmt clean). Crates: **`solver-core`**
+(clearing mirror + v1 floor-only solver + sim), **`txbuild`** (Plutus Data encoder,
+addresses, values, plan), **`shaswap-txbuilder`** (forked pallas-txbuilder w/ withdraw-0),
+**`chain`** (Kupo+Ogmios `ChainBackend` + `assemble` body stitch + Config/decode/fees),
+**`orchestrator`** (bin `shaswap-batcher`: discover→solve→assemble→evaluate→submit).
+**Proven on preprod:** a one-sided settlement (`05d99063…`) AND a perfect two-sided
+**netting** (`4e12d57f…`, pool untouched) built+signed+submitted entirely by the Rust
+batcher. Services: `happy_path/run-{ogmios,kupo}.sh`. **Next (batcher polish, optional):**
+a continuous loop (it's currently one-shot per invocation), mempool-aware order posting,
+multi-funding/auto-split when <2 pure-ADA UTXOs. **Still owed on-chain:** an **emulator
+pass** with a real `Data` ScriptContext (confirms the ~40-order ceiling + decoding cost),
+and folding the clearing-price/ADA-triple-role specs into exact rounding rules. Later:
+**true-equilibrium** cost spike (§5.2.7); the **app** data-access layer. **Done on-chain:**
+trust anchor, order/pool/pool_mint validators, LP path, pool close, bidirectional netting,
+deadlines, partial fills.
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -65,6 +66,21 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **🎉 LIVE TWO-SIDED NETTING settlement (Rust batcher) — pool
+  untouched.** Settlement tx
+  `4e12d57fa928191ce4383a17db916c1c227aea7fd1cf7a6f83b9f6a4482f0b18` cleared a
+  token-seller (A: sell 100M TEST, floor 45M ADA) AND an opposing ADA-seller (B: sell
+  50M ADA, floor 90M TEST) in ONE tx at uniform price **1/2**, `net_a=0 net_b=0`. Verified
+  on-chain: A's owner got 52M ADA (4M order + 50M received − 2M tip, 0 TEST); B's owner
+  got 2M ADA (min) + 100M TEST; **pool delta EXACTLY 0/0** (ada 861,338,911, test 1.2e9,
+  NFT+LP+datum identical before/after) — the coincidence-of-wants cleared user-to-user
+  with the AMM providing zero liquidity (no slippage, no fee); solver took only the 4M
+  tips. This is the MEV-resistant batch-auction win on chain. N=2: ex-units mem≈1.28M
+  steps≈482M, fee 480,534, 1256-byte tx — comfortably inside the per-tx budget (head-room
+  confirms the ~40-order ceiling). Added `happy_path/05b-post-ada-order.sh` (sell_a=False,
+  ADA triple-role: order holds sell+min+tip lovelace). No Rust change — the orchestrator
+  handled N=2 unchanged. **Batcher reference-solver milestone complete:** discover→solve→
+  assemble→evaluate→submit works live for one-sided AND netting settlements.
 - **2026-06-01** — **🎉 FIRST FULLY-PROGRAMMATIC LIVE SETTLEMENT — the Rust batcher
   reproduces `06-settle.sh` end-to-end.** Settlement tx
   `05d990637b95dc056262683be7049fad27128690afe1948f7bd4711c5776dbf9` built, evaluated,
