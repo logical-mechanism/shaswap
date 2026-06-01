@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 14 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 19 — 2026-05-31. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -135,7 +135,19 @@
 > C-01. (2) `pool_settle` now asserts the **spent input** carries the pool NFT (parity
 > with `lp_action`). (3) `pool_settle` asserts `res_*_out >= 0` explicitly (parity with
 > `lp_action`; previously only emergent via the `k`-check, cf. L-02). No behaviour change
-> for valid txs; +3 negative tests (94 green).**)
+> for valid txs; +3 negative tests (94 green).**
+> **Rev 19: re-audit follow-up (no logic change).** An independent re-audit of the fixed
+> code found **0 Critical/High/Medium** and confirmed every prior finding remediated.
+> Addressed the residual low-priority items that warrant code: a test pinning that a
+> `Script`-credential order `owner` is settle-able but **not** reclaimable (the v1
+> VK-owner reclaim precondition, §5.1, is a builder invariant — re-audit L-01); a test
+> pinning that a standalone `Close` may burn one's **own circulating LP** as deliberate
+> self-forfeiture, which cannot touch the pool's value-derived `circ` or other LPs
+> (re-audit I-05); and four cold-path benches (`lp_action` withdraw, `pool_close`,
+> `pool_mint` close, `order` reclaim — re-audit I-04). The re-audit's I-01 (missing
+> blueprint/spec) is a **false positive** from auditing an extracted `contracts/`-only
+> copy; this repo ships `documentation/BLUEPRINT.md` + `spec/`. Tests-only; +2 tests, +4
+> benches (96 green).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50

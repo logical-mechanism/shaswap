@@ -1,8 +1,8 @@
 {
   "preamble": {
     "title": "logicalmechanism/contracts",
-    "description": "Aiken contracts for project 'logicalmechanism/contracts'",
-    "version": "0.0.0",
+    "description": "ShaSwap on-chain validators — batch-auction DEX (settlement anchor, order, pool, pool_mint)",
+    "version": "0.1.0",
     "plutusVersion": "v3",
     "compiler": {
       "name": "Aiken",
