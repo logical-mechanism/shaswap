@@ -4,11 +4,17 @@
 //// Enumerates the protocol input set by the stake-credential tag `S` (= the
 //// withdraw purpose's own credential), classifies each tagged input by datum
 //// shape (parses-as-OrderDatum => order; the sole non-order => the pool), and
-//// enforces conservation, uniform price, per-order floor, and the injective O(N)
-//// positional order->output binding. It does NOT check `k` — that is the pool
-//// validator's job (§5.4 responsibility split) — and never parses the PoolDatum,
-//// so it stays curve-agnostic: the traded token is solver-declared and verified
-//// by conservation; the pool NFT is verified by continuity.
+//// enforces uniform price, per-order floor, and the injective O(N) positional
+//// order->output binding. Orders are **bidirectional**: token->ADA and ADA->token
+//// orders clear at one price and **net** against each other; only the residual
+//// hits the pool (the batch-auction benefit).
+////
+//// It does NOT check `k` — the pool validator's job (§5.4 split) — and never
+//// parses the PoolDatum, so it stays curve-agnostic. Safety without an explicit
+//// global-conservation pass: every order's *sold* asset and *both* owner-output
+//// assets are pinned exactly, the pool's reserve movement is pinned to the net,
+//// `mint == 0`, and the ledger's own value conservation then forces the solver to
+//// take exactly the tips (it cannot skim). That also drops two O(N) folds.
 
 use aiken/collection/list
 use cardano/address.{Credential}
@@ -29,48 +35,63 @@ fn parses_as_order(i: Input) -> Bool {
   }
 }
 
-/// Per-order checks; returns (sold, received, tip) to accumulate. Aborts on any
-/// violation (default-deny). `bound` is the positionally-paired owner-output.
-fn check_order(
-  input: Input,
-  bound: Output,
-  r: SettlementRedeemer,
-) -> (Int, Int, Int) {
+/// Per-order checks at the uniform clearing price `p = price_num/price_den`
+/// (ADA per token). Returns this order's signed contribution to the pool's net
+/// reserve movement `(d_token_to_pool, d_ada_to_pool)`. Aborts on any violation
+/// (default-deny). `bound` is the positionally-paired owner-output.
+fn check_order(input: Input, bound: Output, r: SettlementRedeemer) -> (Int, Int) {
   expect InlineDatum(od) = input.output.datum
   expect order: OrderDatum = od
-  let in_lovelace = assets.lovelace_of(input.output.value)
+  let in_ada = assets.lovelace_of(input.output.value)
+  let in_tok = utils.asset_qty(input.output.value, r.token)
+  let out_ada = assets.lovelace_of(bound.value)
+  let out_tok = utils.asset_qty(bound.value, r.token)
 
   // (6) injective binding: this output is bound to THIS order's unique ref
   expect InlineDatum(bd) = bound.datum
   expect b: BoundDatum = bd
   expect b.order_ref == input.output_reference
-
-  // (2)/(4) uniform price best-response (integer floor — no floats)
-  let received = order.sell_amount * r.price_num / r.price_den
-  // (5) per-order floor: never worse than the order's own limit
-  expect received >= order.limit
-  // owner-output goes to the owner; (1) ADA roles: keeps min-ada, gains
-  // `received` (traded-ADA), tip removed (-> solver). Buys ADA, so no token out.
+  // owner-output goes to the owner
   expect bound.address.payment_credential == order.owner
-  expect assets.lovelace_of(bound.value) == in_lovelace - order.tip + received
-  expect utils.asset_qty(bound.value, r.token) == 0
 
-  (order.sell_amount, received, order.tip)
+  if order.sell_ada {
+    // sells `sell_amount` lovelace, buys token at 1/p = den/num
+    let received = order.sell_amount * r.price_den / r.price_num
+    expect received >= order.limit
+    // order carries no token; owner gets exactly `received` token and keeps its
+    // min-ADA (input ADA minus the sold ADA minus the tip).
+    expect in_tok == 0
+    expect out_tok == received
+    expect out_ada == in_ada - order.sell_amount - order.tip
+    // pool gains the sold ADA, gives out the bought token
+    (-received, order.sell_amount)
+  } else {
+    // sells `sell_amount` token, buys ADA at p = num/den
+    let received = order.sell_amount * r.price_num / r.price_den
+    expect received >= order.limit
+    // order carries exactly the token it sells (no excess to skim); owner gets
+    // its min-ADA back plus `received` ADA, and no token.
+    expect in_tok == order.sell_amount
+    expect out_tok == 0
+    expect out_ada == in_ada - order.tip + received
+    // pool gains the sold token, pays out the bought ADA
+    (order.sell_amount, -received)
+  }
 }
 
 fn process_orders(
   orders: List<Input>,
   owner_outputs: List<Output>,
   r: SettlementRedeemer,
-) -> (Int, Int, Int) {
+) -> (Int, Int) {
   list.foldl(
     list.zip(orders, owner_outputs),
-    (0, 0, 0),
+    (0, 0),
     fn(pair, acc) {
-      let (ss, sr, st) = acc
+      let (tok_acc, ada_acc) = acc
       let (input, bound) = pair
-      let (sold, recv, tip) = check_order(input, bound, r)
-      (ss + sold, sr + recv, st + tip)
+      let (d_tok, d_ada) = check_order(input, bound, r)
+      (tok_acc + d_tok, ada_acc + d_ada)
     },
   )
 }
@@ -113,41 +134,17 @@ pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool 
   let n = list.length(order_inputs)
   let owner_outputs = list.take(tx.outputs, n)
   expect list.length(owner_outputs) == n
-  let (sum_sold, sum_received, _sum_tip) = process_orders(
-    order_inputs,
-    owner_outputs,
-    r,
-  )
+  let (net_tok, net_ada) = process_orders(order_inputs, owner_outputs, r)
 
-  // (1) traded-ADA role: pool gains exactly the sold token, pays exactly the
-  // traded ADA — tips/min-ADA never leak into reserves.
-  expect r_tok_out == r_tok_in + sum_sold
-  expect r_ada_out == r_ada_in - sum_received
-
-  // (1) global conservation: nothing minted/burned; token & ADA in == out.
+  // no minting/burning in a settlement (LP mint only at create/close)
   expect assets.is_zero(tx.mint)
-  let in_ada = list.foldl(
-    tx.inputs,
-    0,
-    fn(i, a) { a + assets.lovelace_of(i.output.value) },
-  )
-  let out_ada = list.foldl(
-    tx.outputs,
-    0,
-    fn(o, a) { a + assets.lovelace_of(o.value) },
-  )
-  let in_tok = list.foldl(
-    tx.inputs,
-    0,
-    fn(i, a) { a + utils.asset_qty(i.output.value, r.token) },
-  )
-  let out_tok = list.foldl(
-    tx.outputs,
-    0,
-    fn(o, a) { a + utils.asset_qty(o.value, r.token) },
-  )
-  expect in_ada == out_ada
-  expect in_tok == out_tok
+
+  // (1) the pool absorbs EXACTLY the net residual — token-sellers and ADA-sellers
+  // net against each other; only the imbalance moves the pool. Pinning the pool
+  // exactly (plus per-order pinning above) forces the solver to take only tips
+  // (ledger conservation), so no separate global-conservation pass is needed.
+  expect r_tok_out == r_tok_in + net_tok
+  expect r_ada_out == r_ada_in + net_ada
 
   // NB: k_after >= k_before is enforced by the POOL validator (§5.4 split).
   True

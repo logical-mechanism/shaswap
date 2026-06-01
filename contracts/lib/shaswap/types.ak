@@ -19,10 +19,14 @@ pub type AssetId {
   name: AssetName,
 }
 
-/// Order UTXO datum — the intent (§5.1). v1 scenario: sells `sell_amount` of the
-/// pool's token for ADA, wants at least `limit` lovelace.
+/// Order UTXO datum — the intent (§5.1). Bidirectional against one pool:
+/// `sell_ada = False` sells `sell_amount` of the pool's token for ADA;
+/// `sell_ada = True` sells `sell_amount` lovelace for the token. `limit` is the
+/// minimum amount of the *bought* asset (ADA or token respectively) — the
+/// per-order floor (§5.2.5).
 pub type OrderDatum {
   owner: Credential,
+  sell_ada: Bool,
   sell_amount: Int,
   limit: Int,
   tip: Int,

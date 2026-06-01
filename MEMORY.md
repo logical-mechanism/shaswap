@@ -17,12 +17,12 @@ bidirectional netting, and an emulator pass.
 
 **Continue the contract build.** Highest-value next pieces: (1) **partial fills** (per
 `spec/partial-fills.md`) — adds remainder outputs to settlement, currently full-fill
-only; (2) **bidirectional netting** (orders both directions clearing at one price —
-the netting benefit; v1 settlement is single-direction token->ADA); (3) fold the
-clearing-price + ADA-triple-role specs into the validators; (4) a **pool-close /
-full-exit** spend path tying the `Close` mint to the last withdrawal. **Before
-finalizing:** spike **true-equilibrium** cost (§5.2.7); **emulator** re-measure with
-real `Data` ScriptContext + a partial-fill mix.
+only; (2) fold the **clearing-price + ADA-triple-role** specs into the validators
+(exact rational/rounding rules, both-direction ADA accounting); (3) **deadlines**
+(order validity windows). **Before finalizing:** spike **true-equilibrium** cost
+(§5.2.7); **emulator** re-measure with real `Data` ScriptContext + a partial-fill mix.
+**Done:** trust anchor, order/pool/pool_mint validators, LP path, pool close,
+**bidirectional netting**.
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -105,4 +105,14 @@ High-signal pointers only:
   mutually exclusive with settlement. 31 tests green (added LP + mint suites). LP path
   no longer stubbed; the lone remaining `fail` is pool `Close` via the mint policy
   (full-exit spend path still TODO).
+- **2026-05-31** — **Pool close + bidirectional netting.** Added `pool_close`
+  (`ClosePool`) — tears down only an unseeded pool (`held == total_lp`), so live-pool
+  reserves can never be stolen; completes the pool validator (no stubs). Reworked
+  settlement to **bidirectional netting** (`OrderDatum.sell_ada`): token->ADA and
+  ADA->token orders clear at one price and net against each other; only the residual
+  moves the pool (perfect-netting leaves it untouched). Dropped the two O(N) global
+  conservation folds — exact per-order + pool pinning + `mint==0` + ledger
+  conservation already force the solver to take only tips; this also **lowered cost**
+  (N=20: mem 7.29M→6.30M). 39 tests green (+8: close ×3, netting perfect/partial/solo,
+  ada-floor + pool-shorted rejections). Cost confirms ~40-50 mem-bound ceiling holds.
 </content>

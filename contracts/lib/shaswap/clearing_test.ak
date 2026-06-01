@@ -101,6 +101,7 @@ fn pool_ref() -> OutputReference {
 fn order_datum() -> OrderDatum {
   OrderDatum {
     owner: VerificationKey(owner_vkh),
+    sell_ada: False,
     sell_amount: sell,
     limit,
     tip,
@@ -171,6 +172,39 @@ fn solver_output(ada: Int) -> Output {
     address: plain(VerificationKey(solver_vkh)),
     value: assets.from_lovelace(ada),
     datum: transaction.NoDatum,
+    reference_script: None,
+  }
+}
+
+// ADA-seller: sells `sell_ada_amt` lovelace, buys token (limit `lim` token).
+fn ada_order_input(i: Int, sell_ada_amt: Int, lim: Int) -> Input {
+  Input {
+    output_reference: order_ref(i),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: assets.from_lovelace(sell_ada_amt + tip + min_ada),
+      datum: InlineDatum(
+        OrderDatum {
+          owner: VerificationKey(owner_vkh),
+          sell_ada: True,
+          sell_amount: sell_ada_amt,
+          limit: lim,
+          tip,
+          partial: False,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+}
+
+// owner-output for an ADA-seller: receives `recv_tok` token + its min-ADA back.
+fn tok_owner_output(bind_index: Int, recv_tok: Int, min_back: Int) -> Output {
+  Output {
+    address: plain(VerificationKey(owner_vkh)),
+    value: assets.from_lovelace(min_back)
+      |> assets.add(tok.policy, tok.name, recv_tok),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(bind_index) }),
     reference_script: None,
   }
 }
@@ -343,4 +377,103 @@ test pool_settle_ok() {
 test pool_settle_k_drop() fail {
   let tx = build1(owner_out_ada, 0, pool_ada_in - 2_000_000, pool_tok_in, True)
   spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// ---- bidirectional netting (the batch-auction benefit) --------------------
+// price p = 1/2 ADA per token, so 1 token -> 0.5 ADA and 1 ADA -> 2 token.
+
+// One token-seller (1_000_000 token -> 500_000 ADA) and one ADA-seller
+// (500_000 lovelace -> 1_000_000 token) net PERFECTLY: the pool is untouched.
+test netting_perfect() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      order_input(0, True),
+      ada_order_input(1, 500_000, 1_000_000),
+      pool_input(True),
+    ],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      tok_owner_output(1, 1_000_000, min_ada),
+      pool_output(pool_ada_in, pool_tok_in),
+      solver_output(tip * 2),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer(), tx)
+}
+
+// Partial netting: token-seller 1_000_000 token, ADA-seller only 250_000
+// lovelace (-> 500_000 token). Net residual hits the pool: +500_000 token,
+// -250_000 ADA.
+test netting_partial() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      order_input(0, True),
+      ada_order_input(1, 250_000, 500_000),
+      pool_input(True),
+    ],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      tok_owner_output(1, 500_000, min_ada),
+      pool_output(pool_ada_in - 250_000, pool_tok_in + 500_000),
+      solver_output(tip * 2),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer(), tx)
+}
+
+// A lone ADA-seller: pool absorbs the whole trade (sells 500_000 lovelace,
+// buys 1_000_000 token; pool +500_000 ADA, -1_000_000 token).
+test ada_seller_solo() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [ada_order_input(0, 500_000, 1_000_000), pool_input(True)],
+    outputs: [
+      tok_owner_output(0, 1_000_000, min_ada),
+      pool_output(pool_ada_in + 500_000, pool_tok_in - 1_000_000),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer(), tx)
+}
+
+// ADA-seller floor breach: demands more token than the clearing price yields.
+test ada_seller_floor() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [ada_order_input(0, 500_000, 1_000_001), pool_input(True)],
+    outputs: [
+      tok_owner_output(0, 1_000_000, min_ada),
+      pool_output(pool_ada_in + 500_000, pool_tok_in - 1_000_000),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer(), tx)
+}
+
+// Pool not credited the netted residual (solver tries to skim the token the
+// ADA-seller didn't take): pool token movement check bites.
+test netting_pool_shorted() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      order_input(0, True),
+      ada_order_input(1, 250_000, 500_000),
+      pool_input(True),
+    ],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      tok_owner_output(1, 500_000, min_ada),
+      // pool should gain +500_000 token; credit it 0 instead
+      pool_output(pool_ada_in - 250_000, pool_tok_in),
+      solver_output(tip * 2),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer(), tx)
 }
