@@ -1565,3 +1565,91 @@ test prop_token_seller_short_owner(p via params()) fail {
     ts_settlement(sell_amount, f, pn, pd, tip, -1),
   )
 }
+
+// ---- adversarial property tests over the solver's degrees of freedom (I-02) ---
+// The fixtures above are stuck-at-default for the fields a solver actually controls
+// (declared pair, output stake credential, output reference script). These fuzz
+// those degrees of freedom and assert the hardened anchor rejects the whole space —
+// so a regression on C-01/C-02 (binding), M-01 (stake pin), or L-01 (ref-script
+// pin) is caught, not just the single hand-built sample.
+
+// a non-empty policy id (1..28 bytes) — anything here differs from the pool's real
+// asset_b (ADA = empty policy), and includes the pool's own policy as a sub-case.
+fn nonempty_policy() -> Fuzzer<ByteArray> {
+  fuzz.bytearray_between(1, 28)
+}
+
+// PROPERTY (C-01/C-02): any asset_b with a non-empty policy (≠ the pool's bound
+// asset_b = ADA) is rejected — the redeemer pair is pinned to the PoolDatum. This
+// space includes asset_b under the pool's own policy (the C-01 LP/NFT alias).
+test prop_reject_foreign_asset_b(pol via nonempty_policy()) fail {
+  let bad = SettlementRedeemer {
+    ..redeemer([sell]),
+    asset_b: AssetId { policy: pol, name: #"4c50" },
+  }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// PROPERTY (C-02): any order consenting to a pool_nft other than the settled one is
+// rejected — fuzz the order's target NFT policy across the whole non-matching space.
+test prop_reject_order_wrong_pool(pol via nonempty_policy()) fail {
+  let other = AssetId { policy: pol, name: #"4e4654" }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_pool(other), pool_input(True)],
+    outputs: [
+      owner_output(0, owner_out_ada),
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// PROPERTY (M-01): any owner payout carrying a stake credential (the solver's choice)
+// is rejected — the payout's stake credential is pinned to None across the space.
+test prop_reject_owner_stake(h via fuzz.bytearray_fixed(28)) fail {
+  let owner_out = Output {
+    address: Address {
+      payment_credential: VerificationKey(owner_vkh),
+      stake_credential: Some(Inline(VerificationKey(h))),
+    },
+    value: assets.from_lovelace(owner_out_ada),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [
+      owner_out,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
+// PROPERTY (L-01): any reference script attached to the recreated pool output is
+// rejected across the whole script-hash space.
+test prop_reject_pool_ref_script(h via fuzz.bytearray_fixed(28)) fail {
+  let bad_pool = Output {
+    address: tagged(Script(p_hash)),
+    value: pool_val(pool_ada_in - received, pool_tok_in + sell),
+    datum: InlineDatum(pool_datum()),
+    reference_script: Some(h),
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input(0, True), pool_input(True)],
+    outputs: [owner_output(0, owner_out_ada), bad_pool, solver_output(tip)],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
