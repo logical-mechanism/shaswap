@@ -66,6 +66,25 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Batcher: atomic single-fetch discovery + continuous loop mode.**
+  Worked the deferred review items. (1) **`ChainBackend::discover`** — new trait method
+  (default = the 3 separate queries; `KupoOgmios` overrides with ONE `/matches/*?unspent`
+  partitioned by address) returning a `Snapshot{orders,pool,wallet}`: a third of the Kupo
+  round-trips per pass AND an atomic view (the three sets can't drift mid-pass). Factored
+  the per-match decoders (`try_order` skips+logs junk, `try_pool` requires NFT+valid datum,
+  `wallet_utxo`) so `find_orders/find_pool/find_wallet_utxos` and `discover` share them.
+  (2) **Loop mode** — `orchestrator` now loops when `SHASWAP_INTERVAL_SECS=<n>` is set
+  (else one-shot); a transient pass failure logs+retries instead of killing the daemon; an
+  **in-flight set** tracks just-submitted order refs and excludes them until they drop out
+  of discovery (confirmed), so it never double-spends an order still in the mempool.
+  **Proven live:** loop settled order `ee12167e…` (tx `e0d1e038…`, pool −45M), then reported
+  "nothing to settle" on subsequent passes; the parked junk UTXO (`2279ae9b…`) is skipped
+  every pass. (3) Confirmed the **collateral** review finding is unreachable: the flat 5-ADA
+  floor exceeds the worst-case requirement (max-fee × 150% ≈ 3.99 ADA, fee bounded by max
+  ex-units + max tx size) — documented in `select_inputs`, no machinery added. Updated
+  `batcher/README.md` (orchestrator usage + status). **66 tests, clippy -D + fmt clean.**
+  Remaining batcher follow-ups: multi-funding/auto-split when <2 pure-ADA UTXOs; surplus-max
+  solving (deferred §5.2.7).
 - **2026-06-01** — **Code-review fixes (batcher).** Acted on a high-effort review of the
   batcher diff. (1) **Griefing fix (find_orders):** the order script address is public, so
   anyone can park a datumless/junk-datum UTXO there; the old `find_orders` returned `Err`

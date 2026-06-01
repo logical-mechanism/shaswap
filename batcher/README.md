@@ -18,8 +18,29 @@ ADA tips posted on orders — anyone may run their own.
 | `crates/solver-core` | Pure clearing arithmetic + v1 solver + sim. No IO. | **implemented** |
 | `crates/txbuilder` | Vendored fork of `pallas-txbuilder` 1.0 + **withdrawal/reward-redeemer support** (the withdraw-0 mechanism upstream lacks). | **implemented (fork)** |
 | `crates/txbuild` | Lower a `Settlement` into the chain-independent tx skeleton (Plutus Data, addresses, values, canonical outputs, redeemer/withdraw-0 plan). | **implemented (skeleton)** |
-| `crates/chain` | `ChainBackend` trait + typed fail-fast `Config` + on-chain datum decoder + body-finalization arithmetic. Kupo/Ogmios HTTP transport still to wire (needs a node). | **implemented (foundations)** |
-| `crates/orchestrator` (planned) | Live loop: discover → solve → build → evaluate → submit (preprod). | later |
+| `crates/chain` | `ChainBackend` trait + Kupo/Ogmios HTTP transport (`kupo_ogmios`) + body assembler (`assemble`) + typed fail-fast `Config` + on-chain datum decoder + fee arithmetic. | **implemented** |
+| `crates/orchestrator` | Live loop (bin `shaswap-batcher`): discover → solve → assemble → evaluate (gate) → submit, against preprod. | **implemented** |
+
+## Running the solver (`shaswap-batcher`)
+
+Needs a running preprod node with Ogmios (`:1337`) + Kupo (`:1442`) — see
+`../contracts/happy_path/run-ogmios.sh` and `run-kupo.sh`. The deployment
+identities + signing-key path come from a `deployment.json` (see
+`../contracts/happy_path/deployment.json`).
+
+```sh
+# one-shot dry run (build + EvaluateTx gate + print; does NOT submit)
+SHASWAP_DEPLOYMENT=../contracts/happy_path/deployment.json \
+  cargo run -p orchestrator
+
+SHASWAP_SUBMIT=1        # actually submit the settlement
+SHASWAP_INTERVAL_SECS=30  # loop every 30s instead of one-shot
+```
+
+It discovers in **one atomic Kupo snapshot** per pass, settles one-sided and
+two-sided (netting) batches, skips (never aborts on) junk UTXOs parked at the
+public order address, and — in loop mode — tracks just-submitted orders as
+in-flight so it never double-spends before they confirm.
 
 ## `solver-core` (done)
 
@@ -121,22 +142,21 @@ Node-independent, fully tested:
 - **`fees`** — the pure body-finalization arithmetic: script-execution fee from
   ex-units + prices, size fee, ex-unit summation, POSIX→slot.
 
-## Not yet here (next milestones)
+## Status
 
-1. **`chain` HTTP transport** (needs a live preprod node): the Kupo/Ogmios impls of
-   `ChainBackend` — discovery by stake-cred `S` / pool NFT, params, the EvaluateTx
-   pre-submit gate, submit — and the final body stitch (funding/collateral inputs,
-   tip-change output, `script_data_hash` over the cost models, fee balancing, signing).
-   Deliberately not fixture-tested blind: the external JSON shapes need verification
-   against the real APIs.
-2. **`orchestrator`**: the live loop discover → solve → build → evaluate → submit.
-3. **Bootstrap dependency** (blocks live preprod settlement): deploy reference
-   scripts, register `S` and **never delegate it**, create + seed a pool. See
-   `../contracts/happy_path/`.
+The full pipeline works live on preprod: the Kupo/Ogmios `ChainBackend`
+(discovery, params, the EvaluateTx pre-submit gate, submit), the body assembler
+(funding/collateral, reference inputs, `script_data_hash` over the cost models,
+ex-units from EvaluateTx, fee balancing, signing), and the orchestrator loop have
+all settled real one-sided and netting batches (see `../MEMORY.md`).
+
+Possible follow-ups: multi-funding / auto-split when fewer than two pure-ADA
+UTXOs are available; surplus-maximizing solving (the deferred §5.2.7 layer); and
+the emulator pass still owed on the contracts side.
 
 ## Invariants this component must keep
 
 The batcher stays **unprivileged**: no capability the protocol doesn't grant every
-solver. Solver reward is ADA tips only. It mirrors the on-chain constants exactly; a
-typed `Config` (planned, in `chain`) loads deployment constants and fails fast if any
-drifts from `constants.ak`.
+solver. Solver reward is ADA tips only. It mirrors the on-chain constants exactly; the
+typed `Config` in `chain` loads deployment constants and fails fast if any drifts from
+`constants.ak`.

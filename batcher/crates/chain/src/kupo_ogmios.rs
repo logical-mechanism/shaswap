@@ -8,7 +8,9 @@
 //! against fixtures captured from the live services — independently of the HTTP
 //! transport, which is exercised live by the orchestrator.
 
-use crate::backend::{ChainBackend, ExUnits, ProtocolParams, Purpose, RedeemerEval, Tip, Utxo};
+use crate::backend::{
+    ChainBackend, ExUnits, ProtocolParams, Purpose, RedeemerEval, Snapshot, Tip, Utxo,
+};
 use crate::config::ValidatedConfig;
 use crate::decode::{self, DecodeError};
 use pallas_addresses::Network;
@@ -393,6 +395,101 @@ impl KupoOgmios {
         let reply = self.kupo_get("/matches/*?unspent")?;
         parse_kupo_matches(&reply)
     }
+
+    /// Decode a match at the order address into an [`OrderInput`], or `None`
+    /// (logged) if it isn't a well-formed order. The order script address is
+    /// public — anyone can park a datumless/junk UTXO there — so a bad UTXO is
+    /// skipped, never fatal (a permissionless solver must stay live).
+    fn try_order(&self, m: &KupoMatch) -> Option<OrderInput> {
+        let r = &m.output_reference;
+        let skip = |why: String| {
+            eprintln!(
+                "skip order utxo {}#{}: {why}",
+                hex::encode(&r.transaction_id),
+                r.output_index
+            );
+        };
+        let Some(hash) = m.datum_hash.as_ref() else {
+            skip("no datum".into());
+            return None;
+        };
+        match self
+            .fetch_datum(hash)
+            .and_then(|cbor| decode::order_datum_cbor(&cbor).map_err(ChainError::from))
+        {
+            Ok(datum) => Some(OrderInput {
+                output_reference: r.clone(),
+                address: Address {
+                    payment: Credential::Script(self.cfg.order_script_hash.clone()),
+                    stake: Some(self.cfg.settlement_cred.clone()),
+                },
+                value: m.value.clone(),
+                datum,
+            }),
+            Err(e) => {
+                skip(format!("not a valid OrderDatum ({e:?})"));
+                None
+            }
+        }
+    }
+
+    /// Decode a match at the pool address into a [`PoolInput`] iff it carries the
+    /// pool NFT and a valid `PoolDatum`; `None` (logged) otherwise.
+    fn try_pool(&self, m: &KupoMatch, nft: &AssetId) -> Option<PoolInput> {
+        if m.value.quantity_of(&nft.policy, &nft.name) < 1 {
+            return None;
+        }
+        let r = &m.output_reference;
+        let datum = match m
+            .datum_hash
+            .as_ref()
+            .ok_or_else(|| ChainError::Shape("pool UTXO has no datum".into()))
+            .and_then(|h| self.fetch_datum(h))
+            .and_then(|cbor| decode::pool_datum_cbor(&cbor).map_err(ChainError::from))
+        {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!(
+                    "skip pool-NFT utxo {}#{}: bad PoolDatum ({e:?})",
+                    hex::encode(&r.transaction_id),
+                    r.output_index
+                );
+                return None;
+            }
+        };
+        Some(PoolInput {
+            output_reference: r.clone(),
+            address: Address {
+                payment: Credential::Script(self.cfg.pool_script_hash.clone()),
+                stake: Some(self.cfg.settlement_cred.clone()),
+            },
+            value: m.value.clone(),
+            datum,
+        })
+    }
+
+    /// Canonical input order, matching solver-core's `canonical_key`.
+    fn sort_orders(orders: &mut [OrderInput]) {
+        orders.sort_by(|a, b| {
+            (
+                &a.output_reference.transaction_id,
+                a.output_reference.output_index,
+            )
+                .cmp(&(
+                    &b.output_reference.transaction_id,
+                    b.output_reference.output_index,
+                ))
+        });
+    }
+}
+
+fn wallet_utxo(m: &KupoMatch) -> Utxo {
+    Utxo {
+        output_reference: m.output_reference.clone(),
+        value: m.value.clone(),
+        has_reference_script: m.script_hash.is_some(),
+        has_datum: m.datum_hash.is_some(),
+    }
 }
 
 impl ChainBackend for KupoOgmios {
@@ -407,93 +504,58 @@ impl ChainBackend for KupoOgmios {
     }
 
     fn find_orders(&self, _s: &Credential) -> Result<Vec<OrderInput>, ChainError> {
-        let mut out = Vec::new();
-        for m in self.matches_at(&self.order_addr)? {
-            // The order script address is public: anyone can pay a datumless or
-            // junk-datum UTXO there. SKIP (don't abort) anything that isn't a
-            // well-formed order, so a single bad UTXO can't brick the whole batch
-            // (a permissionless solver must stay live). Only a hard transport
-            // error propagates.
-            let r = &m.output_reference;
-            let Some(hash) = m.datum_hash.as_ref() else {
-                eprintln!(
-                    "skip order utxo {}#{}: no datum",
-                    hex::encode(&r.transaction_id),
-                    r.output_index
-                );
-                continue;
-            };
-            let datum = match self
-                .fetch_datum(hash)
-                .and_then(|cbor| decode::order_datum_cbor(&cbor).map_err(ChainError::from))
-            {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!(
-                        "skip order utxo {}#{}: not a valid OrderDatum ({e:?})",
-                        hex::encode(&r.transaction_id),
-                        r.output_index
-                    );
-                    continue;
-                }
-            };
-            out.push(OrderInput {
-                output_reference: m.output_reference,
-                address: Address {
-                    payment: Credential::Script(self.cfg.order_script_hash.clone()),
-                    stake: Some(self.cfg.settlement_cred.clone()),
-                },
-                value: m.value,
-                datum,
-            });
-        }
-        // Canonical input order (matches solver-core's `canonical_key`).
-        out.sort_by(|a, b| {
-            (
-                &a.output_reference.transaction_id,
-                a.output_reference.output_index,
-            )
-                .cmp(&(
-                    &b.output_reference.transaction_id,
-                    b.output_reference.output_index,
-                ))
-        });
+        let mut out: Vec<OrderInput> = self
+            .matches_at(&self.order_addr)?
+            .iter()
+            .filter_map(|m| self.try_order(m))
+            .collect();
+        Self::sort_orders(&mut out);
         Ok(out)
     }
 
     fn find_pool(&self, nft: &AssetId) -> Result<PoolInput, ChainError> {
-        for m in self.matches_at(&self.pool_addr)? {
-            if m.value.quantity_of(&nft.policy, &nft.name) >= 1 {
-                let hash = m
-                    .datum_hash
-                    .as_ref()
-                    .ok_or_else(|| ChainError::Shape("pool UTXO has no datum".into()))?;
-                let datum = decode::pool_datum_cbor(&self.fetch_datum(hash)?)?;
-                return Ok(PoolInput {
-                    output_reference: m.output_reference,
-                    address: Address {
-                        payment: Credential::Script(self.cfg.pool_script_hash.clone()),
-                        stake: Some(self.cfg.settlement_cred.clone()),
-                    },
-                    value: m.value,
-                    datum,
-                });
-            }
-        }
-        Err(ChainError::PoolNotFound)
+        self.matches_at(&self.pool_addr)?
+            .iter()
+            .find_map(|m| self.try_pool(m, nft))
+            .ok_or(ChainError::PoolNotFound)
     }
 
     fn find_wallet_utxos(&self, address: &str) -> Result<Vec<Utxo>, ChainError> {
-        Ok(self
-            .matches_at(address)?
-            .into_iter()
-            .map(|m| Utxo {
-                output_reference: m.output_reference,
-                value: m.value,
-                has_reference_script: m.script_hash.is_some(),
-                has_datum: m.datum_hash.is_some(),
-            })
-            .collect())
+        Ok(self.matches_at(address)?.iter().map(wallet_utxo).collect())
+    }
+
+    /// Override the default (three separate fetches) with ONE `/matches/*?unspent`
+    /// call partitioned by address — an atomic snapshot (no inter-call chain drift)
+    /// and a third of the Kupo round-trips per pass.
+    fn discover(
+        &self,
+        _s: &Credential,
+        nft: &AssetId,
+        wallet_addr: &str,
+    ) -> Result<Snapshot, ChainError> {
+        let all = self.all_unspent()?;
+        let mut orders = Vec::new();
+        let mut pool = None;
+        let mut wallet = Vec::new();
+        for m in &all {
+            if m.address == self.order_addr {
+                if let Some(o) = self.try_order(m) {
+                    orders.push(o);
+                }
+            } else if m.address == self.pool_addr {
+                if pool.is_none() {
+                    pool = self.try_pool(m, nft);
+                }
+            } else if m.address == wallet_addr {
+                wallet.push(wallet_utxo(m));
+            }
+        }
+        Self::sort_orders(&mut orders);
+        Ok(Snapshot {
+            orders,
+            pool: pool.ok_or(ChainError::PoolNotFound)?,
+            wallet,
+        })
     }
 
     fn evaluate(&self, tx_cbor: &[u8]) -> Result<Vec<RedeemerEval>, ChainError> {

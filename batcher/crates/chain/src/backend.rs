@@ -86,6 +86,16 @@ pub enum Purpose {
     Propose,
 }
 
+/// An atomic discovery snapshot: the orders to settle, the pool, and the solver's
+/// own UTXOs (for funding/collateral) — ideally read from a single chain view so
+/// they can't drift between separate queries within one pass.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    pub orders: Vec<OrderInput>,
+    pub pool: PoolInput,
+    pub wallet: Vec<Utxo>,
+}
+
 /// Everything the solver needs from the chain. Discovery, params, the EvaluateTx
 /// **pre-submit gate**, and submission.
 pub trait ChainBackend {
@@ -106,6 +116,22 @@ pub trait ChainBackend {
     /// All unspent UTXOs at `address` (the solver wallet) — for funding/collateral
     /// selection. Returns plain [`Utxo`]s (no domain decoding).
     fn find_wallet_utxos(&self, address: &str) -> Result<Vec<Utxo>, Self::Error>;
+
+    /// One discovery pass: orders + pool + wallet. The default composes the three
+    /// queries above; a backend that can read them from a single chain view should
+    /// override this (so the three views can't drift mid-pass) — see `KupoOgmios`.
+    fn discover(
+        &self,
+        s: &Credential,
+        nft: &AssetId,
+        wallet_addr: &str,
+    ) -> Result<Snapshot, Self::Error> {
+        Ok(Snapshot {
+            orders: self.find_orders(s)?,
+            pool: self.find_pool(nft)?,
+            wallet: self.find_wallet_utxos(wallet_addr)?,
+        })
+    }
 
     /// Local Phase-2 evaluation of a built tx — the **pre-submit gate**. Every tx
     /// must pass this (and have its ex-units filled from the result) before submit.
