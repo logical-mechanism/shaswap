@@ -66,6 +66,52 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **App skeleton stood up (`app/`, branch `app/skeleton`).** Scaffolded
+  the web dApp shell — structure + clean swap-card UI + wallet connect + the data-access
+  seam — wired end-to-end against **mock data**. **No** settlement/clearing/order-building
+  or real provider access yet (deferred to later branches). **Stack:** Next.js 16 (App
+  Router) + TypeScript strict + Tailwind v4; MeshJS `@meshsdk/react` (`MeshProvider`,
+  `useWallet`/`useAddress`/`useLovelace`/`useNetwork`, `CardanoWallet`) + `@meshsdk/core`.
+  Bundler is **Turbopack** (Next 16 default — resolves MeshJS's WASM serialization libs
+  natively, so no webpack config; an earlier webpack `asyncWebAssembly` config conflicted
+  with the default Turbopack and was removed). **MeshJS version pin (decided):**
+  `@meshsdk/react` has **no stable** on npm (only betas; `latest`=`2.0.0-beta.2`, both Feb
+  2026), so it's pinned **exactly** to `1.9.0-beta.98` — the build matching the stable
+  `@meshsdk/core@1.9.0` train (wallet/transaction/common all 1.9; `@meshsdk/wallet` resolves
+  to stable **1.9.0**), keeping ONE wallet major in the tree (the `2.0.0-beta.2` react pulled
+  in `@meshsdk/wallet@2.0`). NB the `meshjs` unscoped pkg on jsdelivr (`1.9.0-beta.102`) is a
+  separate app-*bootstrapper*, not our dep. Node pinned via `app/.nvmrc` (`22`) + `engines`
+  `>=20.19.0` — using nvm node also sidesteps snap node's swallowed stdout. tsconfig `target`
+  bumped ES2017→**ES2020** for BigInt literals. **The data-access seam (CLAUDE.md HARD RULE):** one typed `DataProvider`
+  interface (`listTokens/listPools/getPool/priceQuote/walletPositions`) + domain types
+  (`TokenInfo`/`Pool`/`Quote`/`OrderIntent`/`WalletPosition`) in `app/src/lib/data/`;
+  a `MockProvider` (static data + toy constant-product quote — NOT the protocol clearing);
+  **the server is the data layer** — provider calls live in Next route handlers
+  (`app/src/app/api/{tokens,pools,quote,orders}/route.ts`), the client only ever fetches
+  our own `/api/*` (via `src/lib/client/api.ts` + `src/hooks/use{Tokens,Pools,Quote,Orders}`).
+  Swapping in a real provider / our own Dolos node = **one-file change**: implement
+  `DataProvider` and return it from `getDataProvider()` in `src/lib/data/index.ts` (commented
+  `switch` stub there). Network is a **single config value** (`src/lib/config.ts`, default
+  **preprod**; `NEXT_PUBLIC_NETWORK` override; CIP-30 networkId derived; header flags
+  network mismatch). **UI:** sticky nav (wordmark + Swap/Pools/Orders + `CardanoWallet`
+  + address/balance/network pill), centered swap card (from/to selectors, direction toggle,
+  mock rate/price-impact line, visual-only slippage popover, state-aware primary button
+  *Connect wallet → Enter an amount → Swap (coming soon)*, **always disabled — builds/submits
+  nothing**), `/pools` + `/orders` stubs reading mock through the seam, dark gradient theme,
+  mobile-responsive. **Verified:** `npm run build` + `npm run lint` green; dev renders `/`,
+  `/pools`, `/orders` (200) and `/api/*` return mock JSON (quote 10 ADA→~13.7 TEST, impact
+  1.44%); CardanoWallet button renders. (Full browser wallet-connect needs a real extension —
+  not headless-testable here.) Docs: `app/README.md` (stack/run/seam/scope). MeshJS Agent
+  Skills already vendored in `.claude/skills/` (prior `chore/mesh-skills` merge).
+  **Code-review pass applied** (high-effort, 7 angles): fixed `Number()` precision loss
+  in `format.ts` (now BigInt-exact, matters for >2^53-lovelace balances/reserves), the
+  `/orders` wrong-empty "No orders yet." flash (`useOrders` now derives `loading` — no
+  deferred-timer), added provider-error guards + input validation on the `/api/*` routes
+  (shared `lib/api.ts` `providerJson`, 502 on throw / 400 on bad `amount`), made
+  `toBaseUnits` round (not truncate) and reject bare `.`, and added the missing abort guard
+  in `useTokens`. Left as noted/deferred: mock price `Number()` precision (mock-only),
+  single-token-list `toToken` guard, and the dedup cleanups (shared `Empty`/`useClickOutside`/
+  abortable-fetch hook). PR opened off `app/skeleton`; NOT merged — left for the maintainer.
 - **2026-06-01** — **Batcher production-readiness pass (v1 daemon hardening).** Made the
   reference solver safe to run unattended under systemd. (1) **Graceful shutdown:** added
   `signal-hook`; SIGTERM/SIGINT flip an `AtomicBool` checked **only between passes** (a
