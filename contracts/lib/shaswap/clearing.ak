@@ -236,8 +236,16 @@ fn process(
 }
 
 pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool {
+  // (L-02) the clearing price must be strictly positive. Safety was previously
+  // only emergent (div-by-zero on a 0 denominator + the floor rejecting a
+  // non-positive price for limit ≥ 1); make it an explicit invariant so a 0-price
+  // fill of a `limit == 0` order can't pay the owner nothing.
+  expect r.price_num > 0
+  expect r.price_den > 0
+
   // the two declared assets must be distinct (a degenerate `asset_a == asset_b`
-  // would collapse the pair). Either may be ADA; at most one can be.
+  // would collapse the pair). Either may be ADA; at most one can be. (Now also
+  // implied by the PoolDatum binding below, but kept as a cheap early guard.)
   expect r.asset_a != r.asset_b
 
   // (7) enumerate the protocol input set by the stake tag S = our own credential

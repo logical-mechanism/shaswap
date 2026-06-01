@@ -1095,6 +1095,41 @@ test settlement_remainder_ref_script() fail {
   clearing.run(s(), redeemer([400_000]), tx)
 }
 
+// ---- clearing price must be strictly positive (L-02) -----------------------
+// price_num/price_den are now explicitly guarded > 0, instead of relying on
+// emergent div-by-zero + the floor check.
+
+// (L-02) zero denominator: rejected by the explicit guard (was: div-by-zero).
+test settlement_price_den_zero() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), price_den: 0 }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (L-02) zero numerator (a 0-price fill that would pay the owner nothing for a
+// limit==0 order): rejected.
+test settlement_price_num_zero() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), price_num: 0 }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
+// (L-02) negative price: rejected.
+test settlement_price_negative() fail {
+  let bad = SettlementRedeemer { ..redeemer([sell]), price_num: -1 }
+  clearing.run(
+    s(),
+    bad,
+    build1(owner_out_ada, 0, pool_ada_in - received, pool_tok_in + sell, True),
+  )
+}
+
 // ---- token/token pair (neither side is ADA) -------------------------------
 // asset_a = tok, asset_b = tokb; the pool's lovelace is pure min-ADA overhead.
 // Order sells 1000 tok for tokb at price 3 (tokb per tok) -> 3000 tokb.

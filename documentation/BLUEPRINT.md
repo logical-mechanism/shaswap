@@ -107,7 +107,14 @@
 > `LpAction` path) assert **no attached reference script**, so a solver can't bloat an
 > output's min-ADA with a reference script (L-01, griefing). Factored into two reused
 > helpers (`is_payout_output` / `is_protocol_output`). Settlement/pool-logic change, no
-> datum-shape change; +4 negative tests (83 green).**)
+> datum-shape change; +4 negative tests (83 green).**
+> **Rev 16: explicit guards (§5.2/§5.1) — closes audit L-02 + I-03.** (L-02) the
+> settlement anchor now asserts `price_num > 0 && price_den > 0` explicitly, rather than
+> relying on emergent div-by-zero + the floor — so a `limit == 0` order can't be filled
+> at a zero price for nothing. (I-03) `pool_mint` `Create` now asserts the pool datum's
+> `creator` is a **VK credential** (it authorizes `ClosePool` by signature), failing fast
+> at the only validating gate instead of letting a `Script` creator silently brick the
+> pre-seed teardown. No datum-shape change; +4 negative tests (87 green).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
