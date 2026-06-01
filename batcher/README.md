@@ -60,6 +60,11 @@ and run — the batcher discovers everything itself:
   fail and the pool be skipped until orders drop — so 20 is conservative.
 - **Economically rational.** A tx whose tips don't cover its fee (+`FEE_COVER_MARGIN`)
   is skipped; its orders defer to a later, better-amortized batch.
+- **Pluggable drain ordering.** `strategy` (deployment JSON, default `round-robin`;
+  override with `SHASWAP_STRATEGY`) sets the order pools/shards are attempted in:
+  `round-robin` (fair, starvation-free) or `profit-greedy` (highest Σtips first).
+  It only affects *ordering* (and, across competing solvers, who wins what and how
+  fast) — never which orders are batchable (that's the floor + fee-cover gate).
 - **Atomic discovery** — one Kupo snapshot per pass; the order/pool/wallet views
   can't drift mid-pass.
 - **Griefing-resistant** — skips (never aborts on) junk UTXOs parked at the public

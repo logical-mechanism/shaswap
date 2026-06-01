@@ -66,6 +66,23 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Configurable drain strategy (round-robin | profit-greedy).** The
+  cross-pool/shard ordering a pass attempts pools in is now a config knob: deployment-JSON
+  `strategy` (default `"round-robin"`; env override `SHASWAP_STRATEGY`), parsed into an
+  orchestrator `Strategy` enum (extensible — add a variant + a `settlement_plan` match arm
+  for fancier policies later). `round-robin` = sort-by-NFT + cursor rotation (fair, no pool
+  starved); `profit-greedy` = highest Σ-posted-tips first (deterministic NFT tie-break).
+  **Ordering only** — every settleable pool is still attempted; *which* orders settle is the
+  per-order floor + the fee-cover gate, identical for every strategy (so strategy changes
+  *who wins what / how fast* under competing solvers, never batchability). Recorded the
+  multi-solver game-theory reasoning: all-greedy herds on the richest pool (latency-decided,
+  centralizing) and isn't a stable equilibrium — solvers are incentivized to disperse, so a
+  mixed population self-balances (greedy clears value fast, round-robin mops up the rest);
+  this mirrors SAMM's dispersion logic applied to solvers. **Proven live (dry-run):** posted
+  a low-tip order to pool `1c3be7b9` + a high-tip order to pool `a2c6916e`; round-robin solved
+  `1c3be7b9` first (NFT order), profit-greedy solved `a2c6916e` first (tip 5M > 2M), reversing
+  it — both attempting both pools. **83 tests** (+2: profit-greedy ordering + tie-break, strategy
+  parse aliases/fallback), clippy -D + fmt clean.
 - **2026-06-01** — **Batcher hardening — code-review fixes (tx chaining made safe/reliable).**
   Acted on a high-effort multi-agent review of the chaining diff (3 candidates refuted as
   safe: Ogmios rejecting already-spent `additionalUtxo` — each evaluate is independent, proven

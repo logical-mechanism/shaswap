@@ -80,12 +80,26 @@ pub struct Config {
     /// skipped until enough orders drop. Optional in the deployment JSON (default 20).
     #[serde(default = "default_max_orders_per_tx")]
     pub max_orders_per_tx: usize,
+
+    /// Cross-pool/shard drain ordering for a pass (the order pools are attempted in
+    /// when chaining). The orchestrator parses this into its `Strategy` enum — an
+    /// unknown value falls back to the default. Currently `"round-robin"` (fair,
+    /// starvation-free) or `"profit-greedy"` (highest Σtips first); more can be
+    /// added later. Overridable with `SHASWAP_STRATEGY`. Optional (default round-robin).
+    #[serde(default = "default_strategy")]
+    pub strategy: String,
 }
 
 /// Conservative default for [`Config::max_orders_per_tx`] — well inside the v1
 /// ~40-order per-tx ceiling, leaving head-room for ex-unit/size variance.
 fn default_max_orders_per_tx() -> usize {
     20
+}
+
+/// Default drain strategy — fair round-robin (no pool starved, no herd on the
+/// richest pool). See the orchestrator's `Strategy`.
+fn default_strategy() -> String {
+    "round-robin".to_string()
 }
 
 fn hex_bytes(s: &str, field: &'static str) -> Result<Vec<u8>, ConfigError> {

@@ -84,6 +84,39 @@ type Key = (Vec<u8>, u64);
 /// An asset identity (policy, name) — used to key pools/orders by NFT.
 type NftKey = (Vec<u8>, Vec<u8>);
 
+/// The cross-pool/shard drain ordering for a pass — the order pools are attempted
+/// in when building the chain. It only affects *ordering* (and so, under multiple
+/// competing solvers, who tends to win which pool and how fast); it never changes
+/// which orders are batchable (that's the per-order floor + the fee-cover gate,
+/// identical for every strategy). Add fancier policies as new variants here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum Strategy {
+    /// Sorted by NFT then rotated by a per-pass cursor: fair, deterministic, no
+    /// pool starved — and across competing solvers it de-correlates collisions.
+    #[default]
+    RoundRobin,
+    /// Highest Σtips first (deterministic NFT tie-break): clears the most valuable
+    /// pools soonest. Individually rational, but if every solver does it they herd
+    /// on the richest pool; a mixed population self-balances (see MEMORY/discussion).
+    ProfitGreedy,
+}
+
+impl Strategy {
+    /// Parse a config/env string; `None` if unrecognized (caller falls back).
+    fn parse(s: &str) -> Option<Self> {
+        match s
+            .trim()
+            .to_ascii_lowercase()
+            .replace([' ', '_'], "-")
+            .as_str()
+        {
+            "round-robin" | "roundrobin" | "rr" => Some(Strategy::RoundRobin),
+            "profit-greedy" | "profitgreedy" | "greedy" | "profit" => Some(Strategy::ProfitGreedy),
+            _ => None,
+        }
+    }
+}
+
 fn key(r: &OutputReference) -> Key {
     (r.transaction_id.clone(), r.output_index)
 }
@@ -122,6 +155,14 @@ fn run() -> Result<(), Err> {
     {
         cfg.max_orders_per_tx = n;
     }
+    // Drain strategy: env override, else the deployment JSON, else the default.
+    // An unrecognized value falls through rather than aborting startup.
+    let strategy = std::env::var("SHASWAP_STRATEGY")
+        .ok()
+        .as_deref()
+        .and_then(Strategy::parse)
+        .or_else(|| Strategy::parse(&raw.strategy))
+        .unwrap_or_default();
 
     let backend = KupoOgmios::new(cfg.clone()).map_err(|e| format!("backend: {e:?}"))?;
     let skey = assemble::load_signing_key(&signing_key_path).map_err(|e| format!("skey: {e:?}"))?;
@@ -135,6 +176,8 @@ fn run() -> Result<(), Err> {
         solver = %solver_addr,
         submit,
         mode = %interval.map_or("one-shot".into(), |n| format!("loop {n}s")),
+        strategy = ?strategy,
+        cap = cfg.max_orders_per_tx,
         "starting"
     );
 
@@ -161,6 +204,7 @@ fn run() -> Result<(), Err> {
             &solver_addr,
             ref_bytes,
             submit,
+            strategy,
             &mut state,
         );
     };
@@ -180,6 +224,7 @@ fn run() -> Result<(), Err> {
                     &solver_addr,
                     ref_bytes,
                     submit,
+                    strategy,
                     &mut state,
                 ) {
                     warn!("pass failed (will retry next block): {e}");
@@ -231,7 +276,8 @@ enum PassError {
     AbortPass(Err),
 }
 
-/// One discover → group-by-pool → settle-one-pool pass.
+/// One discover → group-by-pool → drain-the-chain pass.
+#[allow(clippy::too_many_arguments)]
 fn settle_once(
     backend: &KupoOgmios,
     cfg: &ValidatedConfig,
@@ -239,6 +285,7 @@ fn settle_once(
     solver_addr: &str,
     ref_bytes: u64,
     submit: bool,
+    strategy: Strategy,
     state: &mut LoopState,
 ) -> Result<(), Err> {
     let tip = backend.tip().map_err(|e| format!("tip: {e:?}"))?;
@@ -280,10 +327,22 @@ fn settle_once(
     }
     let pool_nfts: Vec<NftKey> = pools.iter().map(|p| nft_key(&p.datum.nft)).collect();
     let order_nfts: Vec<NftKey> = by_pool.keys().cloned().collect();
+    // Σ posted tips per pool — the profit-greedy ordering key (a proxy for the
+    // tip the solver would take; exact for v1 full fills). Cheap to compute here.
+    let tips_by_nft: HashMap<NftKey, i128> = by_pool
+        .iter()
+        .map(|(k, ords)| (k.clone(), ords.iter().map(|o| o.datum.tip).sum()))
+        .collect();
 
-    // Decide which pools to attempt, in what order (deterministic + round-robin
-    // fair), and which orders are orphans (target a pool we don't see).
-    let (attempt, orphans) = settlement_plan(&pool_nfts, &order_nfts, state.cursor);
+    // Decide which pools to attempt and in what order (per the chosen strategy),
+    // and which orders are orphans (target a pool we don't see).
+    let (attempt, orphans) = settlement_plan(
+        &pool_nfts,
+        &order_nfts,
+        state.cursor,
+        strategy,
+        &tips_by_nft,
+    );
     for nft in &orphans {
         warn!(
             nft = hex::encode(&nft.0),
@@ -394,22 +453,44 @@ fn nft_key(a: &solver_core::types::AssetId) -> NftKey {
 /// and in what order, plus which order NFTs are orphans.
 ///
 /// Returns `(attempt, orphans)` where `attempt` is indices into `pool_nfts` for the
-/// pools that have at least one settleable order — sorted deterministically by NFT,
-/// then rotated by `cursor` so no pool is starved across passes — and `orphans` is
-/// the order NFTs that match no known pool (deduped, sorted; logged, never settled).
+/// pools that have at least one settleable order, ordered per `strategy`:
+/// - [`Strategy::RoundRobin`] — sorted by NFT then rotated by `cursor`, so no pool
+///   is starved across passes;
+/// - [`Strategy::ProfitGreedy`] — highest `tips_by_nft` first (NFT tie-break), so
+///   the most valuable pools clear soonest (`cursor` unused).
+///
+/// `orphans` is the order NFTs that match no known pool (deduped, sorted; logged,
+/// never settled). Ordering is the only thing a strategy controls — every pool with
+/// a settleable batch is still attempted; what actually settles is the per-pool
+/// solve + fee-cover gate, independent of strategy.
 fn settlement_plan(
     pool_nfts: &[NftKey],
     order_nfts: &[NftKey],
     cursor: usize,
+    strategy: Strategy,
+    tips_by_nft: &HashMap<NftKey, i128>,
 ) -> (Vec<usize>, Vec<NftKey>) {
     let have: HashSet<&NftKey> = order_nfts.iter().collect();
     let mut attempt: Vec<usize> = (0..pool_nfts.len())
         .filter(|&i| have.contains(&pool_nfts[i]))
         .collect();
-    attempt.sort_by(|&a, &b| pool_nfts[a].cmp(&pool_nfts[b]));
-    let len = attempt.len();
-    if len > 0 {
-        attempt.rotate_left(cursor % len);
+    match strategy {
+        Strategy::RoundRobin => {
+            attempt.sort_by(|&a, &b| pool_nfts[a].cmp(&pool_nfts[b]));
+            let len = attempt.len();
+            if len > 0 {
+                attempt.rotate_left(cursor % len);
+            }
+        }
+        Strategy::ProfitGreedy => {
+            // Highest Σtips first; NFT tie-break keeps it deterministic.
+            let tips = |n: &NftKey| tips_by_nft.get(n).copied().unwrap_or(0);
+            attempt.sort_by(|&a, &b| {
+                tips(&pool_nfts[b])
+                    .cmp(&tips(&pool_nfts[a]))
+                    .then_with(|| pool_nfts[a].cmp(&pool_nfts[b]))
+            });
+        }
     }
 
     let pool_set: HashSet<&NftKey> = pool_nfts.iter().collect();
@@ -704,12 +785,17 @@ mod tests {
         (vec![b; 28], b"NFT".to_vec())
     }
 
+    /// Round-robin plan with no profit info (the tip map is unused by RR).
+    fn rr(pools: &[NftKey], orders: &[NftKey], cursor: usize) -> (Vec<usize>, Vec<NftKey>) {
+        settlement_plan(pools, orders, cursor, Strategy::RoundRobin, &HashMap::new())
+    }
+
     #[test]
     fn plan_picks_only_pools_with_orders() {
         let pools = [nft(1), nft(2), nft(3)];
         // orders for pools 1 and 3 only.
         let orders = [nft(3), nft(1)];
-        let (attempt, orphans) = settlement_plan(&pools, &orders, 0);
+        let (attempt, orphans) = rr(&pools, &orders, 0);
         // sorted by nft -> pool index 0 (nft1), 2 (nft3).
         assert_eq!(attempt, vec![0, 2]);
         assert!(orphans.is_empty());
@@ -719,11 +805,39 @@ mod tests {
     fn plan_rotates_by_cursor_for_fairness() {
         let pools = [nft(1), nft(2), nft(3)];
         let orders = [nft(1), nft(2), nft(3)];
-        assert_eq!(settlement_plan(&pools, &orders, 0).0, vec![0, 1, 2]);
-        assert_eq!(settlement_plan(&pools, &orders, 1).0, vec![1, 2, 0]);
-        assert_eq!(settlement_plan(&pools, &orders, 2).0, vec![2, 0, 1]);
+        assert_eq!(rr(&pools, &orders, 0).0, vec![0, 1, 2]);
+        assert_eq!(rr(&pools, &orders, 1).0, vec![1, 2, 0]);
+        assert_eq!(rr(&pools, &orders, 2).0, vec![2, 0, 1]);
         // cursor wraps past the candidate count.
-        assert_eq!(settlement_plan(&pools, &orders, 3).0, vec![0, 1, 2]);
+        assert_eq!(rr(&pools, &orders, 3).0, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn plan_profit_greedy_orders_by_tips() {
+        let pools = [nft(1), nft(2), nft(3)];
+        let orders = [nft(1), nft(2), nft(3)];
+        // pool 2 richest, then pool 3, then pool 1 — regardless of cursor.
+        let tips: HashMap<NftKey, i128> =
+            [(nft(1), 1_000), (nft(2), 9_000), (nft(3), 5_000)].into();
+        let (attempt, _) = settlement_plan(&pools, &orders, 0, Strategy::ProfitGreedy, &tips);
+        assert_eq!(attempt, vec![1, 2, 0]); // indices of pools 2, 3, 1
+                                            // equal tips fall back to a deterministic NFT order (no herd nondeterminism).
+        let flat: HashMap<NftKey, i128> = [(nft(1), 7), (nft(2), 7), (nft(3), 7)].into();
+        let (a2, _) = settlement_plan(&pools, &orders, 2, Strategy::ProfitGreedy, &flat);
+        assert_eq!(a2, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn plan_strategy_parse_accepts_aliases_and_falls_back() {
+        assert_eq!(Strategy::parse("round-robin"), Some(Strategy::RoundRobin));
+        assert_eq!(Strategy::parse("RR"), Some(Strategy::RoundRobin));
+        assert_eq!(
+            Strategy::parse("profit_greedy"),
+            Some(Strategy::ProfitGreedy)
+        );
+        assert_eq!(Strategy::parse("greedy"), Some(Strategy::ProfitGreedy));
+        assert_eq!(Strategy::parse("nonsense"), None);
+        assert_eq!(Strategy::default(), Strategy::RoundRobin);
     }
 
     #[test]
@@ -731,7 +845,7 @@ mod tests {
         let pools = [nft(1)];
         // orders for the known pool (1) and two unknown pools (7, 8).
         let orders = [nft(7), nft(1), nft(8), nft(7)];
-        let (attempt, orphans) = settlement_plan(&pools, &orders, 0);
+        let (attempt, orphans) = rr(&pools, &orders, 0);
         assert_eq!(attempt, vec![0]); // only the known pool is attempted
         assert_eq!(orphans, vec![nft(7), nft(8)]); // deduped + sorted, never settled
     }
@@ -740,7 +854,7 @@ mod tests {
     fn plan_empty_when_no_orders_match_any_pool() {
         let pools = [nft(1), nft(2)];
         let orders = [nft(9)];
-        let (attempt, orphans) = settlement_plan(&pools, &orders, 5);
+        let (attempt, orphans) = rr(&pools, &orders, 5);
         assert!(attempt.is_empty());
         assert_eq!(orphans, vec![nft(9)]);
     }

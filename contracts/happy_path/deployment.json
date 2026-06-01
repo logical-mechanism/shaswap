@@ -26,5 +26,6 @@
     "index": 1
   },
   "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey",
-  "max_orders_per_tx": 20
+  "max_orders_per_tx": 20,
+  "strategy": "round-robin"
 }
