@@ -122,6 +122,18 @@ High-signal pointers only:
   (one-level remainder, solver-supplied fills, limit-price-preserving remainder,
   pre-funded min-ADA, remainder outputs enumerated alongside the NFT pool) — ready to
   implement next.
+- **2026-05-31** — **Property/fuzz tests (aiken/fuzz).** Added 6 property tests (no
+  design change): `clearing_test` — `prop_token_seller`/`prop_ada_seller` build a valid
+  single-order settlement from fuzzed (amount, fill, price_num/den, tip) and assert
+  `clearing.run` accepts it (shakes `received`/tip-split rounding + full-vs-partial both
+  directions); `prop_token_seller_short_owner` (fail) — shorting the owner by 1 lovelace
+  is rejected for every sample (owner pin is exact). `lp_test` — `prop_first_deposit_sqrt`
+  (on-chain `is_sqrt` == `math.sqrt` across random reserves), `prop_deposit_proportional`
+  (exact-proportional deposit always accepted), `prop_deposit_overmint` (fail, +1 share
+  always rejected). **72 tests green.** Both `fail` props mutation-verified (flip to a
+  valid build → they correctly fail). Caveat unchanged: typed-`Transaction` fuzzing does
+  NOT exercise `Data` decoding / real min-ADA / ledger conservation — emulator still
+  required (the solver-takes-only-tips property can only be machine-checked there).
 - **2026-05-31** — **Static trading fee → Blueprint Rev 11 (Option A, residual-only).**
   User chose Option A. The pool `k`-check (`spend.pool_settle`) now enforces the
   Uniswap-v2 fee on the **net** flow into the pool: `eff_in = res_in_after − φ·Δin`,

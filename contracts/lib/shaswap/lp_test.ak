@@ -3,6 +3,8 @@
 //// rejection of over-mint / over-withdraw / missing-lock / bad-sqrt / NFT-drop /
 //// stray-mint.
 
+use aiken/fuzz
+use aiken/math
 use cardano/address.{Address, Inline, Script}
 use cardano/assets.{Value}
 use cardano/transaction.{
@@ -318,4 +320,64 @@ test close_no_nft_burn() fail {
     mint: close_mint(0, -total_lp),
   }
   spend.pool_close(tx, pool_ref(), pool_datum())
+}
+
+// ---- property / fuzz tests (aiken/fuzz) -----------------------------------
+// Pair convention here: asset_a = tok, asset_b = ada, so pool_in/pool_out's
+// (ada_res, tok_amt) map to (res_b, res_a). All LP arithmetic is value-derived.
+
+// PROPERTY: a first deposit's minted shares == floor(sqrt(res_a · res_b)) across
+// random reserves — the on-chain `is_sqrt` agrees with `math.sqrt` everywhere.
+// (reserves ≥ 2000 ⇒ product ≥ 4e6 ⇒ sqrt ≥ 2000 > min_liq, so the lock holds.)
+test prop_first_deposit_sqrt(
+  p via fuzz.both(
+    fuzz.int_between(2000, 1_000_000_000),
+    fuzz.int_between(2000, 1_000_000_000),
+  ),
+) {
+  let (ada_res, tok_amt) = p
+  expect Some(c) = math.sqrt(ada_res * tok_amt)
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(0, 0, total_lp)],
+    outputs: [pool_out(ada_res, tok_amt, total_lp - c, True), burn_out(min_liq)],
+  }
+  spend.lp_action(tx, pool_ref(), pool_datum())
+}
+
+fn deposit_params() -> Fuzzer<(Int, Int, Int)> {
+  fuzz.map3(
+    fuzz.int_between(1, 1_000_000),
+    fuzz.int_between(1, 1_000_000),
+    fuzz.int_between(2, 50),
+    fn(a, b, c) { (a, b, c) },
+  )
+}
+
+// PROPERTY: an exactly-proportional deposit (scale reserves AND circulating by m)
+// is always accepted — per-share backing is preserved across random reserves/scale.
+test prop_deposit_proportional(p via deposit_params()) {
+  let (ada_res, tok_amt, m) = p
+  let circ_in = 1_000_000
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(ada_res, tok_amt, total_lp - circ_in)],
+    outputs: [pool_out(ada_res * m, tok_amt * m, total_lp - circ_in * m, True)],
+  }
+  spend.lp_action(tx, pool_ref(), pool_datum())
+}
+
+// PROPERTY (tightness): minting one share beyond proportional is ALWAYS rejected
+// (dilutes existing LPs) — for every reserve/scale.
+test prop_deposit_overmint(p via deposit_params()) fail {
+  let (ada_res, tok_amt, m) = p
+  let circ_in = 1_000_000
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(ada_res, tok_amt, total_lp - circ_in)],
+    outputs: [
+      pool_out(ada_res * m, tok_amt * m, total_lp - ( circ_in * m + 1 ), True),
+    ],
+  }
+  spend.lp_action(tx, pool_ref(), pool_datum())
 }

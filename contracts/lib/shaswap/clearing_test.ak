@@ -4,6 +4,7 @@
 //// (floor breach, mis-binding, value theft, fake pool, untagged smuggle, k drop).
 
 use aiken/collection/list
+use aiken/fuzz
 use aiken/interval.{Interval}
 use cardano/address.{Address, Credential, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
@@ -1067,5 +1068,241 @@ test pool_fee_k_drop() fail {
     pool_ref(),
     tt_pool_datum(),
     s(),
+  )
+}
+
+// ---- property / fuzz tests (aiken/fuzz) -----------------------------------
+// Build a *valid* single-order settlement from fuzzed (amount, fill, price, tip)
+// using the SAME arithmetic the validator uses, and assert `clearing.run` accepts
+// it across the whole input space — shaking out rounding edges in `received`, the
+// proportional-tip split, and full-vs-partial branches. `owner_delta` lets a
+// negative test short the owner output by 1 (every sample must then be rejected).
+// Pair convention: asset_a = tok, asset_b = ada; limit = 0 (market) decouples the
+// floor so the fuzz targets value/rounding, not the (already unit-tested) floor.
+
+fn params() -> Fuzzer<(Int, Int, Int, Int, Int)> {
+  fuzz.map5(
+    fuzz.int_between(1, 1_000_000),
+    fuzz.int_between(1, 1_000_000),
+    fuzz.int_between(1, 1000),
+    fuzz.int_between(1, 1000),
+    fuzz.int_between(1, 10_000_000),
+    fn(a, b, c, d, e) { (a, b, c, d, e) },
+  )
+}
+
+// token-seller (sells asset_a = tok, buys asset_b = ada)
+fn ts_settlement(
+  sell_amount: Int,
+  f: Int,
+  pn: Int,
+  pd: Int,
+  tip: Int,
+  owner_delta: Int,
+) -> Transaction {
+  let received = f * pn / pd
+  let is_partial = f < sell_amount
+  let tip_taken = tip * f / sell_amount
+  let tip_rem = tip - tip_taken
+  let unsold = sell_amount - f
+  let m = order_min_ada
+  let order_in = Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: assets.from_lovelace(tip + 2 * m)
+        |> assets.add(tok.policy, tok.name, sell_amount),
+      datum: InlineDatum(
+        OrderDatum {
+          owner: VerificationKey(owner_vkh),
+          sell_a: True,
+          sell_amount,
+          limit: 0,
+          tip,
+          partial: True,
+          deadline: None,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+  let owner_ada = if is_partial {
+    m + received
+  } else {
+    2 * m + received
+  }
+  let owner_out = Output {
+    address: plain(VerificationKey(owner_vkh)),
+    value: assets.from_lovelace(owner_ada + owner_delta),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let pool_out = pool_output(pool_ada_in - received, pool_tok_in + f)
+  let outs = if is_partial {
+    [
+      owner_out,
+      pool_out,
+      Output {
+        address: tagged(Script(o_hash)),
+        value: assets.from_lovelace(m + tip_rem)
+          |> assets.add(tok.policy, tok.name, unsold),
+        datum: InlineDatum(
+          OrderDatum {
+            owner: VerificationKey(owner_vkh),
+            sell_a: True,
+            sell_amount: unsold,
+            limit: 0,
+            tip: tip_rem,
+            partial: False,
+            deadline: None,
+          },
+        ),
+        reference_script: None,
+      },
+    ]
+  } else {
+    [owner_out, pool_out]
+  }
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [order_in, pool_input(True)],
+    outputs: outs,
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+// ADA-seller (sells asset_b = ada, buys asset_a = tok)
+fn as_settlement(
+  sell_amount: Int,
+  f: Int,
+  pn: Int,
+  pd: Int,
+  tip: Int,
+  owner_delta: Int,
+) -> Transaction {
+  let received = f * pd / pn
+  let is_partial = f < sell_amount
+  let tip_taken = tip * f / sell_amount
+  let tip_rem = tip - tip_taken
+  let unsold = sell_amount - f
+  let m = order_min_ada
+  let order_in = Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: assets.from_lovelace(sell_amount + tip + 2 * m),
+      datum: InlineDatum(
+        OrderDatum {
+          owner: VerificationKey(owner_vkh),
+          sell_a: False,
+          sell_amount,
+          limit: 0,
+          tip,
+          partial: True,
+          deadline: None,
+        },
+      ),
+      reference_script: None,
+    },
+  }
+  let owner_ada = if is_partial {
+    m
+  } else {
+    2 * m
+  }
+  let owner_out = Output {
+    address: plain(VerificationKey(owner_vkh)),
+    value: assets.from_lovelace(owner_ada + owner_delta)
+      |> assets.add(tok.policy, tok.name, received),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+  let pool_out = pool_output(pool_ada_in + f, pool_tok_in - received)
+  let outs = if is_partial {
+    [
+      owner_out,
+      pool_out,
+      Output {
+        address: tagged(Script(o_hash)),
+        value: assets.from_lovelace(m + tip_rem + unsold),
+        datum: InlineDatum(
+          OrderDatum {
+            owner: VerificationKey(owner_vkh),
+            sell_a: False,
+            sell_amount: unsold,
+            limit: 0,
+            tip: tip_rem,
+            partial: False,
+            deadline: None,
+          },
+        ),
+        reference_script: None,
+      },
+    ]
+  } else {
+    [owner_out, pool_out]
+  }
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [order_in, pool_input(True)],
+    outputs: outs,
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+fn fuzz_redeemer(pn: Int, pd: Int, f: Int) -> SettlementRedeemer {
+  SettlementRedeemer {
+    price_num: pn,
+    price_den: pd,
+    asset_a: tok,
+    asset_b: ada,
+    pool_nft: nft,
+    fills: [f],
+  }
+}
+
+// PROPERTY: any valid token-seller settlement (random amount/price/fill/tip) clears.
+test prop_token_seller(p via params()) {
+  let (sell_amount, fill_raw, pn, pd, tip) = p
+  let f = if fill_raw > sell_amount {
+    sell_amount
+  } else {
+    fill_raw
+  }
+  clearing.run(
+    s(),
+    fuzz_redeemer(pn, pd, f),
+    ts_settlement(sell_amount, f, pn, pd, tip, 0),
+  )
+}
+
+// PROPERTY: any valid ADA-seller settlement clears.
+test prop_ada_seller(p via params()) {
+  let (sell_amount, fill_raw, pn, pd, tip) = p
+  let f = if fill_raw > sell_amount {
+    sell_amount
+  } else {
+    fill_raw
+  }
+  clearing.run(
+    s(),
+    fuzz_redeemer(pn, pd, f),
+    as_settlement(sell_amount, f, pn, pd, tip, 0),
+  )
+}
+
+// PROPERTY (tightness): shorting the owner output by 1 lovelace is ALWAYS rejected,
+// for every amount/price/fill/tip — the owner pin is exact across the whole space.
+test prop_token_seller_short_owner(p via params()) fail {
+  let (sell_amount, fill_raw, pn, pd, tip) = p
+  let f = if fill_raw > sell_amount {
+    sell_amount
+  } else {
+    fill_raw
+  }
+  clearing.run(
+    s(),
+    fuzz_redeemer(pn, pd, f),
+    ts_settlement(sell_amount, f, pn, pd, tip, -1),
   )
 }
