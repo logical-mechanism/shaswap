@@ -8,7 +8,7 @@
 use cardano/address.{Credential}
 use cardano/transaction.{OutputReference, Transaction}
 use shaswap/spend
-use shaswap/types.{LpAction, PoolDatum, PoolRedeemer, PoolSettle}
+use shaswap/types.{ClosePool, LpAction, PoolDatum, PoolRedeemer, PoolSettle}
 use shaswap/utils
 
 validator pool(settlement_cred: Credential) {
@@ -28,6 +28,8 @@ validator pool(settlement_cred: Credential) {
           !utils.withdrawal_present(self, settlement_cred),
           spend.lp_action(self, utxo, d),
         }
+      // Tear down an unseeded pool (burn NFT + full LP supply).
+      ClosePool -> spend.pool_close(self, utxo, d)
     }
   }
 

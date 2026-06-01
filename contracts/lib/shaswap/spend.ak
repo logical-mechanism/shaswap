@@ -7,7 +7,7 @@ use aiken/math
 use cardano/address.{Credential, Script, VerificationKey}
 use cardano/assets
 use cardano/transaction.{Output, OutputReference, Transaction}
-use shaswap/constants.{lp_name, min_liq, pool_min_ada, total_lp}
+use shaswap/constants.{lp_name, min_liq, nft_name, pool_min_ada, total_lp}
 use shaswap/types.{AssetId, PoolDatum}
 use shaswap/utils
 
@@ -56,6 +56,22 @@ pub fn pool_settle(
     d.token,
   )
   k_out >= k_in
+}
+
+/// Pool `ClosePool`: tear down a created-but-never-seeded pool. Only valid when
+/// the pool still holds the ENTIRE LP supply (`held == total_lp` ⟺ no LP is
+/// circulating, so nobody can be robbed), and the tx burns the NFT + full LP
+/// supply. After a first deposit `held < total_lp` and the locked MIN_LIQ can
+/// never be reassembled, so this can never close a live pool.
+pub fn pool_close(tx: Transaction, utxo: OutputReference, d: PoolDatum) -> Bool {
+  expect Some(own) = list.find(tx.inputs, fn(i) { i.output_reference == utxo })
+  let p = d.nft.policy
+  let lp = AssetId { policy: p, name: lp_name }
+  expect utils.asset_qty(own.output.value, lp) == total_lp
+  and {
+    assets.quantity_of(tx.mint, p, nft_name) == -1,
+    assets.quantity_of(tx.mint, p, lp_name) == -total_lp,
+  }
 }
 
 /// Sum of LP tokens at outputs locked by the given (payment) credential.

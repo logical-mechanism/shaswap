@@ -8,7 +8,7 @@ use cardano/assets.{Value}
 use cardano/transaction.{
   InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
-use shaswap/constants.{lp_name, min_liq, pool_min_ada, total_lp}
+use shaswap/constants.{lp_name, min_liq, nft_name, pool_min_ada, total_lp}
 use shaswap/spend
 use shaswap/types.{AssetId, PoolDatum}
 
@@ -223,4 +223,41 @@ test stray_mint() fail {
     mint: assets.from_asset(nft.policy, lp_name, 5),
   }
   spend.lp_action(tx, pool_ref(), pool_datum())
+}
+
+// ---- close (unseeded pool teardown) ---------------------------------------
+
+fn close_mint(nft_qty: Int, lp_qty: Int) -> Value {
+  assets.from_asset(nft_policy, nft_name, nft_qty)
+    |> assets.add(nft_policy, lp_name, lp_qty)
+}
+
+// unseeded pool (holds all LP): burn NFT + full LP supply.
+test close_ok() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(0, 0, total_lp)],
+    mint: close_mint(-1, -total_lp),
+  }
+  spend.pool_close(tx, pool_ref(), pool_datum())
+}
+
+// pool has outstanding LP (held < total_lp): cannot be closed (would rob LPs).
+test close_live_pool() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(100_000_000, 200_000_000, total_lp - 1_000_000)],
+    mint: close_mint(-1, -total_lp),
+  }
+  spend.pool_close(tx, pool_ref(), pool_datum())
+}
+
+// NFT not burned: pool not truly torn down, rejected.
+test close_no_nft_burn() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in(0, 0, total_lp)],
+    mint: close_mint(0, -total_lp),
+  }
+  spend.pool_close(tx, pool_ref(), pool_datum())
 }

@@ -50,8 +50,12 @@ pub type PoolRedeemer {
   /// Spent inside a settlement: pool owns its `k` non-decreasing check (§5.4
   /// split) and defers the rest to `S`.
   PoolSettle
-  /// LP deposit/withdraw (share-token based). Stubbed this milestone.
+  /// LP deposit/withdraw (share-token based, §6 LP model).
   LpAction
+  /// Tear down a created-but-never-seeded pool (held == total_lp ⟺ circ == 0):
+  /// burn the NFT + full LP supply. Post-seed pools are immortal (the locked
+  /// MIN_LIQ can never be reassembled), so reserves can't be stolen this way.
+  ClosePool
 }
 
 /// Datum on each owner-output: the injective binding key (§5.2.6) — the unique
