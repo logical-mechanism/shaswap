@@ -1,5 +1,6 @@
 //// Tests for pool create/close mint logic (`shaswap/mint`).
 
+use aiken/fuzz
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
 use cardano/transaction.{
@@ -178,4 +179,24 @@ test close_ok() {
 test close_positive() fail {
   let tx = Transaction { ..transaction.placeholder, mint: mint_val(-1, 7) }
   mint.close(policy, tx)
+}
+
+// ---- benchmark: pool creation (I-01) --------------------------------------
+
+fn create_tx(_n: Int) -> Fuzzer<Transaction> {
+  let pool_v = assets.from_lovelace(2_000_000)
+    |> assets.add(policy, nft_name, 1)
+    |> assets.add(policy, lp_name, total_lp)
+  fuzz.constant(
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [seed_input()],
+      outputs: [pool_seed_output(pool_v)],
+      mint: mint_val(1, total_lp),
+    },
+  )
+}
+
+bench pool_mint__create(tx via create_tx) {
+  mint.create(seed(), policy, tx)
 }

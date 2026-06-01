@@ -114,7 +114,17 @@
 > at a zero price for nothing. (I-03) `pool_mint` `Create` now asserts the pool datum's
 > `creator` is a **VK credential** (it authorizes `ClosePool` by signature), failing fast
 > at the only validating gate instead of letting a `Script` creator silently brick the
-> pre-seed teardown. No datum-shape change; +4 negative tests (87 green).**)
+> pre-seed teardown. No datum-shape change; +4 negative tests (87 green).**
+> **Rev 17: committed ex-unit benches (§13.1) — closes audit I-01; O-01 assessed/deferred.**
+> Adds `bench` coverage for the hot paths (`settlement__run` scaling 1→N, plus
+> `pool_settle`, `order_settle`, `lp_action` deposit + worst-case first-deposit `is_sqrt`,
+> and `pool_mint create`). Measured **after** the Rev 14–16 hardening, `settlement__run`
+> is ~**311k mem** + ~**113M cpu per order** → a **memory-bound ceiling of ≈44 orders**
+> (CPU ceiling ≈87), confirming the §13.1/§5.3 ~40–50 claim still holds with the added
+> identity-binding/perimeter checks. **O-01 (fuse the input/output classification passes)
+> is deferred:** it targets list traversals (CPU), where there is ~2× headroom, and would
+> not lift the memory-bound ceiling — so the hot-path refactor risk is not justified now.
+> Test-only; benches recorded as the baseline for any future optimization (91 green).**)
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50

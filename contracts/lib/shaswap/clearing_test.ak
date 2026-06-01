@@ -1653,3 +1653,38 @@ test prop_reject_pool_ref_script(h via fuzz.bytearray_fixed(28)) fail {
   }
   clearing.run(s(), redeemer([sell]), tx)
 }
+
+// ---- benchmarks: settlement hot path (I-01) --------------------------------
+// Baseline ex-unit measurements for the once-per-tx settlement anchor, the cost
+// that bounds the batch-size ceiling (BLUEPRINT §13.1, ~40-50 orders). The tx is
+// built inside the Sampler (generation phase, not measured), so the body measures
+// only `clearing.run`. Run: `aiken bench` (raise the ceiling with --max-size 50).
+
+// Sampler: an N-order happy settlement (N = bench size, clamped to >= 1).
+fn settlement_of_size(n0: Int) -> Fuzzer<(SettlementRedeemer, Transaction)> {
+  let n = if n0 < 1 {
+    1
+  } else {
+    n0
+  }
+  fuzz.constant((redeemer(list.repeat(sell, n)), build(n)))
+}
+
+bench settlement__run(p via settlement_of_size) {
+  let (r, tx) = p
+  clearing.run(s(), r, tx)
+}
+
+// Fixed-shape benches (size is irrelevant): the prepared tx is built in the
+// Sampler (generation phase), so the body measures only the lib function.
+fn one_order_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(build(1))
+}
+
+bench pool__pool_settle(tx via one_order_tx) {
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+bench order__order_settle(tx via one_order_tx) {
+  spend.order_settle(tx, order_ref(0), s())
+}
