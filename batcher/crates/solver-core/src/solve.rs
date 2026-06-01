@@ -101,12 +101,18 @@ fn evaluate(
     res_a: i128,
     res_b: i128,
     fee: Fee,
+    max_orders: usize,
 ) -> Option<Candidate> {
     let mut included = Vec::new();
     let mut net_a: i128 = 0;
     let mut net_b: i128 = 0;
     let mut volume_a: i128 = 0;
     for o in orders {
+        // Per-tx cap: a batch holds at most `max_orders`; the rest are drained by
+        // the next chained tx. Stop once the batch is full.
+        if included.len() >= max_orders {
+            break;
+        }
         if !included_at(o, p) {
             continue;
         }
@@ -178,6 +184,18 @@ fn nudge(p: Price, bps: i128) -> Price {
 /// Solve a batch: returns the best floor-only settlement, or `None` if no
 /// non-empty feasible batch exists at any candidate price.
 pub fn solve(orders: &[OrderInput], pool: &PoolInput) -> Option<SolveResult> {
+    solve_capped(orders, pool, usize::MAX)
+}
+
+/// Like [`solve`], but include at most `max_orders` in the settlement (the per-tx
+/// cap). A pool with more settleable orders is drained by chaining several capped
+/// settlements, each re-solved against the previous one's pool output. Still
+/// re-verifies every result against the pin generator + k-check (never invalid).
+pub fn solve_capped(
+    orders: &[OrderInput],
+    pool: &PoolInput,
+    max_orders: usize,
+) -> Option<SolveResult> {
     let d = &pool.datum;
     let fee = Fee::from_datum(d);
     let res_a = curve::reserve_of(&pool.value, &d.asset_a);
@@ -219,7 +237,7 @@ pub fn solve(orders: &[OrderInput], pool: &PoolInput) -> Option<SolveResult> {
         if p.num <= 0 || p.den <= 0 {
             continue;
         }
-        let Some(cand) = evaluate(&orders, p, res_a, res_b, fee) else {
+        let Some(cand) = evaluate(&orders, p, res_a, res_b, fee, max_orders) else {
             continue;
         };
         if !cand.feasible {
@@ -261,4 +279,112 @@ pub fn solve(orders: &[OrderInput], pool: &PoolInput) -> Option<SolveResult> {
         settlement,
         cleared_volume_a: best.volume_a,
     })
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+    use crate::output::Address;
+    use crate::types::{
+        AssetId, Credential, OrderDatum, OutputReference, PoolDatum, NFT_NAME, ORDER_MIN_ADA,
+        POOL_MIN_ADA,
+    };
+    use crate::value::Value;
+
+    fn tok() -> AssetId {
+        AssetId::new(vec![0x33u8; 28], b"T".to_vec())
+    }
+    fn nft() -> AssetId {
+        AssetId::new(vec![0x44u8; 28], NFT_NAME.to_vec())
+    }
+
+    fn pool(res_tok: i128, res_ada: i128) -> PoolInput {
+        PoolInput {
+            output_reference: OutputReference {
+                transaction_id: vec![0xd1u8; 32],
+                output_index: 0,
+            },
+            address: Address {
+                payment: Credential::Script(vec![0x99u8; 28]),
+                stake: Some(Credential::Script(vec![0x55u8; 28])),
+            },
+            value: Value::from_lovelace(res_ada + POOL_MIN_ADA)
+                .add(&tok().policy, &tok().name, res_tok)
+                .add(&nft().policy, &nft().name, 1),
+            datum: PoolDatum {
+                nft: nft(),
+                asset_a: tok(),
+                asset_b: AssetId::ada(),
+                fee_num: 3,
+                fee_den: 1000,
+                creator: Credential::VerificationKey(vec![0xb1u8; 28]),
+            },
+        }
+    }
+
+    // A token-seller selling `sell` token with a loose floor (clears near spot).
+    fn token_seller(i: u8, sell: i128, limit: i128) -> OrderInput {
+        OrderInput {
+            output_reference: OutputReference {
+                transaction_id: vec![i; 32],
+                output_index: 0,
+            },
+            address: Address {
+                payment: Credential::Script(vec![0x0bu8; 28]),
+                stake: Some(Credential::Script(vec![0x55u8; 28])),
+            },
+            value: Value::from_lovelace(ORDER_MIN_ADA + 2_000_000).add(
+                &tok().policy,
+                &tok().name,
+                sell,
+            ),
+            datum: OrderDatum {
+                owner: Credential::VerificationKey(vec![0xb1u8; 28]),
+                pool_nft: nft(),
+                sell_a: true,
+                sell_amount: sell,
+                limit,
+                tip: 2_000_000,
+                partial: false,
+                deadline: None,
+            },
+        }
+    }
+
+    #[test]
+    fn cap_limits_included_orders_and_uncapped_includes_more() {
+        // Deep pool so all five loosely-priced token-sellers clear (no floor bind).
+        let pool = pool(1_000_000_000_000, 1_000_000_000_000);
+        // spot ≈ 1 ADA/token; floor 800k ADA for 1M token is well below spot.
+        let orders: Vec<OrderInput> = (0..5)
+            .map(|i| token_seller(i, 1_000_000, 800_000))
+            .collect();
+
+        let capped = solve_capped(&orders, &pool, 2).expect("a capped settlement");
+        assert_eq!(capped.orders.len(), 2, "cap of 2 must include exactly 2");
+
+        let uncapped = solve(&orders, &pool).expect("an uncapped settlement");
+        assert!(
+            uncapped.orders.len() > capped.orders.len(),
+            "no-cap solve includes more than the capped batch ({} vs {})",
+            uncapped.orders.len(),
+            capped.orders.len()
+        );
+
+        // A cap >= the book settles the whole book in one batch.
+        let big = solve_capped(&orders, &pool, 99).expect("settlement");
+        assert_eq!(big.orders.len(), uncapped.orders.len());
+    }
+
+    #[test]
+    fn cap_of_one_still_produces_a_valid_single_order_batch() {
+        let pool = pool(1_000_000_000_000, 1_000_000_000_000);
+        let orders: Vec<OrderInput> = (0..3)
+            .map(|i| token_seller(i, 1_000_000, 800_000))
+            .collect();
+        let one = solve_capped(&orders, &pool, 1).expect("a single-order settlement");
+        assert_eq!(one.orders.len(), 1);
+        // exactly one owner output + the pool output (re-verified by build_settlement).
+        assert_eq!(one.settlement.owner_outputs.len(), 1);
+    }
 }

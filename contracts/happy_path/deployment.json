@@ -25,5 +25,6 @@
     "tx_id": "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
     "index": 1
   },
-  "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey"
+  "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey",
+  "max_orders_per_tx": 20
 }

@@ -52,6 +52,12 @@ and run — the batcher discovers everything itself:
   collateral is **shared** across the chain (a phase-2-passing tx never consumes it).
   This drains the whole settleable orderbook in one pass instead of one pool per
   block. One-sided and two-sided (netting) batches.
+- **Capped batches per tx.** `max_orders_per_tx` (deployment JSON, default 20;
+  override with `SHASWAP_MAX_ORDERS_PER_TX`) bounds orders per settlement tx. A pool
+  with more settleable orders is drained over **k chained txs**, each re-solved
+  against the previous batch's pool-continuation output. Raising it packs more orders
+  per tx; a value whose batch exceeds the per-tx ex-unit/size budget makes that tx
+  fail and the pool be skipped until orders drop — so 20 is conservative.
 - **Economically rational.** A tx whose tips don't cover its fee (+`FEE_COVER_MARGIN`)
   is skipped; its orders defer to a later, better-amortized batch.
 - **Atomic discovery** — one Kupo snapshot per pass; the order/pool/wallet views

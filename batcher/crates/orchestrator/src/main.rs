@@ -11,24 +11,30 @@
 //! 2. **group** — orders by their target pool (`order.datum.pool_nft`);
 //! 3. **solve** — `solver-core::solve` per pool (uniform price, netting, residual
 //!    through the pool; floor-only v1);
-//! 4. **chain** — assemble a CHAIN of settlement txs, ONE per settleable pool,
-//!    each funded by the previous tx's change output. Each is gated by Ogmios
-//!    `EvaluateTx` (with the previous tx's still-unconfirmed change supplied as
-//!    `additionalUtxo`, since it isn't on-chain yet) and, when `SHASWAP_SUBMIT=1`,
+//! 4. **chain** — assemble a CHAIN of settlement txs, each funded by the previous
+//!    tx's change output. Every settleable pool contributes ≥1 tx, and a pool with
+//!    more than `max_orders_per_tx` settleable orders is itself drained over
+//!    several chained txs (k capped batches, each re-solved against the previous
+//!    batch's pool-continuation output). Each tx is gated by Ogmios `EvaluateTx`
+//!    (with the previous tx's still-unconfirmed change + pool output supplied as
+//!    `additionalUtxo`, since they aren't on-chain yet) and, when `SHASWAP_SUBMIT=1`,
 //!    submitted back-to-back into the mempool (which accepts chained txs).
 //!
-//! A settlement tx settles ONE pool (the `SettlementRedeemer` carries one price +
-//! pool), so the chain is many such txs. The collateral is **shared** across the
-//! chain — a phase-2-passing tx never consumes its collateral, so it stays in the
-//! mempool UTXO set for the next link (verified live; see MEMORY). This drains
-//! every settleable pool in a single pass instead of one pool per block.
+//! A settlement tx settles ONE pool at ONE price (the `SettlementRedeemer` carries
+//! one price + pool), so the chain is many such txs. The collateral is **shared**
+//! across the chain — a phase-2-passing tx never consumes its collateral, so it
+//! stays in the mempool UTXO set for the next link (verified live; see MEMORY).
+//! This drains the whole settleable orderbook in a single pass instead of one pool
+//! per block.
 //!
 //! Modes: one pass by default; `SHASWAP_INTERVAL_SECS=<n>` runs as a daemon that
 //! polls Kupo's checkpoint every `n`s and settles only when a new block is indexed
 //! (block-driven). Just-submitted orders are tracked in-flight so it never
 //! double-spends before they confirm. Economically rational: a tx whose tips don't
-//! cover its fee is skipped (its orders defer to a better-amortized batch).
-//! `RUST_LOG` controls verbosity (default info).
+//! cover its fee is skipped (its orders defer to a better-amortized batch). The
+//! per-tx order cap comes from the deployment JSON (`max_orders_per_tx`, default
+//! 20) and can be overridden with `SHASWAP_MAX_ORDERS_PER_TX`. `RUST_LOG` controls
+//! verbosity (default info).
 //!
 //! Config path: `$SHASWAP_DEPLOYMENT` or argv[1].
 
@@ -92,9 +98,18 @@ fn run() -> Result<(), Err> {
     let raw: Config = serde_json::from_str(&json)?;
     let signing_key_path = raw.signing_key_path.clone();
     let network_id = raw.network_id;
-    let cfg = raw
+    let mut cfg = raw
         .validate()
         .map_err(|e| format!("config validation: {e:?}"))?;
+    // `SHASWAP_MAX_ORDERS_PER_TX` overrides the deployment JSON's cap (handy for
+    // tuning/testing without editing the file). Ignored if 0 / unparseable.
+    if let Some(n) = std::env::var("SHASWAP_MAX_ORDERS_PER_TX")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+    {
+        cfg.max_orders_per_tx = n;
+    }
 
     let backend = KupoOgmios::new(cfg.clone()).map_err(|e| format!("backend: {e:?}"))?;
     let skey = assemble::load_signing_key(&signing_key_path).map_err(|e| format!("skey: {e:?}"))?;
@@ -242,13 +257,15 @@ fn settle_once(
         return Ok(());
     }
 
-    // Build a CHAIN of settlement txs — one per settleable pool — in one pass,
-    // each funded by the previous tx's change output and submitted back-to-back
-    // into the mempool (which accepts chained txs). This drains every settleable
-    // pool as fast as the chain allows instead of one pool per block. The chain's
-    // funding starts at the solver's on-chain funding UTXO; the collateral is
-    // shared across the chain (a phase-2-passing tx never consumes its collateral,
-    // so it stays in the mempool UTXO set for the next tx — see MEMORY).
+    // Build a CHAIN of settlement txs in one pass, each funded by the previous
+    // tx's change output and submitted back-to-back into the mempool (which
+    // accepts chained txs). Every settleable pool contributes ≥1 tx; a pool with
+    // more than `max_orders_per_tx` settleable orders is itself drained over
+    // several chained txs (k capped batches). This drains the whole orderbook in
+    // one pass instead of one pool per block. The chain's funding starts at the
+    // solver's on-chain funding UTXO; the collateral is shared across the chain
+    // (a phase-2-passing tx never consumes its collateral, so it stays in the
+    // mempool UTXO set for the next tx — see MEMORY).
     let (funding0, collateral0) = select_inputs(&wallet)?;
     let mut chain = ChainCtx {
         funding: (funding0.output_reference.clone(), funding0.value.clone()),
@@ -260,7 +277,7 @@ fn settle_once(
     for pi in attempt {
         let pool = &pools[pi];
         let ords = &by_pool[&pool_nfts[pi]];
-        match try_settle_pool(
+        match settle_pool(
             backend,
             cfg,
             skey,
@@ -273,8 +290,7 @@ fn settle_once(
             &mut chain,
             &mut state.in_flight,
         ) {
-            Ok(true) => settled += 1,
-            Ok(false) => continue, // no valid / fee-covering clearing for this pool
+            Ok(n) => settled += n,
             Err(e) => {
                 // A failed tx just doesn't advance the chain; the rolling funding
                 // is unchanged, so the next pool retries from the same UTXO.
@@ -292,7 +308,7 @@ fn settle_once(
     if settled == 0 {
         debug!("no pool produced a settlement this pass");
     } else {
-        info!(settled, "chained settlements this pass");
+        info!(settled, "chained settlement txs this pass");
     }
     Ok(())
 }
@@ -300,8 +316,8 @@ fn settle_once(
 /// Rolling state for a chain of settlement txs built within one pass. `funding`
 /// starts at the solver's on-chain funding UTXO and advances to each tx's change
 /// output; `collateral` is shared across the chain; `resolved` accumulates every
-/// in-flight change output to supply as `additionalUtxo` so each tx's `EvaluateTx`
-/// can resolve its not-yet-confirmed funding ancestor.
+/// in-flight output (change AND pool-continuation) to supply as `additionalUtxo`
+/// so each tx's `EvaluateTx` can resolve its not-yet-confirmed ancestors.
 struct ChainCtx {
     funding: (OutputReference, Value),
     collateral: OutputReference,
@@ -346,13 +362,14 @@ fn settlement_plan(
     (attempt, orphans)
 }
 
-/// Solve + assemble + (submit) one pool's batch as the next link in a tx chain.
-/// On success advances `chain` (this tx's change becomes the next tx's funding and
-/// is recorded as an `additionalUtxo` ancestor). Returns `Ok(true)` if a settlement
-/// was built (and submitted, when enabled), `Ok(false)` if the pool had no valid
-/// (or no fee-covering) clearing.
+/// Drain ONE pool into the tx chain, splitting its orders into capped batches
+/// (`cfg.max_orders_per_tx`): each batch is re-solved against the previous batch's
+/// pool-continuation output, assembled, gated, and (when enabled) submitted, then
+/// the chain advances (its change funds the next tx; its change + pool output are
+/// recorded as `additionalUtxo` ancestors). Returns the number of settlement txs
+/// this pool produced.
 #[allow(clippy::too_many_arguments)]
-fn try_settle_pool(
+fn settle_pool(
     backend: &KupoOgmios,
     cfg: &ValidatedConfig,
     skey: &SecretKey,
@@ -364,94 +381,127 @@ fn try_settle_pool(
     submit: bool,
     chain: &mut ChainCtx,
     in_flight: &mut HashSet<Key>,
-) -> Result<bool, Err> {
+) -> Result<usize, Err> {
     let nft = hex::encode(&pool.datum.nft.policy);
-    let Some(solved) = solver_core::solve::solve(orders, pool) else {
-        debug!(nft, orders = orders.len(), "no valid clearing");
-        return Ok(false);
-    };
-    info!(
-        nft,
-        price = format!("{}/{}", solved.price.num, solved.price.den),
-        included = format!("{}/{}", solved.orders.len(), orders.len()),
-        net_a = solved.settlement.net_a,
-        net_b = solved.settlement.net_b,
-        tip_take = solved.settlement.tip_taken_total,
-        "solved"
-    );
+    // Orders not yet placed in a batch, and the rolling pool state (the on-chain
+    // pool for batch 1, then each batch's pool-continuation output).
+    let mut remaining: Vec<OrderInput> = orders.to_vec();
+    let mut pool_input: PoolInput = pool.clone();
+    let mut batches = 0usize;
 
-    let invalid_after_slot = solved
-        .orders
-        .iter()
-        .filter_map(|o| o.datum.deadline)
-        .min()
-        .map(|d| fees::posix_to_slot(d, SYSTEM_START_MS, SLOT_LENGTH_MS));
-    // Fund this link from the rolling chain funding (the solver's on-chain UTXO
-    // for the first tx, then each previous tx's change output).
-    let funding_pairs: Vec<(_, Value)> = vec![chain.funding.clone()];
-
-    let inp = AssembleInputs {
-        settlement: &solved.settlement,
-        orders: &solved.orders,
-        pool,
-        funding: &funding_pairs,
-        collateral: &chain.collateral,
-        solver_addr_bech32: solver_addr,
-        config: cfg,
-        params,
-        ref_script_total_bytes: ref_bytes,
-        invalid_after_slot,
-    };
-    // Resolve this tx's not-yet-confirmed funding ancestor(s) at the gate.
-    let built = assemble::build_signed(&inp, backend, skey, &chain.resolved)
-        .map_err(|e| format!("assemble: {e:?}"))?;
-
-    // Economically rational: a reference solver shouldn't burn ADA settling a
-    // batch whose tips don't cover its fee. Skip a fee-negative tx (don't advance
-    // the chain) so its orders stay for a later, better-amortized batch.
-    if solved.settlement.tip_taken_total < built.fee as i128 + FEE_COVER_MARGIN as i128 {
+    loop {
+        let Some(solved) =
+            solver_core::solve::solve_capped(&remaining, &pool_input, cfg.max_orders_per_tx)
+        else {
+            if batches == 0 {
+                debug!(nft, orders = remaining.len(), "no valid clearing");
+            }
+            break;
+        };
         info!(
             nft,
+            batch = batches + 1,
+            price = format!("{}/{}", solved.price.num, solved.price.den),
+            included = format!("{}/{}", solved.orders.len(), remaining.len()),
+            net_a = solved.settlement.net_a,
+            net_b = solved.settlement.net_b,
             tip_take = solved.settlement.tip_taken_total,
-            fee = built.fee,
-            "skip: tips do not cover fee (+margin); deferring orders"
+            "solved"
         );
-        return Ok(false);
-    }
-    info!(
-        nft,
-        tx = hex::encode(built.signed.tx_hash.0),
-        fee = built.fee,
-        mem = built.total_ex_units.mem,
-        steps = built.total_ex_units.steps,
-        "built + evaluated OK (gate passed)"
-    );
 
-    if submit {
-        let txid = backend
-            .submit(&built.signed.tx_bytes.0)
-            .map_err(|e| format!("submit: {e:?}"))?;
-        for o in &solved.orders {
-            in_flight.insert(key(&o.output_reference));
+        let invalid_after_slot = solved
+            .orders
+            .iter()
+            .filter_map(|o| o.datum.deadline)
+            .min()
+            .map(|d| fees::posix_to_slot(d, SYSTEM_START_MS, SLOT_LENGTH_MS));
+        // Fund this link from the rolling chain funding; spend the rolling pool.
+        let funding_pairs: Vec<(_, Value)> = vec![chain.funding.clone()];
+        let inp = AssembleInputs {
+            settlement: &solved.settlement,
+            orders: &solved.orders,
+            pool: &pool_input,
+            funding: &funding_pairs,
+            collateral: &chain.collateral,
+            solver_addr_bech32: solver_addr,
+            config: cfg,
+            params,
+            ref_script_total_bytes: ref_bytes,
+            invalid_after_slot,
+        };
+        // Resolve this tx's not-yet-confirmed ancestors (funding + rolled pool).
+        let built = assemble::build_signed(&inp, backend, skey, &chain.resolved)
+            .map_err(|e| format!("assemble: {e:?}"))?;
+
+        // Economically rational: don't burn ADA on a batch whose tips don't cover
+        // its fee. Stop draining this pool here (the remaining orders defer to a
+        // later, better-amortized batch) rather than advancing the chain.
+        if solved.settlement.tip_taken_total < built.fee as i128 + FEE_COVER_MARGIN as i128 {
+            info!(
+                nft,
+                tip_take = solved.settlement.tip_taken_total,
+                fee = built.fee,
+                "skip: tips do not cover fee (+margin); deferring remaining orders"
+            );
+            break;
         }
-        info!(nft, tx = hex::encode(&txid), "SUBMITTED");
-    } else {
         info!(
             nft,
-            bytes = built.signed.tx_bytes.0.len(),
-            "dry run (set SHASWAP_SUBMIT=1 to submit)"
+            batch = batches + 1,
+            tx = hex::encode(built.signed.tx_hash.0),
+            fee = built.fee,
+            mem = built.total_ex_units.mem,
+            steps = built.total_ex_units.steps,
+            "built + evaluated OK (gate passed)"
         );
-    }
 
-    // Advance the chain: this tx's change funds the next link and is supplied as
-    // an `additionalUtxo` ancestor so the next tx's gate can resolve it. Done in
-    // dry-run too, so a full chain is built + gated end-to-end without submitting.
-    chain.funding = (
-        built.change.output_reference.clone(),
-        built.change.value.clone(),
-    );
-    chain.resolved.push(built.change);
-    Ok(true)
+        if submit {
+            let txid = backend
+                .submit(&built.signed.tx_bytes.0)
+                .map_err(|e| format!("submit: {e:?}"))?;
+            for o in &solved.orders {
+                in_flight.insert(key(&o.output_reference));
+            }
+            info!(nft, tx = hex::encode(&txid), "SUBMITTED");
+        } else {
+            info!(
+                nft,
+                bytes = built.signed.tx_bytes.0.len(),
+                "dry run (set SHASWAP_SUBMIT=1 to submit)"
+            );
+        }
+
+        // Advance the chain. The change funds the next tx; the change AND the
+        // pool-continuation output are supplied as `additionalUtxo` ancestors so
+        // the next gate can resolve them. The pool output also becomes the next
+        // batch's pool input (same pool, re-solved against its new reserves). Done
+        // in dry-run too, so a full chain is built + gated without submitting.
+        chain.funding = (
+            built.change.output_reference.clone(),
+            built.change.value.clone(),
+        );
+        pool_input = PoolInput {
+            output_reference: built.pool_out.output_reference.clone(),
+            address: pool_input.address.clone(),
+            value: solved.settlement.pool_output.value.clone(),
+            datum: pool_input.datum.clone(),
+        };
+        chain.resolved.push(built.change);
+        chain.resolved.push(built.pool_out);
+        batches += 1;
+
+        // Drop the orders just settled; stop when the pool is drained.
+        let done: HashSet<Key> = solved
+            .orders
+            .iter()
+            .map(|o| key(&o.output_reference))
+            .collect();
+        remaining.retain(|o| !done.contains(&key(&o.output_reference)));
+        if remaining.is_empty() {
+            break;
+        }
+    }
+    Ok(batches)
 }
 
 /// Pick the solver's funding + collateral UTXOs. Collateral must be pure-ADA (no

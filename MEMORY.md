@@ -66,6 +66,30 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **Within-pool batch splitting (configurable cap) — a single hot pool
+  drains across k chained txs.** Completed the chaining follow-up. New deployment-JSON
+  field **`max_orders_per_tx`** (serde default **20**, clamped ≥1; env override
+  `SHASWAP_MAX_ORDERS_PER_TX` for tuning/testing) caps orders per settlement tx. A pool
+  with more settleable orders than the cap is now drained over **k chained txs**, each a
+  capped batch **re-solved against the previous batch's pool-continuation output** (the
+  pool state rolls within the pool, not just across pools). Mechanics: `solver-core` gained
+  `solve_capped(orders, pool, max_orders)` (`solve` = uncapped convenience over it; the cap
+  just stops including past `max_orders`, still re-verified by the pin generator + k-check);
+  `assemble::build_signed` now also returns the **pool-continuation output's `ResolvedUtxo`**
+  (with its inline `PoolDatum`), so the next batch spends it as its pool input AND resolves
+  it at the gate via `additionalUtxo`; the orchestrator's `settle_pool` loops capped batches,
+  threading both the change and the pool output into `ChainCtx.resolved`. Each batch settles
+  ONE pool at ONE price (different batches of the same pool may clear at different prices —
+  fine, they're separate settlements; everyone still ≥ floor). **Proven live:** posted 3
+  same-pool orders, ran with cap=2 → pool `1c3be7b9` drained in **2 chained txs in one pass**
+  — batch1 `45e59ea9` (2 orders, −28M ADA/+100M TEST) → batch2 `4721b4a0` (1 order, −14M
+  ADA/+50M TEST) spending batch1's pool output; on-chain the pool moved by the **sum**
+  (−42M ADA/+150M TEST) and only the final pool UTXO remains (intermediate consumed). The
+  floor-too-high 45M order was correctly never included. Caveat (documented in the field
+  doc): too high a cap can make a batch exceed the per-tx ex-unit/size budget → that tx fails
+  and the pool is skipped until orders drop, so 20 is conservative. **78 tests** (+3: cap
+  limits/uncapped-includes-more, cap-of-one valid, config default/override/clamp), clippy -D
+  + fmt clean.
 - **2026-06-01** — **🎉 TRANSACTION CHAINING LIVE — batcher drains ALL settleable pools
   in one pass (was one-pool-per-block).** The reference solver now builds a **chain** of
   settlement txs per pass — one per settleable pool — each funded by the previous tx's
@@ -103,9 +127,9 @@ High-signal pointers only:
     rejects" property. Under load many small tips amortize one fee.
   **75 tests** (+4: `ResolvedUtxo`/`Value`→Ogmios-JSON serializers vs the captured shape),
   clippy -D + fmt clean. The one-pool fallback path is retained (a failed/fee-negative link
-  just doesn't advance the chain; the next pool retries from the same funding). Remaining
-  follow-up: within-pool multi-tx split when a single pool has >~40 orders (the per-tx
-  ex-unit/size budget check already errors rather than mis-building); surplus-max solving (§5.2.7).
+  just doesn't advance the chain; the next pool retries from the same funding).
+  **Follow-up done same day** (see the entry above): configurable `max_orders_per_tx` cap +
+  within-pool batch splitting. Remaining: surplus-max solving (§5.2.7).
 - **2026-06-01** — **Fee handling verified with a separate USER key (not batcher-vs-itself).**
   Added a distinct trader wallet (`testnets/keys/user.skey`, OUTSIDE the repo; guarded
   exports in `env.sh`; scripts `happy_path/u1-setup-user.sh` gen+fund, `u2-post-user-order.sh`

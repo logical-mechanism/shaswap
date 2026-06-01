@@ -71,6 +71,21 @@ pub struct Config {
 
     /// Path to the solver wallet signing key.
     pub signing_key_path: String,
+
+    /// Max orders settled per settlement tx. A pool with more settleable orders is
+    /// drained across multiple **chained** txs (k batches of ≤ this many), so the
+    /// whole orderbook clears in one pass. Conservative by default; raising it packs
+    /// more orders per tx (fewer txs, less fee overhead) — but a value whose batch
+    /// exceeds the per-tx ex-unit/size budget makes that tx fail and the pool be
+    /// skipped until enough orders drop. Optional in the deployment JSON (default 20).
+    #[serde(default = "default_max_orders_per_tx")]
+    pub max_orders_per_tx: usize,
+}
+
+/// Conservative default for [`Config::max_orders_per_tx`] — well inside the v1
+/// ~40-order per-tx ceiling, leaving head-room for ex-unit/size variance.
+fn default_max_orders_per_tx() -> usize {
+    20
 }
 
 fn hex_bytes(s: &str, field: &'static str) -> Result<Vec<u8>, ConfigError> {
@@ -136,6 +151,8 @@ impl Config {
             settlement_ref: ref_input(&self.settlement_ref, "settlement_ref")?,
             order_ref: ref_input(&self.order_ref, "order_ref")?,
             pool_ref: ref_input(&self.pool_ref, "pool_ref")?,
+            // Clamp to ≥ 1 — a 0 cap would never include any order.
+            max_orders_per_tx: self.max_orders_per_tx.max(1),
         })
     }
 
@@ -182,6 +199,8 @@ pub struct ValidatedConfig {
     pub settlement_ref: OutputReference,
     pub order_ref: OutputReference,
     pub pool_ref: OutputReference,
+    /// Max orders per settlement tx (≥ 1; see [`Config::max_orders_per_tx`]).
+    pub max_orders_per_tx: usize,
 }
 
 #[cfg(test)]
@@ -214,6 +233,27 @@ mod tests {
         assert_eq!(v.pool_nft.name, NFT_NAME);
         assert_eq!(v.settlement_cred, Credential::Script(vec![0x55; 28]));
         assert_eq!(v.order_ref.output_index, 1);
+    }
+
+    #[test]
+    fn max_orders_per_tx_defaults_and_overrides() {
+        // Absent in the JSON → the conservative default (20).
+        let v = Config::from_json(&good_json()).expect("valid");
+        assert_eq!(v.max_orders_per_tx, 20);
+
+        // Present → taken verbatim.
+        let with = good_json().replace(
+            "\"order_min_ada\": 2000000,",
+            "\"order_min_ada\": 2000000, \"max_orders_per_tx\": 35,",
+        );
+        assert_eq!(Config::from_json(&with).unwrap().max_orders_per_tx, 35);
+
+        // 0 is clamped to ≥ 1 (a 0 cap would never include any order).
+        let zero = good_json().replace(
+            "\"order_min_ada\": 2000000,",
+            "\"order_min_ada\": 2000000, \"max_orders_per_tx\": 0,",
+        );
+        assert_eq!(Config::from_json(&zero).unwrap().max_orders_per_tx, 1);
     }
 
     #[test]

@@ -310,12 +310,23 @@ pub struct BuiltSettlement {
     /// form. In a chain it becomes the next tx's funding input, and is supplied
     /// as `additionalUtxo` to that tx's `EvaluateTx` (it isn't on-chain yet).
     pub change: ResolvedUtxo,
+    /// The pool-continuation output this tx creates (the pool, at index N). When
+    /// the SAME pool is settled again in this pass (a capped batch was split), the
+    /// next tx spends this as its pool input and resolves it via `additionalUtxo`.
+    /// Carries the pool's inline `PoolDatum` (unchanged by settlement).
+    pub pool_out: ResolvedUtxo,
 }
 
 /// The output index of the solver-change output (always last): owners `[0,N)`,
 /// then the pool, then remainders, then change.
 fn change_output_index(inp: &AssembleInputs) -> u64 {
     (inp.settlement.owner_outputs.len() + 1 + inp.settlement.remainders.len()) as u64
+}
+
+/// The output index of the pool-continuation output: right after the N owner
+/// outputs (owners `[0,N)`, then the pool).
+fn pool_output_index(inp: &AssembleInputs) -> u64 {
+    inp.settlement.owner_outputs.len() as u64
 }
 
 /// Build + evaluate + fee-balance + sign a settlement tx. Does NOT submit (the
@@ -396,10 +407,11 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
     // The change output's resolved form — funding for the next tx in a chain, and
     // the `additionalUtxo` entry that lets its gate resolve this still-unconfirmed
     // output. Its ref is (this tx's id, the change index).
+    let tx_id = signed.tx_hash.0.to_vec();
     let change_value = change_value(inp, fee)?;
     let change = ResolvedUtxo {
         output_reference: OutputReference {
-            transaction_id: signed.tx_hash.0.to_vec(),
+            transaction_id: tx_id.clone(),
             output_index: change_output_index(inp),
         },
         address_bech32: inp.solver_addr_bech32.to_string(),
@@ -407,11 +419,29 @@ pub fn build_signed<B: ChainBackend<Error = ChainError>>(
         datum: None,
     };
 
+    // The pool-continuation output's resolved form — funding/input for the next
+    // capped batch of the SAME pool. Its address is the pool's (tagged `S`); its
+    // inline datum is the (unchanged) `PoolDatum`.
+    let net = txaddr::network(inp.config.network_id);
+    let pool_addr = txaddr::shelley_bech32(net, &inp.settlement.pool_output.address)
+        .map_err(|e| ChainError::Address(format!("{e:?}")))?;
+    let pool_datum = plutus::datum(&inp.settlement.pool_output.datum).map(|d| plutus::to_cbor(&d));
+    let pool_out = ResolvedUtxo {
+        output_reference: OutputReference {
+            transaction_id: tx_id,
+            output_index: pool_output_index(inp),
+        },
+        address_bech32: pool_addr,
+        value: inp.settlement.pool_output.value.clone(),
+        datum: pool_datum,
+    };
+
     Ok(BuiltSettlement {
         signed,
         fee,
         total_ex_units: total,
         change,
+        pool_out,
     })
 }
 
