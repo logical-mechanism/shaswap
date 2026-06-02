@@ -75,6 +75,16 @@ export function SwapCard() {
     );
   }, [pools, fromToken, toToken, quote]);
 
+  // How many pools trade this pair (the quote auto-picks the best-priced one).
+  const poolCount = useMemo(() => {
+    if (!fromToken || !toToken) return 0;
+    return pools.filter(
+      (p) =>
+        (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
+        (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
+    ).length;
+  }, [pools, fromToken, toToken]);
+
   // Per-order floor (limit): the worst output the user will accept = the estimated
   // output minus slippage. The solver may NEVER settle below this (§5.2.5).
   const slippageBps = BigInt(Math.round(slippage * 100));
@@ -218,6 +228,7 @@ export function SwapCard() {
         loading={quoteLoading}
         slippage={slippage}
         floorDisplay={floorDisplay}
+        poolCount={poolCount}
       />
 
       {/* advanced: tip + partial fills + expiry */}
@@ -479,6 +490,7 @@ function RateLine({
   loading,
   slippage,
   floorDisplay,
+  poolCount,
 }: {
   fromToken: TokenInfo | undefined;
   toToken: TokenInfo | undefined;
@@ -487,6 +499,7 @@ function RateLine({
   loading?: boolean;
   slippage: number;
   floorDisplay: string;
+  poolCount: number;
 }) {
   const showRate = price && fromToken && toToken && Number(price) > 0;
   return (
@@ -519,6 +532,12 @@ function RateLine({
           {floorDisplay && toToken ? `${floorDisplay} ${toToken.ticker}` : "—"}
         </span>
       </div>
+      {poolCount > 1 && (
+        <div className="flex items-center justify-between">
+          <span>Pool</span>
+          <span>best of {poolCount} pools</span>
+        </div>
+      )}
     </div>
   );
 }

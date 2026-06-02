@@ -38,6 +38,9 @@ function createDataProvider(): DataProvider {
         );
       }
       return new BlockfrostDataProvider(projectId);
+    // Next provider on the roadmap — our own Dolos node (no mortal dependency).
+    // Implement DolosProvider (implements DataProvider) and add:
+    //   case "dolos": return new DolosProvider(process.env.DOLOS_URL!);
     case "mock":
       return new MockProvider();
     default:

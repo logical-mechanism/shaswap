@@ -61,6 +61,14 @@ function hexToAscii(hex: string): string {
 /** A decoded pool plus the raw datum it came from. */
 type PoolEntry = { pool: Pool; datum: ReturnType<typeof decodePoolDatum> };
 
+/** Resolved asset metadata (cached). `decimals` always present; rest best-effort. */
+type AssetMeta = {
+  decimals: number;
+  ticker?: string;
+  name?: string;
+  icon?: string;
+};
+
 /** How long a decoded-pool snapshot is reused before re-scanning the pool address. */
 const POOLS_TTL_MS = 6_000;
 
@@ -83,52 +91,147 @@ function feeToBps(feeNum: bigint, feeDen: bigint): number {
   return Number((feeNum * 10_000n) / feeDen);
 }
 
-/** Find the pool trading exactly {inUnit, outUnit} in either direction. */
-function findPool(pools: Pool[], inUnit: string, outUnit: string): Pool | undefined {
-  return pools.find(
-    (p) =>
-      (p.tokenA.unit === inUnit && p.tokenB.unit === outUnit) ||
-      (p.tokenA.unit === outUnit && p.tokenB.unit === inUnit),
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Transient HTTP/network errors worth retrying (rate-limit, 5xx, dropped conn). */
+function isRetriable(e: unknown): boolean {
+  const o = e as { status?: number; status_code?: number; code?: unknown };
+  const status = o?.status ?? o?.status_code;
+  if (typeof status === "number" && (status === 429 || status >= 500)) return true;
+  const text = String(
+    (e as { message?: unknown })?.message ?? o?.code ?? e ?? "",
+  ).toLowerCase();
+  return /\b429\b|rate.?limit|too many requests|\b50[0-4]\b|timeout|econnreset|etimedout|fetch failed|network/.test(
+    text,
   );
+}
+
+/**
+ * Retry a read with exponential backoff on transient failures. Read-only and
+ * idempotent (pool/order/metadata/params/evaluate), so retrying is safe — Blockfrost
+ * free tier rate-limits, and a single 429 shouldn't surface as a dead UI.
+ */
+async function retry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (i === attempts - 1 || !isRetriable(e)) throw e;
+      await sleep(250 * 2 ** i); // 250ms, 500ms
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Constant-product quote for one pool — a DISPLAY estimate over real reserves, NOT
+ * the protocol's batch-auction clearing. The user posts an intent; the solver settles
+ * at a uniform price, never below the floor.
+ */
+function quoteAgainstPool(
+  pool: Pool,
+  tokenInUnit: string,
+  tokenOutUnit: string,
+  amountIn: string,
+): Quote {
+  const tokenIn = pool.tokenA.unit === tokenInUnit ? pool.tokenA : pool.tokenB;
+  const tokenOut = pool.tokenA.unit === tokenOutUnit ? pool.tokenA : pool.tokenB;
+  const amtIn = toBig(amountIn);
+  const inIsA = pool.tokenA.unit === tokenInUnit;
+  const reserveIn = toBig(inIsA ? pool.reserveA : pool.reserveB);
+  const reserveOut = toBig(inIsA ? pool.reserveB : pool.reserveA);
+
+  if (amtIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) {
+    return {
+      tokenIn,
+      tokenOut,
+      amountIn,
+      amountOut: "0",
+      price: "0",
+      priceImpact: 0,
+      poolId: pool.id,
+    };
+  }
+
+  const feeBps = BigInt(pool.feeBps);
+  const inAfterFee = (amtIn * (10_000n - feeBps)) / 10_000n;
+  const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
+
+  const SCALE = 1_000_000n;
+  const midScaled = (reserveOut * SCALE) / reserveIn;
+  const execScaled = (amountOut * SCALE) / amtIn;
+  const priceImpact =
+    midScaled > 0n
+      ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
+      : 0;
+
+  return {
+    tokenIn,
+    tokenOut,
+    amountIn,
+    amountOut: amountOut.toString(),
+    price: (Number(midScaled) / Number(SCALE)).toString(),
+    priceImpact,
+    poolId: pool.id,
+  };
 }
 
 export class BlockfrostDataProvider implements DataProvider {
   readonly name = "blockfrost";
   private readonly bf: BlockfrostProvider;
-  private readonly decimalsCache = new Map<string, number>();
+  private readonly metaCache = new Map<string, AssetMeta>();
   private poolsCache?: { at: number; entries: PoolEntry[] };
 
   constructor(projectId: string) {
     this.bf = new BlockfrostProvider(projectId);
   }
 
-  /** Decimals for an asset: ADA = 6; native tokens from registry metadata (cached, fallback 0). */
-  private async decimalsOf(asset: AssetId): Promise<number> {
-    if (isAda(asset)) return 6;
-    const unit = assetUnit(asset);
-    const cached = this.decimalsCache.get(unit);
-    if (cached !== undefined) return cached;
-    let decimals = 0;
+  /** Registry/on-chain metadata for an asset (cached; safe fallbacks; never throws). */
+  private async metaOf(unit: string): Promise<AssetMeta> {
+    const cached = this.metaCache.get(unit);
+    if (cached) return cached;
+    let meta: AssetMeta = { decimals: 0 };
     try {
-      const meta = (await this.bf.fetchAssetMetadata(unit)) as
-        | { decimals?: number }
+      const raw = (await retry(() => this.bf.fetchAssetMetadata(unit))) as
+        | Record<string, unknown>
         | undefined;
-      if (meta && typeof meta.decimals === "number" && meta.decimals >= 0) {
-        decimals = meta.decimals;
+      if (raw) {
+        const decimals =
+          typeof raw.decimals === "number" && raw.decimals >= 0
+            ? raw.decimals
+            : 0;
+        const ticker = typeof raw.ticker === "string" ? raw.ticker : undefined;
+        const name = typeof raw.name === "string" ? raw.name : undefined;
+        const icon =
+          typeof raw.logo === "string" && raw.logo
+            ? `data:image/png;base64,${raw.logo}`
+            : undefined;
+        meta = { decimals, ticker, name, icon };
       }
     } catch {
-      // no registry entry / fetch error → treat as 0 (raw base units)
+      // no registry entry / fetch error → defaults (decimals 0, derive ticker below)
     }
-    this.decimalsCache.set(unit, decimals);
-    return decimals;
+    this.metaCache.set(unit, meta);
+    return meta;
   }
 
-  /** Best-effort `TokenInfo`: ticker from the asset name, decimals from metadata. */
+  /** Best-effort `TokenInfo`: metadata ticker/name/icon/decimals, else derive from the name. */
   private async tokenInfo(asset: AssetId): Promise<TokenInfo> {
     if (isAda(asset)) return ADA_TOKEN;
     const unit = assetUnit(asset);
-    const ticker = hexToAscii(asset.name) || unit.slice(0, 8);
-    return { unit, ticker, name: ticker, decimals: await this.decimalsOf(asset) };
+    const meta = await this.metaOf(unit);
+    const fallbackTicker = hexToAscii(asset.name) || unit.slice(0, 8);
+    return {
+      unit,
+      ticker: meta.ticker || fallbackTicker,
+      name: meta.name || meta.ticker || fallbackTicker,
+      decimals: meta.decimals,
+      icon: meta.icon,
+    };
   }
 
   /** Decode the genuine pools at the pool address (cached briefly; deterministic order). */
@@ -137,7 +240,7 @@ export class BlockfrostDataProvider implements DataProvider {
     if (this.poolsCache && now - this.poolsCache.at < POOLS_TTL_MS) {
       return this.poolsCache.entries;
     }
-    const utxos = await this.bf.fetchAddressUTxOs(POOL_ADDR);
+    const utxos = await retry(() => this.bf.fetchAddressUTxOs(POOL_ADDR));
     const out: PoolEntry[] = [];
     for (const u of utxos) {
       const cbor = u.output.plutusData;
@@ -196,50 +299,22 @@ export class BlockfrostDataProvider implements DataProvider {
     amountIn: string,
   ): Promise<Quote | null> {
     const pools = await this.listPools();
-    const pool = findPool(pools, tokenInUnit, tokenOutUnit);
-    if (!pool) return null;
-    const tokenIn = pool.tokenA.unit === tokenInUnit ? pool.tokenA : pool.tokenB;
-    const tokenOut = pool.tokenA.unit === tokenOutUnit ? pool.tokenA : pool.tokenB;
+    // When several pools trade the pair, quote against EACH and return the best
+    // (highest output) — so the order binds (via quote.poolId) to the pool the user
+    // was actually shown, and a second same-pair pool is reachable when it's better.
+    const candidates = pools.filter(
+      (p) =>
+        (p.tokenA.unit === tokenInUnit && p.tokenB.unit === tokenOutUnit) ||
+        (p.tokenA.unit === tokenOutUnit && p.tokenB.unit === tokenInUnit),
+    );
+    if (candidates.length === 0) return null;
 
-    const amtIn = toBig(amountIn);
-    const inIsA = pool.tokenA.unit === tokenInUnit;
-    const reserveIn = toBig(inIsA ? pool.reserveA : pool.reserveB);
-    const reserveOut = toBig(inIsA ? pool.reserveB : pool.reserveA);
-
-    if (amtIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) {
-      return {
-        tokenIn,
-        tokenOut,
-        amountIn,
-        amountOut: "0",
-        price: "0",
-        priceImpact: 0,
-        poolId: pool.id,
-      };
+    let best: Quote | null = null;
+    for (const pool of candidates) {
+      const q = quoteAgainstPool(pool, tokenInUnit, tokenOutUnit, amountIn);
+      if (!best || toBig(q.amountOut) > toBig(best.amountOut)) best = q;
     }
-
-    // Constant-product with fee — display estimate only, NOT the protocol clearing.
-    const feeBps = BigInt(pool.feeBps);
-    const inAfterFee = (amtIn * (10_000n - feeBps)) / 10_000n;
-    const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
-
-    const SCALE = 1_000_000n;
-    const midScaled = (reserveOut * SCALE) / reserveIn;
-    const execScaled = (amountOut * SCALE) / amtIn;
-    const priceImpact =
-      midScaled > 0n
-        ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
-        : 0;
-
-    return {
-      tokenIn,
-      tokenOut,
-      amountIn,
-      amountOut: amountOut.toString(),
-      price: (Number(midScaled) / Number(SCALE)).toString(),
-      priceImpact,
-      poolId: pool.id,
-    };
+    return best;
   }
 
   async walletPositions(address: string): Promise<WalletPosition[]> {
@@ -247,7 +322,7 @@ export class BlockfrostDataProvider implements DataProvider {
     if (!ownerPkh) return [];
 
     const [orderUtxos, pools] = await Promise.all([
-      this.bf.fetchAddressUTxOs(ORDER_ADDR),
+      retry(() => this.bf.fetchAddressUTxOs(ORDER_ADDR)),
       this.fetchPools(),
     ]);
     const poolByNft = new Map(pools.map((p) => [p.pool.id, p.pool]));
@@ -269,22 +344,22 @@ export class BlockfrostDataProvider implements DataProvider {
   }
 
   protocolParameters(): Promise<Protocol> {
-    return this.bf.fetchProtocolParameters();
+    return retry(() => this.bf.fetchProtocolParameters());
   }
 
   evaluateTx(txCbor: string): Promise<Omit<Action, "data">[]> {
-    return this.bf.evaluateTx(txCbor);
+    return retry(() => this.bf.evaluateTx(txCbor));
   }
 
   async resolveUtxo(txHash: string, index: number): Promise<UTxO | null> {
-    const utxos = await this.bf.fetchUTxOs(txHash, index);
+    const utxos = await retry(() => this.bf.fetchUTxOs(txHash, index));
     const u = utxos[0];
     if (!u) return null;
     // `fetchUTxOs` (txs/{hash}/utxos) returns a tx's outputs even after they are
     // spent, so confirm this output is still UNSPENT at its address before handing
     // it to the reclaim builder — otherwise reclaim builds a doomed tx instead of
     // surfacing the clean "already spent / settled" message (provider contract).
-    const live = await this.bf.fetchAddressUTxOs(u.output.address);
+    const live = await retry(() => this.bf.fetchAddressUTxOs(u.output.address));
     const stillUnspent = live.some(
       (x) => x.input.txHash === txHash && x.input.outputIndex === index,
     );
