@@ -30,3 +30,18 @@ export const APP_CONFIG = {
 export function networkLabel(network: Network = APP_CONFIG.network): string {
   return network.charAt(0).toUpperCase() + network.slice(1);
 }
+
+/** Cardanoscan base URL for the active network (mainnet has no subdomain). */
+function explorerBase(network: Network = APP_CONFIG.network): string {
+  return network === "mainnet"
+    ? "https://cardanoscan.io"
+    : `https://${network}.cardanoscan.io`;
+}
+
+/** Link to a transaction on the active network's block explorer. */
+export function explorerTxUrl(
+  txHash: string,
+  network: Network = APP_CONFIG.network,
+): string {
+  return `${explorerBase(network)}/transaction/${txHash}`;
+}

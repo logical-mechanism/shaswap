@@ -1,4 +1,6 @@
+import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
+import { quoteConstantProduct } from "./quote";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
 
 /**
@@ -63,6 +65,7 @@ const POSITIONS: WalletPosition[] = [
     amountIn: "100000000",
     minOut: "50000000",
     status: "open",
+    partial: false,
   },
   {
     ref: "05d99063…#0",
@@ -71,6 +74,7 @@ const POSITIONS: WalletPosition[] = [
     amountIn: "20000000",
     minOut: "40000000",
     status: "settled",
+    partial: false,
   },
 ];
 
@@ -103,54 +107,11 @@ export class MockProvider implements DataProvider {
     tokenOutUnit: string,
     amountIn: string,
   ): Promise<Quote | null> {
-    const tokenIn = BY_UNIT.get(tokenInUnit);
-    const tokenOut = BY_UNIT.get(tokenOutUnit);
-    if (!tokenIn || !tokenOut) return null;
-
+    if (!BY_UNIT.has(tokenInUnit) || !BY_UNIT.has(tokenOutUnit)) return null;
     const pool = findPool(tokenInUnit, tokenOutUnit);
     if (!pool) return null;
-
-    const amtIn = toBig(amountIn);
-    // Orient reserves to the direction of the swap.
-    const inIsA = pool.tokenA.unit === tokenInUnit;
-    const reserveIn = toBig(inIsA ? pool.reserveA : pool.reserveB);
-    const reserveOut = toBig(inIsA ? pool.reserveB : pool.reserveA);
-
-    if (amtIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) {
-      return {
-        tokenIn,
-        tokenOut,
-        amountIn,
-        amountOut: "0",
-        price: "0",
-        priceImpact: 0,
-        poolId: pool.id,
-      };
-    }
-
-    // Toy constant-product with fee (display only — NOT the protocol clearing).
-    const feeBps = BigInt(pool.feeBps);
-    const inAfterFee = (amtIn * (10_000n - feeBps)) / 10_000n;
-    const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
-
-    // Mid price (out per in) and price impact vs the spot mid.
-    const SCALE = 1_000_000n;
-    const midScaled = (reserveOut * SCALE) / reserveIn;
-    const execScaled = amtIn > 0n ? (amountOut * SCALE) / amtIn : 0n;
-    const priceImpact =
-      midScaled > 0n
-        ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
-        : 0;
-
-    return {
-      tokenIn,
-      tokenOut,
-      amountIn,
-      amountOut: amountOut.toString(),
-      price: (Number(midScaled) / Number(SCALE)).toString(),
-      priceImpact,
-      poolId: pool.id,
-    };
+    // Same shared constant-product display math as the real provider (NOT clearing).
+    return quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
   }
 
   async walletPositions(address: string): Promise<WalletPosition[]> {
@@ -158,12 +119,19 @@ export class MockProvider implements DataProvider {
     void address;
     return POSITIONS;
   }
-}
 
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s.split(".")[0] || "0");
-  } catch {
-    return 0n;
+  // The mock has no chain access, so it cannot supply protocol params or evaluate a
+  // tx. These only matter on the order build/reclaim paths, which require a real
+  // provider; fail loudly rather than hand back fake values.
+  async protocolParameters(): Promise<Protocol> {
+    throw new Error("MockProvider cannot supply protocol parameters");
+  }
+
+  async evaluateTx(): Promise<Omit<Action, "data">[]> {
+    throw new Error("MockProvider cannot evaluate transactions");
+  }
+
+  async resolveUtxo(): Promise<UTxO | null> {
+    throw new Error("MockProvider cannot resolve UTXOs");
   }
 }

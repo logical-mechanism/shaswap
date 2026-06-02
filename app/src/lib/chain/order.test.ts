@@ -1,0 +1,99 @@
+/**
+ * Tests for the order builder: value layout (token-seller vs ADA-seller, the ADA
+ * triple-role), datum correctness, and that malformed intents are rejected. Run with
+ * `npm run test`.
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { buildOrder, type OrderIntent } from "./order.ts";
+import { decodeOrderDatum, toCbor } from "./datums.ts";
+import { ORDER_ADDR, ORDER_MIN_ADA } from "./deployment.ts";
+
+const TEST_UNIT =
+  "8160c878d40c39d7bfeb300560343d646620ab50182981efa8ae779a54455354";
+const POOL_NFT =
+  "1c3be7b9fe09c169ae92722eac4961f1a2d94274a7669190828605d04e4654";
+const PKH = "ab".repeat(28);
+
+// asset_a = TEST, asset_b = ADA (matches the live pool orientation).
+const base: OrderIntent = {
+  ownerPkh: PKH,
+  poolNftUnit: POOL_NFT,
+  assetAUnit: TEST_UNIT,
+  assetBUnit: "lovelace",
+  sellUnit: TEST_UNIT,
+  sellAmount: 100_000_000n,
+  limit: 50_000_000n,
+  tip: 2_000_000n,
+  partial: false,
+  deadline: null,
+};
+
+test("token-seller: value = min+tip lovelace + the sold token; sell_a=true", () => {
+  const built = buildOrder(base);
+  assert.equal(built.address, ORDER_ADDR);
+  assert.deepEqual(built.value, [
+    { unit: "lovelace", quantity: (ORDER_MIN_ADA + 2_000_000n).toString() },
+    { unit: TEST_UNIT, quantity: "100000000" },
+  ]);
+  const d = decodeOrderDatum(toCbor(built.datum));
+  assert.equal(d.sellA, true);
+  assert.equal(d.sellAmount, 100_000_000n);
+  assert.equal(d.limit, 50_000_000n);
+  assert.deepEqual(d.owner, { kind: "key", hash: PKH });
+});
+
+test("partial order pre-funds 2× order_min_ada (remainder funding)", () => {
+  // token-seller, partial
+  const tokenPartial = buildOrder({ ...base, partial: true });
+  assert.deepEqual(tokenPartial.value, [
+    { unit: "lovelace", quantity: (ORDER_MIN_ADA * 2n + 2_000_000n).toString() },
+    { unit: TEST_UNIT, quantity: "100000000" },
+  ]);
+  assert.equal(decodeOrderDatum(toCbor(tokenPartial.datum)).partial, true);
+
+  // ADA-seller, partial: the second min-ADA is what keeps the owner output fundable
+  const adaPartial = buildOrder({
+    ...base,
+    sellUnit: "lovelace",
+    sellAmount: 50_000_000n,
+    limit: 90_000_000n,
+    partial: true,
+  });
+  assert.deepEqual(adaPartial.value, [
+    {
+      unit: "lovelace",
+      quantity: (50_000_000n + ORDER_MIN_ADA * 2n + 2_000_000n).toString(),
+    },
+  ]);
+});
+
+test("ADA-seller: lovelace carries sell + min + tip (triple role); sell_a=false", () => {
+  const built = buildOrder({
+    ...base,
+    sellUnit: "lovelace",
+    sellAmount: 50_000_000n,
+    limit: 90_000_000n,
+  });
+  assert.deepEqual(built.value, [
+    {
+      unit: "lovelace",
+      quantity: (50_000_000n + ORDER_MIN_ADA + 2_000_000n).toString(),
+    },
+  ]);
+  const d = decodeOrderDatum(toCbor(built.datum));
+  assert.equal(d.sellA, false);
+  assert.equal(d.sellAmount, 50_000_000n);
+});
+
+test("malformed intents are rejected (never silently posted)", () => {
+  assert.throws(() => buildOrder({ ...base, sellAmount: 0n }));
+  assert.throws(() => buildOrder({ ...base, limit: 0n }));
+  assert.throws(() => buildOrder({ ...base, tip: -1n }));
+  assert.throws(() => buildOrder({ ...base, ownerPkh: "tooshort" }));
+  // sell asset not part of the pool pair
+  assert.throws(() => buildOrder({ ...base, sellUnit: "deadbeef".repeat(7) }));
+  // degenerate pair
+  assert.throws(() => buildOrder({ ...base, assetBUnit: TEST_UNIT }));
+});

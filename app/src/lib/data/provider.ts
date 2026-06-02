@@ -1,3 +1,4 @@
+import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type {
   Pool,
   Quote,
@@ -49,4 +50,24 @@ export interface DataProvider {
 
   /** A wallet's open orders / positions for a bech32 address. */
   walletPositions(address: string): Promise<WalletPosition[]>;
+
+  /**
+   * Current protocol parameters — needed client-side by `MeshTxBuilder` for fee
+   * calculation. Served via `/api/protocol-params` so the provider key stays on the
+   * server; the browser passes the result to the builder, never touching a provider.
+   */
+  protocolParameters(): Promise<Protocol>;
+
+  /**
+   * Script execution units for a draft tx (the Plutus `Reclaim` spend). Served via
+   * `/api/tx/evaluate`; the client feeds the result to `MeshTxBuilder`'s evaluator.
+   */
+  evaluateTx(txCbor: string): Promise<Omit<Action, "data">[]>;
+
+  /**
+   * Resolve a single UTXO by output reference — used to fetch the on-chain order
+   * UTXO (value + inline datum) the reclaim builder spends. Served via
+   * `/api/tx/utxo`. Returns null if it is already spent / not found.
+   */
+  resolveUtxo(txHash: string, index: number): Promise<UTxO | null>;
 }

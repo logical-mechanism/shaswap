@@ -5,9 +5,9 @@ import { useEffect, useRef, useState } from "react";
 const PRESETS = [0.1, 0.5, 1.0];
 
 /**
- * Slippage settings affordance — VISUAL ONLY. It surfaces the control the real
- * swap flow will need, but in the skeleton it just stores a local number and
- * affects nothing on-chain.
+ * Slippage settings affordance. The value sets the per-order **floor** (limit) on
+ * the swap card: `floor = estimatedOut × (1 − slippage)`, serialized into the
+ * OrderDatum — i.e. it bounds the worst fill the user will accept. NOT cosmetic.
  */
 export function SlippageSettings({
   value,
@@ -59,7 +59,7 @@ export function SlippageSettings({
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-medium">Max slippage</span>
             <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-muted">
-              visual only
+              sets your floor
             </span>
           </div>
           <div className="flex gap-1.5">
