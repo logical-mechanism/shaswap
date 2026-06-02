@@ -28,11 +28,15 @@ function rawText(e: unknown): string {
   return String(e);
 }
 
-/** CIP-30 sign/submit error codes: 1 = Proof/Refused, 2 = UserDeclined. */
+/**
+ * CIP-30 codes differ per call: TxSignError 2 = UserDeclined, but TxSendError 2 =
+ * Failure and code 1 = ProofGeneration/Refused (NOT a cancellation). So only trust the
+ * text for a decline; treat a bare code as a weak signal (code 2 only).
+ */
 function isUserDeclined(e: unknown, text: string): boolean {
+  if (/declin|reject|cancel|denied|user\s*refus/i.test(text)) return true;
   const code = (e as { code?: unknown })?.code;
-  if (code === 2 || code === 1) return true;
-  return /declin|reject|cancel|denied|user\s*refus/i.test(text);
+  return code === 2 && !text; // code 2 with no other context → likely a sign decline
 }
 
 const RULES: { match: RegExp; message: string }[] = [
@@ -51,7 +55,7 @@ const RULES: { match: RegExp; message: string }[] = [
       "Your wallet has no collateral set. Add a collateral UTXO in the wallet and retry.",
   },
   {
-    match: /network|wrong\s*network|magic/i,
+    match: /wrong\s*network|network\s*(mismatch|id)|network\s*magic|networkmagic|different\s*network/i,
     message: "Your wallet is on a different network than the app (preprod).",
   },
   {

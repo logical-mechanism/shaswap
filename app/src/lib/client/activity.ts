@@ -67,17 +67,10 @@ export function recordPost(owner: string, order: RecentOrder): void {
   write(owner, [order, ...list.filter((o) => o.ref !== order.ref)]);
 }
 
-/** Mark a recorded order as reclaimed by its owner. */
-export function markReclaimed(owner: string, ref: string, reclaimTx: string): void {
-  write(
-    owner,
-    read(owner).map((o) => (o.ref === ref ? { ...o, reclaimTx } : o)),
-  );
-}
-
-/** Recent orders for a wallet, pruned of stale entries (and the prune persisted). */
+/** Recent orders for a wallet, pruned of stale entries (prune persisted only if any). */
 export function getRecent(owner: string, now: number): RecentOrder[] {
-  const list = prune(read(owner), now);
-  write(owner, list);
+  const all = read(owner);
+  const list = prune(all, now);
+  if (list.length !== all.length) write(owner, list); // only write when something expired
   return list;
 }

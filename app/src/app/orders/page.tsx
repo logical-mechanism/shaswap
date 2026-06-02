@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@meshsdk/react";
 import { useOrders } from "@/hooks/useOrders";
 import { reclaimOrder } from "@/lib/client/tx";
-import { getRecent, markReclaimed, type RecentOrder } from "@/lib/client/activity";
+import { getRecent, recordPost, type RecentOrder } from "@/lib/client/activity";
+import { nowMs } from "@/lib/client/now";
 import {
   hasPending,
   mergeRows,
@@ -33,20 +34,29 @@ export default function OrdersPage() {
   // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
   // still see their own orders, and the local activity log keys match.
   const [owner, setOwner] = useState<string | undefined>(undefined);
+  const [ownerAttempted, setOwnerAttempted] = useState(false);
   useEffect(() => {
     if (!connected) return;
     let cancelled = false;
     wallet
       .getChangeAddress()
       .then((a) => {
-        if (!cancelled) setOwner(a);
+        if (!cancelled) {
+          setOwner(a);
+          setOwnerAttempted(true);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Don't hang on the loading skeleton forever — mark the attempt done so the
+        // error state can render (the wallet errored / disconnected mid-call).
+        if (!cancelled) setOwnerAttempted(true);
+      });
     return () => {
       cancelled = true;
     };
   }, [connected, wallet]);
   const ownerAddr = connected ? owner : undefined;
+  const ownerError = connected && ownerAttempted && !ownerAddr;
 
   const { orders, loading, error, reload } = useOrders(ownerAddr);
   const [recent, setRecent] = useState<RecentOrder[]>([]);
@@ -57,8 +67,8 @@ export default function OrdersPage() {
   // here (a callback), never synchronously in an effect body.
   const refresh = useCallback(() => {
     reload();
-    setRecent(ownerAddr ? getRecent(ownerAddr, Date.now()) : []);
-    setNow(Date.now());
+    setRecent(ownerAddr ? getRecent(ownerAddr, nowMs()) : []);
+    setNow(nowMs());
   }, [ownerAddr, reload]);
 
   // Initial load when the owner resolves (deferred out of the effect body).
@@ -80,19 +90,39 @@ export default function OrdersPage() {
     return () => clearInterval(id);
   }, [pending, refresh]);
 
-  async function onReclaim(ref: string) {
-    setReclaim({ kind: "busy", ref });
+  async function onReclaim(row: OrderRow) {
+    setReclaim({ kind: "busy", ref: row.ref });
     try {
-      const hash = await reclaimOrder(wallet, ref);
-      if (ownerAddr) markReclaimed(ownerAddr, ref, hash);
+      const hash = await reclaimOrder(wallet, row.ref);
+      // Upsert a reclaimed entry (recordPost dedups by ref) so the row shows
+      // "reclaimed" — and isn't offered for a doomed second reclaim — even while the
+      // chain still lists it, and even for an order not previously in the local log
+      // (a partial-fill remainder, cleared storage, or another device).
+      if (ownerAddr) {
+        recordPost(ownerAddr, {
+          ref: row.ref,
+          txHash: row.ref.split("#")[0],
+          inUnit: "",
+          inTicker: row.inTicker,
+          inDecimals: row.inDecimals,
+          outTicker: row.outTicker,
+          outDecimals: row.outDecimals,
+          amountIn: row.amountIn,
+          minOut: row.minOut,
+          partial: row.partial,
+          ts: nowMs(),
+          reclaimTx: hash,
+        });
+      }
       setReclaim({ kind: "idle" });
       refresh();
     } catch (e) {
-      setReclaim({ kind: "error", ref, message: toUserMessage(e) });
+      setReclaim({ kind: "error", ref: row.ref, message: toUserMessage(e) });
     }
   }
 
-  const showLoading = loading || (connected && ownerAddr === undefined);
+  const showLoading =
+    loading || (connected && ownerAddr === undefined && !ownerError);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
@@ -116,6 +146,12 @@ export default function OrdersPage() {
       </header>
 
       {!connected && <Empty>Connect a wallet to view your orders.</Empty>}
+
+      {ownerError && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+          Couldn’t read your wallet address. Reconnect the wallet and try again.
+        </div>
+      )}
 
       {connected && error && (
         <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
@@ -150,7 +186,7 @@ export default function OrdersPage() {
                   ? reclaim.message
                   : undefined
               }
-              onReclaim={() => onReclaim(row.ref)}
+              onReclaim={() => onReclaim(row)}
             />
           ))}
         </ul>

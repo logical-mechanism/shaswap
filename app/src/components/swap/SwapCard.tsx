@@ -9,6 +9,7 @@ import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
 import { postOrder } from "@/lib/client/tx";
 import { recordPost } from "@/lib/client/activity";
+import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
 import { formatPercent, formatUnits, toBaseUnits, truncate } from "@/lib/format";
 import { TokenSelect } from "./TokenSelect";
@@ -54,18 +55,32 @@ export function SwapCard() {
     baseAmountIn,
   );
 
+  // useQuote debounces (~250ms), so after switching tokens the PREVIOUS pair's quote
+  // can still be in hand. Treat a quote as usable only when it matches the CURRENT
+  // pair — otherwise the order could bind to the wrong pool with a stale floor.
+  const quoteFresh =
+    !!quote &&
+    quote.tokenIn.unit === fromToken?.unit &&
+    quote.tokenOut.unit === toToken?.unit;
+
   const toAmount =
-    quote && toToken ? formatUnits(quote.amountOut, toToken.decimals) : "";
+    quoteFresh && quote && toToken
+      ? formatUnits(quote.amountOut, toToken.decimals)
+      : "";
 
   // The pool that trades this pair (also identifies the order's pool_nft binding).
-  // Bind to the SAME pool the quote was priced against (quote.poolId) so the floor
-  // and the order's pool_nft can never reference two different same-pair pools;
-  // fall back to a pair match before any quote has loaded.
+  // Bind to the SAME pool the FRESH quote was priced against (quote.poolId) so the
+  // floor and the order's pool_nft can never reference two different same-pair pools;
+  // fall back to a pair match before/until a matching quote has loaded.
   const pool: Pool | undefined = useMemo(() => {
     if (!fromToken || !toToken) return undefined;
-    const byQuote = quote?.poolId
-      ? pools.find((p) => p.id === quote.poolId)
-      : undefined;
+    const byQuote =
+      quote &&
+      quote.tokenIn.unit === fromToken.unit &&
+      quote.tokenOut.unit === toToken.unit &&
+      quote.poolId
+        ? pools.find((p) => p.id === quote.poolId)
+        : undefined;
     return (
       byQuote ??
       pools.find(
@@ -89,7 +104,7 @@ export function SwapCard() {
   // Per-order floor (limit): the worst output the user will accept = the estimated
   // output minus slippage. The solver may NEVER settle below this (§5.2.5).
   const slippageBps = BigInt(Math.round(slippage * 100));
-  const estOut = quote ? toBig(quote.amountOut) : 0n;
+  const estOut = quoteFresh && quote ? toBig(quote.amountOut) : 0n;
   const floor = estOut > 0n ? (estOut * (10_000n - slippageBps)) / 10_000n : 0n;
   const floorDisplay =
     toToken && floor > 0n ? formatUnits(floor.toString(), toToken.decimals) : "";
@@ -109,7 +124,7 @@ export function SwapCard() {
     networkReady &&
     hasAmount &&
     !!pool &&
-    !!quote &&
+    quoteFresh &&
     floor > 0n &&
     tipValid &&
     post.kind !== "posting";
@@ -149,7 +164,7 @@ export function SwapCard() {
         amountIn: baseAmountIn,
         minOut: floor.toString(),
         partial,
-        ts: Date.now(),
+        ts: nowMs(),
       });
       setPost({ kind: "success", hash: res.txHash });
       setAmount("");
@@ -168,7 +183,7 @@ export function SwapCard() {
           ? { label: "Enter an amount", disabled: true }
           : !pool
             ? { label: "No pool for this pair", disabled: true }
-            : !quote || quoteLoading
+            : !quoteFresh || quoteLoading
               ? { label: "Fetching quote…", disabled: true }
               : floor <= 0n
                 ? { label: "Amount too small", disabled: true }
@@ -261,7 +276,8 @@ export function SwapCard() {
       />
 
       {/* high price-impact caution (the quote is an estimate over real reserves) */}
-      {quote &&
+      {quoteFresh &&
+        quote &&
         hasAmount &&
         quote.priceImpact >= 0.05 &&
         post.kind !== "posting" && (

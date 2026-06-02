@@ -17,6 +17,13 @@ test("already-spent inputs → refresh message, not raw BadInputsUTxO", () => {
   assert.doesNotMatch(m, /BadInputsUTxO/);
 });
 
+test("CIP-30 code 1 with a node error is NOT mislabeled as a user rejection", () => {
+  // code 1 = ProofGeneration/Refused-by-node, never a cancellation — map by content.
+  const m = toUserMessage({ code: 1, info: "BadInputsUTxO at index 0" });
+  assert.doesNotMatch(m, /rejected/i);
+  assert.match(m, /already.*spent|refresh/i);
+});
+
 test("insufficient funds and collateral map to their own messages", () => {
   assert.match(toUserMessage("UTxO Balance Insufficient"), /not enough funds/i);
   assert.match(

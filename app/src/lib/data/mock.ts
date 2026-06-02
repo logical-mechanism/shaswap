@@ -1,5 +1,6 @@
 import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
+import { quoteConstantProduct } from "./quote";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
 
 /**
@@ -106,54 +107,11 @@ export class MockProvider implements DataProvider {
     tokenOutUnit: string,
     amountIn: string,
   ): Promise<Quote | null> {
-    const tokenIn = BY_UNIT.get(tokenInUnit);
-    const tokenOut = BY_UNIT.get(tokenOutUnit);
-    if (!tokenIn || !tokenOut) return null;
-
+    if (!BY_UNIT.has(tokenInUnit) || !BY_UNIT.has(tokenOutUnit)) return null;
     const pool = findPool(tokenInUnit, tokenOutUnit);
     if (!pool) return null;
-
-    const amtIn = toBig(amountIn);
-    // Orient reserves to the direction of the swap.
-    const inIsA = pool.tokenA.unit === tokenInUnit;
-    const reserveIn = toBig(inIsA ? pool.reserveA : pool.reserveB);
-    const reserveOut = toBig(inIsA ? pool.reserveB : pool.reserveA);
-
-    if (amtIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) {
-      return {
-        tokenIn,
-        tokenOut,
-        amountIn,
-        amountOut: "0",
-        price: "0",
-        priceImpact: 0,
-        poolId: pool.id,
-      };
-    }
-
-    // Toy constant-product with fee (display only — NOT the protocol clearing).
-    const feeBps = BigInt(pool.feeBps);
-    const inAfterFee = (amtIn * (10_000n - feeBps)) / 10_000n;
-    const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
-
-    // Mid price (out per in) and price impact vs the spot mid.
-    const SCALE = 1_000_000n;
-    const midScaled = (reserveOut * SCALE) / reserveIn;
-    const execScaled = amtIn > 0n ? (amountOut * SCALE) / amtIn : 0n;
-    const priceImpact =
-      midScaled > 0n
-        ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
-        : 0;
-
-    return {
-      tokenIn,
-      tokenOut,
-      amountIn,
-      amountOut: amountOut.toString(),
-      price: (Number(midScaled) / Number(SCALE)).toString(),
-      priceImpact,
-      poolId: pool.id,
-    };
+    // Same shared constant-product display math as the real provider (NOT clearing).
+    return quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
   }
 
   async walletPositions(address: string): Promise<WalletPosition[]> {
@@ -175,13 +133,5 @@ export class MockProvider implements DataProvider {
 
   async resolveUtxo(): Promise<UTxO | null> {
     throw new Error("MockProvider cannot resolve UTXOs");
-  }
-}
-
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s.split(".")[0] || "0");
-  } catch {
-    return 0n;
   }
 }

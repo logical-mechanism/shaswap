@@ -20,6 +20,7 @@ import {
   POOL_MIN_ADA,
 } from "@/lib/chain/deployment";
 import type { DataProvider } from "./provider";
+import { quoteConstantProduct } from "./quote";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
 
 /**
@@ -97,15 +98,28 @@ function sleep(ms: number): Promise<void> {
 
 /** Transient HTTP/network errors worth retrying (rate-limit, 5xx, dropped conn). */
 function isRetriable(e: unknown): boolean {
-  const o = e as { status?: number; status_code?: number; code?: unknown };
-  const status = o?.status ?? o?.status_code;
-  if (typeof status === "number" && (status === 429 || status >= 500)) return true;
-  const text = String(
-    (e as { message?: unknown })?.message ?? o?.code ?? e ?? "",
-  ).toLowerCase();
-  return /\b429\b|rate.?limit|too many requests|\b50[0-4]\b|timeout|econnreset|etimedout|fetch failed|network/.test(
+  const o = e as { status?: unknown; status_code?: unknown; message?: unknown };
+  // MeshJS's BlockfrostProvider throws a JSON STRING (parseHttpError), so the real
+  // HTTP status lives inside it — parse it out rather than digit-matching the text
+  // (which would over-retry messages that merely contain "503" or "network").
+  let status = numOr(o?.status) ?? numOr(o?.status_code);
+  const text = typeof e === "string" ? e : String(o?.message ?? e ?? "");
+  if (status === undefined) {
+    try {
+      const parsed = JSON.parse(text) as { status?: unknown; status_code?: unknown };
+      status = numOr(parsed?.status) ?? numOr(parsed?.status_code);
+    } catch {
+      // not JSON — fall through to keyword matching
+    }
+  }
+  if (status !== undefined && (status === 429 || status >= 500)) return true;
+  return /\b429\b|rate.?limit|too many requests|timeout|econnreset|etimedout|fetch failed/i.test(
     text,
   );
+}
+
+function numOr(v: unknown): number | undefined {
+  return typeof v === "number" ? v : undefined;
 }
 
 /**
@@ -127,58 +141,6 @@ async function retry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
   throw lastErr;
 }
 
-/**
- * Constant-product quote for one pool — a DISPLAY estimate over real reserves, NOT
- * the protocol's batch-auction clearing. The user posts an intent; the solver settles
- * at a uniform price, never below the floor.
- */
-function quoteAgainstPool(
-  pool: Pool,
-  tokenInUnit: string,
-  tokenOutUnit: string,
-  amountIn: string,
-): Quote {
-  const tokenIn = pool.tokenA.unit === tokenInUnit ? pool.tokenA : pool.tokenB;
-  const tokenOut = pool.tokenA.unit === tokenOutUnit ? pool.tokenA : pool.tokenB;
-  const amtIn = toBig(amountIn);
-  const inIsA = pool.tokenA.unit === tokenInUnit;
-  const reserveIn = toBig(inIsA ? pool.reserveA : pool.reserveB);
-  const reserveOut = toBig(inIsA ? pool.reserveB : pool.reserveA);
-
-  if (amtIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) {
-    return {
-      tokenIn,
-      tokenOut,
-      amountIn,
-      amountOut: "0",
-      price: "0",
-      priceImpact: 0,
-      poolId: pool.id,
-    };
-  }
-
-  const feeBps = BigInt(pool.feeBps);
-  const inAfterFee = (amtIn * (10_000n - feeBps)) / 10_000n;
-  const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
-
-  const SCALE = 1_000_000n;
-  const midScaled = (reserveOut * SCALE) / reserveIn;
-  const execScaled = (amountOut * SCALE) / amtIn;
-  const priceImpact =
-    midScaled > 0n
-      ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
-      : 0;
-
-  return {
-    tokenIn,
-    tokenOut,
-    amountIn,
-    amountOut: amountOut.toString(),
-    price: (Number(midScaled) / Number(SCALE)).toString(),
-    priceImpact,
-    poolId: pool.id,
-  };
-}
 
 export class BlockfrostDataProvider implements DataProvider {
   readonly name = "blockfrost";
@@ -190,31 +152,45 @@ export class BlockfrostDataProvider implements DataProvider {
     this.bf = new BlockfrostProvider(projectId);
   }
 
-  /** Registry/on-chain metadata for an asset (cached; safe fallbacks; never throws). */
+  /**
+   * Registry + on-chain metadata for an asset (cached on SUCCESS only).
+   *
+   * Decimals/ticker/logo for a fungible token live in the OFF-CHAIN token registry
+   * (`data.metadata`, CIP-26) — MeshJS's `fetchAssetMetadata` returns only
+   * `onchain_metadata` (CIP-25) and drops them, which would read every registry
+   * token's decimals as 0 and mis-scale the posted amount by 10^decimals. So we fetch
+   * the full asset record via `get('assets/…')` and prefer `metadata` (registry),
+   * falling back to `onchain_metadata` for the name. A transient failure is NOT cached
+   * (it would poison the singleton cache with decimals 0 until restart) — only a
+   * confirmed lookup, even one with no metadata, is.
+   */
   private async metaOf(unit: string): Promise<AssetMeta> {
     const cached = this.metaCache.get(unit);
     if (cached) return cached;
-    let meta: AssetMeta = { decimals: 0 };
+    let raw: { metadata?: unknown; onchain_metadata?: unknown };
     try {
-      const raw = (await retry(() => this.bf.fetchAssetMetadata(unit))) as
-        | Record<string, unknown>
-        | undefined;
-      if (raw) {
-        const decimals =
-          typeof raw.decimals === "number" && raw.decimals >= 0
-            ? raw.decimals
-            : 0;
-        const ticker = typeof raw.ticker === "string" ? raw.ticker : undefined;
-        const name = typeof raw.name === "string" ? raw.name : undefined;
-        const icon =
-          typeof raw.logo === "string" && raw.logo
-            ? `data:image/png;base64,${raw.logo}`
-            : undefined;
-        meta = { decimals, ticker, name, icon };
-      }
+      raw = (await retry(() => this.bf.get(`assets/${unit}`))) as typeof raw;
     } catch {
-      // no registry entry / fetch error → defaults (decimals 0, derive ticker below)
+      return { decimals: 0 }; // transient/unknown — don't cache; retry next time
     }
+    const reg = (raw?.metadata ?? {}) as Record<string, unknown>;
+    const onchain = (raw?.onchain_metadata ?? {}) as Record<string, unknown>;
+    const decimals =
+      typeof reg.decimals === "number" && reg.decimals >= 0 ? reg.decimals : 0;
+    const ticker = typeof reg.ticker === "string" ? reg.ticker : undefined;
+    const name =
+      typeof reg.name === "string"
+        ? reg.name
+        : typeof onchain.name === "string"
+          ? onchain.name
+          : undefined;
+    // Registry `logo` is base64 PNG; only build a data-URI from base64 (never a URL).
+    const logo = reg.logo;
+    const icon =
+      typeof logo === "string" && logo && !logo.includes("://")
+        ? `data:image/png;base64,${logo}`
+        : undefined;
+    const meta: AssetMeta = { decimals, ticker, name, icon };
     this.metaCache.set(unit, meta);
     return meta;
   }
@@ -311,7 +287,7 @@ export class BlockfrostDataProvider implements DataProvider {
 
     let best: Quote | null = null;
     for (const pool of candidates) {
-      const q = quoteAgainstPool(pool, tokenInUnit, tokenOutUnit, amountIn);
+      const q = quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
       if (!best || toBig(q.amountOut) > toBig(best.amountOut)) best = q;
     }
     return best;
