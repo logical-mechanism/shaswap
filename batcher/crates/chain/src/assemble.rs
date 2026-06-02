@@ -557,7 +557,7 @@ mod tests {
 
     fn out(addr_owner: u8, v: Value) -> CoreOutput {
         CoreOutput {
-            address: Address::payout(Credential::VerificationKey(vec![addr_owner; 28])),
+            address: Address::payout(Credential::VerificationKey(vec![addr_owner; 28]), None),
             value: v,
             datum: Datum::None,
             reference_script: None,

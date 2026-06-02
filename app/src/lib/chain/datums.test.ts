@@ -32,6 +32,7 @@ import {
 // golden CBOR is a cross-language pin against the batcher encoder.
 const SAMPLE_ORDER: OrderDatum = {
   owner: { kind: "key", hash: "ab".repeat(28) },
+  ownerStake: { kind: "key", hash: "e1".repeat(28) }, // base-address payout
   poolNft: { policy: "44".repeat(28), name: "4e4654" }, // "NFT"
   sellA: true,
   sellAmount: 1_000_000n,
@@ -42,7 +43,7 @@ const SAMPLE_ORDER: OrderDatum = {
 };
 
 const SAMPLE_ORDER_CBOR =
-  "d8799fd8799f581cababababababababababababababababababababababababababababffd8799f581c44444444444444444444444444444444444444444444444444444444434e4654ffd87a801a000f42401a00061a801a001e8480d87980d8799f1903e8ffff";
+  "d8799fd8799f581cababababababababababababababababababababababababababababffd8799fd8799f581ce1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1ffffd8799f581c44444444444444444444444444444444444444444444444444444444434e4654ffd87a801a000f42401a00061a801a001e8480d87980d8799f1903e8ffff";
 
 test("nullary redeemers match known CBOR", () => {
   assert.equal(toCbor(orderSettleRedeemer), "d87980"); // Constr 0 []
@@ -62,9 +63,10 @@ test("OrderDatum round-trips through encode → decode", () => {
   assert.deepEqual(back, SAMPLE_ORDER);
 });
 
-test("ADA-seller OrderDatum (sell_a=false, None deadline) round-trips", () => {
+test("ADA-seller OrderDatum (sell_a=false, None deadline, enterprise) round-trips", () => {
   const o: OrderDatum = {
     owner: { kind: "key", hash: "cd".repeat(28) },
+    ownerStake: null, // enterprise payout (no stake credential)
     poolNft: { policy: "ee".repeat(28), name: "4e4654" },
     sellA: false,
     sellAmount: 50_000_000n,
@@ -72,6 +74,21 @@ test("ADA-seller OrderDatum (sell_a=false, None deadline) round-trips", () => {
     tip: 2_000_000n,
     partial: false,
     deadline: null,
+  };
+  assert.deepEqual(decodeOrderDatum(toCbor(encodeOrderDatum(o))), o);
+});
+
+test("OrderDatum with a SCRIPT stake credential round-trips", () => {
+  const o: OrderDatum = {
+    owner: { kind: "key", hash: "cd".repeat(28) },
+    ownerStake: { kind: "script", hash: "e2".repeat(28) },
+    poolNft: { policy: "ee".repeat(28), name: "4e4654" },
+    sellA: true,
+    sellAmount: 1_000_000n,
+    limit: 1n,
+    tip: 0n,
+    partial: true,
+    deadline: 1700000000000n,
   };
   assert.deepEqual(decodeOrderDatum(toCbor(encodeOrderDatum(o))), o);
 });

@@ -31,6 +31,13 @@ export SOLVER_VKEY="$KEYS_DIR/solver.vkey"
 export SOLVER_ADDR="$(cat "$KEYS_DIR/solver.addr")"
 export SOLVER_PKH="$(cardano-cli latest address key-hash --payment-verification-key-file "$SOLVER_VKEY")"
 
+# Solver STAKE key (OUTSIDE the repo). Used as the order owner_stake so settled
+# funds land at a BASE address (payment = solver vkey, stake = this) — proving the
+# base-address payout (Rev 21). Guarded so sourcing works before it's generated.
+export SOLVER_STAKE_SKEY="$KEYS_DIR/solver-stake.skey"
+export SOLVER_STAKE_VKEY="$KEYS_DIR/solver-stake.vkey"
+[ -f "$SOLVER_STAKE_VKEY" ] && export SOLVER_STAKE_PKH="$(cardano-cli latest stake-address key-hash --stake-verification-key-file "$SOLVER_STAKE_VKEY")" || true
+
 # --- a separate USER wallet (a trader, distinct from the solver) --------------
 # Created by u1-setup-user.sh. Exports are guarded so sourcing works before it
 # exists. Lets tests run with the realistic split: users post orders + pay only
@@ -46,9 +53,9 @@ export ORDER_SCRIPT="$SCRIPTS/order.plutus"
 export POOL_SCRIPT="$SCRIPTS/pool.plutus"
 
 # --- identities (derived; see also deployment.json) ---------------------------
-export S_HASH="82039119bc85e1b8fb4fab8cfb0628f487e64f0b6338da842950500c"          # settlement (= stake credential S)
-export ORDER_HASH="65261b26df3cb88e75bfb936df8d479de2a43e3fef276a1f0e2e4e94"      # order(S)
-export POOL_HASH="dfa55af00c04e5ce5d982e7d8e7b991fbc5e96c261f401259ef8b510"       # pool(S)
+export S_HASH="a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e"          # settlement (= stake credential S)
+export ORDER_HASH="801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2"      # order(S)
+export POOL_HASH="4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b"       # pool(S)
 export S_STAKE_ADDR="$(cat "$SCRIPTS/settlement.stake.addr")"                     # reward account for S
 export ORDER_ADDR="$(cat "$SCRIPTS/order.addr")"                                  # where orders live (tagged S)
 export POOL_ADDR="$(cat "$SCRIPTS/pool.addr")"                                    # where the pool lives (tagged S)

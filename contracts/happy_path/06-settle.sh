@@ -28,8 +28,13 @@ order=json.loads(os.environ['ORDER_JSON']); pool=json.loads(os.environ['POOL_JSO
 (o_ref, o)=next(iter(order.items()))
 (p_ref, p)=next(iter(pool.items()))
 od=o['inlineDatum']['fields']
-sell=int(od[3]['int']); limit=int(od[4]['int']); tip=int(od[5]['int'])
+# OrderDatum (9 fields, Rev 21): [owner, owner_stake, pool_nft, sell_a, sell, limit, tip, partial, deadline]
+sell=int(od[4]['int']); limit=int(od[5]['int']); tip=int(od[6]['int'])
 order_lovelace=o['value']['lovelace']
+# owner_stake (od[1]): Some(cred) => base-address payout, None => enterprise.
+owner_stake=od[1]
+owner_stake_present = owner_stake.get('constructor')==0
+stake_hash = owner_stake['fields'][0]['fields'][0]['bytes'] if owner_stake_present else ''
 
 res_a=p['value'][tp][TNAME]                 # TEST reserve
 pool_lovelace=p['value']['lovelace']
@@ -72,11 +77,26 @@ print(f"FUND={fund}")
 print(f"COLL={coll}")
 print(f"OWNER_LOVELACE={owner_lovelace}")
 print(f"POOL_VALUE='{pool_value}'")
+print(f"OWNER_STAKE_PRESENT={'1' if owner_stake_present else '0'}")
+print(f"STAKE_HASH={stake_hash}")
 print(f"# received={received} price={num}/{den} sell={sell} limit={limit} tip={tip}")
 PY
 )"
 echo "ORDER=$ORDER_UTXO POOL=$POOL_UTXO FUND=$FUND COLL=$COLL OWNER_LOVELACE=$OWNER_LOVELACE"
 echo "POOL_VALUE=$POOL_VALUE"
+
+# owner payout address: BASE (payment = solver vkey, stake = the datum's owner_stake)
+# when owner_stake is Some — proving the Rev 21 base-address payout — else enterprise.
+if [ "$OWNER_STAKE_PRESENT" = "1" ]; then
+  if [ "$STAKE_HASH" != "${SOLVER_STAKE_PKH:-}" ]; then
+    echo "owner_stake hash $STAKE_HASH != solver stake key $SOLVER_STAKE_PKH" >&2; exit 1
+  fi
+  OWNER_ADDR=$(cli address build --payment-verification-key-file "$SOLVER_VKEY" \
+    --stake-verification-key-file "$SOLVER_STAKE_VKEY" --testnet-magic "$NET_MAGIC")
+else
+  OWNER_ADDR="$SOLVER_ADDR"
+fi
+echo "owner payout address = $OWNER_ADDR  (stake_present=$OWNER_STAKE_PRESENT)"
 
 cli transaction build \
   --tx-in "$ORDER_UTXO" \
@@ -95,7 +115,7 @@ cli transaction build \
     --withdrawal-tx-in-reference "$SETTLE_REF" \
     --withdrawal-plutus-script-v3 \
     --withdrawal-reference-tx-in-redeemer-file "$WORK/settlement.redeemer.json" \
-  --tx-out "${SOLVER_ADDR}+${OWNER_LOVELACE}" \
+  --tx-out "${OWNER_ADDR}+${OWNER_LOVELACE}" \
     --tx-out-inline-datum-file "$WORK/bound.datum.json" \
   --tx-out "${POOL_ADDR}+${POOL_VALUE}" \
     --tx-out-inline-datum-file "$WORK/pool.datum.json" \

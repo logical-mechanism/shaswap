@@ -92,10 +92,23 @@ export async function postOrder(
   args: PostOrderArgs,
 ): Promise<PostOrderResult> {
   const changeAddress = await wallet.getChangeAddress();
-  const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
+  const { pubKeyHash, stakeCredentialHash, stakeScriptCredentialHash } =
+    deserializeAddress(changeAddress);
+
+  // Carry the wallet's own stake credential so the settled payout lands at a BASE
+  // address the wallet displays + can spend (Lace tracks only base variants of its
+  // keys). MeshJS returns "" for an absent part; key stake cred wins, then script,
+  // else enterprise (null). The contract pins this from the datum (solver can't
+  // redirect it), and spending stays controlled by the payment key (`ownerPkh`).
+  const ownerStake = stakeCredentialHash
+    ? ({ kind: "key", hash: stakeCredentialHash } as const)
+    : stakeScriptCredentialHash
+      ? ({ kind: "script", hash: stakeScriptCredentialHash } as const)
+      : null;
 
   const built = buildOrder({
-    ownerPkh,
+    ownerPkh: pubKeyHash,
+    ownerStake,
     poolNftUnit: args.pool.id,
     assetAUnit: args.pool.tokenA.unit,
     assetBUnit: args.pool.tokenB.unit,

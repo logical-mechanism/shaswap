@@ -235,6 +235,7 @@ mod tests {
             value: Value::from_lovelace(4_000_000).add(&tok().policy, &tok().name, 1_000_000),
             datum: OrderDatum {
                 owner: owner(),
+                owner_stake: None,
                 pool_nft: nft(),
                 sell_a: true,
                 sell_amount: 1_000_000,

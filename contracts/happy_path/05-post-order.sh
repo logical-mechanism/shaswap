@@ -13,9 +13,11 @@ POOL_POLICY=$(python3 -c "import json;print(json.load(open('$WORK/pool.json'))['
 TEST_POLICY=$(cat "$WORK/test-policy.id")
 TEST_NAME_HEX="54455354"
 
+# owner_stake = Some(VerificationKey(SOLVER_STAKE_PKH)) -> base-address payout (Rev 21).
 cat > "$WORK/order.datum.json" <<JSON
 {"constructor":0,"fields":[
   {"constructor":0,"fields":[{"bytes":"$SOLVER_PKH"}]},
+  {"constructor":0,"fields":[{"constructor":0,"fields":[{"bytes":"$SOLVER_STAKE_PKH"}]}]},
   {"constructor":0,"fields":[{"bytes":"$POOL_POLICY"},{"bytes":"$NFT_NAME"}]},
   {"constructor":1,"fields":[]},
   {"int":$SELL},

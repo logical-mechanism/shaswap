@@ -75,6 +75,11 @@ pub struct OutputReference {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderDatum {
     pub owner: Credential,
+    /// The owner's chosen stake credential for the settled-funds payout. `Some(c)`
+    /// → a base address (so delegating/Lace-style wallets show + spend it), `None`
+    /// → an enterprise address. Read FROM this datum, so the solver can't redirect
+    /// the payout — the address stays fully pinned (audit M-01 preserved).
+    pub owner_stake: Option<Credential>,
     pub pool_nft: AssetId,
     /// `True` sells `asset_a` for `asset_b`; `False` sells `asset_b` for `asset_a`.
     pub sell_a: bool,

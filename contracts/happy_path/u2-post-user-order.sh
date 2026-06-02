@@ -18,10 +18,13 @@ TEST_NAME_HEX="54455354"
 
 if [ -z "${USER_PKH:-}" ]; then echo "no user key — run u1-setup-user.sh first" >&2; exit 1; fi
 
-# owner = USER's verification-key hash (settlement payout goes to the user).
+# owner = USER's verification-key hash (settlement payout goes to the user). The user
+# wallet is enterprise-only, so owner_stake = None (enterprise payout); the base-address
+# payout is exercised by the solver order (05) + the app (Lace) instead.
 cat > "$WORK/user-order.datum.json" <<JSON
 {"constructor":0,"fields":[
   {"constructor":0,"fields":[{"bytes":"$USER_PKH"}]},
+  {"constructor":1,"fields":[]},
   {"constructor":0,"fields":[{"bytes":"$POOL_POLICY"},{"bytes":"$NFT_NAME"}]},
   {"constructor":1,"fields":[]},
   {"int":$SELL},

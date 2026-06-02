@@ -94,6 +94,7 @@ fn order_ref(i: u64) -> OutputReference {
 fn order_datum() -> OrderDatum {
     OrderDatum {
         owner: owner(),
+        owner_stake: None,
         pool_nft: nft(),
         sell_a: true,
         sell_amount: SELL,
@@ -236,6 +237,7 @@ fn partial_token_seller() {
         rem.datum,
         Datum::Order(OrderDatum {
             owner: owner(),
+            owner_stake: None,
             pool_nft: nft(),
             sell_a: true,
             sell_amount: 600_000,
@@ -258,6 +260,7 @@ fn ada_order_input(i: u64, sell_ada: i128, limit: i128) -> OrderInput {
         value: Value::from_lovelace(sell_ada + TIP + MIN_ADA),
         datum: OrderDatum {
             owner: owner(),
+            owner_stake: None,
             pool_nft: nft(),
             sell_a: false,
             sell_amount: sell_ada,

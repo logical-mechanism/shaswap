@@ -129,6 +129,23 @@ fn as_option_int(d: &PlutusData) -> Result<Option<i64>, DecodeError> {
     }
 }
 
+fn as_option_credential(d: &PlutusData) -> Result<Option<Credential>, DecodeError> {
+    let (index, fields) = constr(d, "Option")?;
+    match index {
+        1 => Ok(None),
+        0 => Ok(Some(credential(fields.first().ok_or(
+            DecodeError::Arity {
+                ty: "Option",
+                got: 0,
+            },
+        )?)?)),
+        i => Err(DecodeError::BadConstructor {
+            ty: "Option",
+            index: i,
+        }),
+    }
+}
+
 pub fn asset_id(d: &PlutusData) -> Result<AssetId, DecodeError> {
     let f = fields_n(d, "AssetId", 0, 2)?;
     Ok(AssetId::new(as_bytes(&f[0])?, as_bytes(&f[1])?))
@@ -159,16 +176,17 @@ pub fn output_reference(d: &PlutusData) -> Result<OutputReference, DecodeError> 
 }
 
 pub fn order_datum(d: &PlutusData) -> Result<OrderDatum, DecodeError> {
-    let f = fields_n(d, "OrderDatum", 0, 8)?;
+    let f = fields_n(d, "OrderDatum", 0, 9)?;
     Ok(OrderDatum {
         owner: credential(&f[0])?,
-        pool_nft: asset_id(&f[1])?,
-        sell_a: as_bool(&f[2])?,
-        sell_amount: as_int(&f[3])?,
-        limit: as_int(&f[4])?,
-        tip: as_int(&f[5])?,
-        partial: as_bool(&f[6])?,
-        deadline: as_option_int(&f[7])?,
+        owner_stake: as_option_credential(&f[1])?,
+        pool_nft: asset_id(&f[2])?,
+        sell_a: as_bool(&f[3])?,
+        sell_amount: as_int(&f[4])?,
+        limit: as_int(&f[5])?,
+        tip: as_int(&f[6])?,
+        partial: as_bool(&f[7])?,
+        deadline: as_option_int(&f[8])?,
     })
 }
 
@@ -225,6 +243,7 @@ mod tests {
     fn order() -> OrderDatum {
         OrderDatum {
             owner: Credential::VerificationKey(vec![0xb1; 28]),
+            owner_stake: Some(Credential::Script(vec![0xe2; 28])),
             pool_nft: AssetId::new(vec![0x44; 28], vec![0x4e, 0x46, 0x54]),
             sell_a: true,
             sell_amount: 1_000_000,
@@ -308,7 +327,7 @@ mod tests {
             pool_nft: AssetId::new(vec![0x44; 28], vec![0x4e, 0x46, 0x54]),
             fills: vec![],
         }));
-        // decoding a 6-field SettlementRedeemer as an 8-field OrderDatum must fail.
+        // decoding a 6-field SettlementRedeemer as a 9-field OrderDatum must fail.
         assert!(matches!(
             order_datum_cbor(&cbor),
             Err(DecodeError::Arity { .. })

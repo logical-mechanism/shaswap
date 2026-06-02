@@ -113,6 +113,7 @@ fn token_seller(sell: i128, tip: i128, partial: bool) -> OrderInput {
         value: Value::from_lovelace(tip + 2 * ORDER_MIN_ADA).add(&tok().policy, &tok().name, sell),
         datum: OrderDatum {
             owner: owner(),
+            owner_stake: None,
             pool_nft: nft(),
             sell_a: true,
             sell_amount: sell,
@@ -134,6 +135,7 @@ fn ada_seller(sell: i128, tip: i128, partial: bool) -> OrderInput {
         value: Value::from_lovelace(sell + tip + 2 * ORDER_MIN_ADA),
         datum: OrderDatum {
             owner: owner(),
+            owner_stake: None,
             pool_nft: nft(),
             sell_a: false,
             sell_amount: sell,

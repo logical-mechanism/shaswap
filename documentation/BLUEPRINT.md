@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 20 — 2026-06-01. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 21 — 2026-06-01. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -161,6 +161,22 @@
 > fails without). Tests: 96 still green (the handler is validated on-chain; its
 > `RegisterCredential.deposit: Never` field is impractical to unit-test). No change to
 > the settlement/clearing logic or any Rust mirror.**)
+> **Rev 21: base-address owner payout (§5.2.1) — `OrderDatum.owner_stake`.** The settled-funds
+> payout now lands at the address `{ payment = owner, stake = owner_stake }`, where
+> `owner_stake: Option<Credential>` is a NEW `OrderDatum` field (now **9 fields**, still
+> distinct from `PoolDatum`'s 6) carried by the user: `Some(c)` → a **base** address (so
+> delegating wallets — e.g. **Lace** — display + spend the settled funds), `None` → the
+> prior enterprise address. **M-01 is preserved:** the stake half is read FROM the order
+> datum, never the solver's redeemer, so the payout address stays fully pinned and the solver
+> can neither choose nor redirect it (deterministic, `reference_script == None` for L-01,
+> owner payment cred stays `VerificationKey` for reclaim). A partial-fill remainder must
+> preserve `owner_stake` (continuity pin), so the rollover can't swap the delegation. Datum-
+> shape change + settlement-logic change; mirrored in the batcher (encode/decode/payout) and
+> the app (`buildOrder` sets it from the wallet's reward-address stake cred). +7 Aiken
+> negatives/positives (103 green). **Redeployed preprod** (new `S`
+> `a57de7a9…`, order `801c7a4c…`, pool `4427ef84…`, pool_mint `3d36f796…`); a live settlement
+> paid the owner at a **base** address that the owner key then spent. Resolves the
+> pre-release enterprise-payout limitation.**
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -312,7 +328,9 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
 
 2. **Order UTXO (intent)** — one order, locked by the **immutable order validator**
    (§5.4).
-   - *Datum:* owner credential, **target `pool_nft`** (the pool this order consents
+   - *Datum:* owner credential, **owner stake credential** (`owner_stake:
+     Option<Credential>` — the payout's stake half, Rev 21: `Some` → a base-address
+     payout, `None` → enterprise), **target `pool_nft`** (the pool this order consents
      to — Rev 14), sell-direction + amount, **limit / min-receive** (the user's own
      floor; "market" = a loose slippage bound), partial-fill rule, **ADA tip** (§7),
      optional deadline. The order does **not** name its bought/sold asset directly:
@@ -378,16 +396,20 @@ witness — the validator checks algebra, never solves (Principle 4).
      counts units of a *solver-chosen* asset); the binding does. This is the anchor's **only**
      read of the `PoolDatum` — it still never reads the curve or fee, so it stays
      curve-agnostic (§5.4).
-   - **Output perimeter (Rev 15, closes M-01/L-01).** Outputs pin their full
-     *perimeter*, not just value/datum. **Owner payouts** fix the **stake credential to
-     `None`** (payment credential = the owner) so a solver can't attach a stake
-     credential it controls and skim the payout's staking rewards (M-01). **Every**
-     continuing/payout output (owner payout, re-locked remainder, recreated pool — and
-     the pool output on the standalone `LpAction` path) asserts **no attached reference
+   - **Output perimeter (Rev 15, closes M-01/L-01; Rev 21 base-address payout).** Outputs
+     pin their full *perimeter*, not just value/datum. **Owner payouts** pin the stake
+     credential to the order datum's **`owner_stake`** (Rev 21): the payout address is
+     `{ payment = owner, stake = owner_stake }` — `Some(c)` a **base** address (so
+     delegating wallets like Lace display + spend the funds), `None` an enterprise one.
+     Because `owner_stake` is read FROM the order datum (set by the user), never from the
+     solver's redeemer, the address is fully **deterministic and solver-can't-redirect** —
+     so M-01 still holds (a solver can't attach a stake credential it controls to skim the
+     payout's staking rewards). A partial-fill **remainder** must carry the same
+     `owner_stake` (continuity pin), so the rollover can't swap the delegation. **Every**
+     continuing/payout output (owner payout, re-locked remainder, recreated pool — and the
+     pool output on the standalone `LpAction` path) asserts **no attached reference
      script**, so a solver can't inflate an output's min-ADA with a reference script
      (L-01). Two reused helpers (`is_payout_output` / `is_protocol_output`) carry this.
-     *(If owners ever need to keep delegation control, a future `OrderDatum.owner_stake`
-     field would pin to a chosen stake credential instead of `None`.)*
 2. **Uniform price.** Every order in the (single-shard) batch fills at one clearing
    price. → eliminates intra-batch ordering MEV / sandwiching.
 3. **Pool invariant non-decreasing (incl. the trading fee).** Checked by the **pool
