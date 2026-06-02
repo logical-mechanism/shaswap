@@ -166,7 +166,7 @@ fn check_one(
         .ada_add(-add(order.tip, min_to_rem)?);
 
     let owner_output = Output {
-        address: Address::payout(order.owner.clone()),
+        address: Address::payout(order.owner.clone(), order.owner_stake.clone()),
         value: owner_val,
         datum: Datum::Bound(BoundDatum {
             order_ref: input.output_reference.clone(),
@@ -188,6 +188,9 @@ fn check_one(
         let rem_limit = mul_div_ceil(order.limit, unsold, order.sell_amount)?;
         let rem_datum = OrderDatum {
             owner: order.owner.clone(),
+            // remainder preserves the payout stake (mirrors `consume_remainder`'s
+            // `ro.owner_stake == order.owner_stake` continuity pin).
+            owner_stake: order.owner_stake.clone(),
             pool_nft: order.pool_nft.clone(),
             sell_a: order.sell_a,
             sell_amount: unsold,

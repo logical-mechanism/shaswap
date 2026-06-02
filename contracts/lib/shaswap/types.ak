@@ -4,7 +4,7 @@
 //// settlement staking credential `S` as their stake credential; the settlement
 //// validator is unparameterised and enumerates its input set by `S`.
 ////
-//// `OrderDatum` (8 fields) and `PoolDatum` (6 fields) are intentionally distinct
+//// `OrderDatum` (9 fields) and `PoolDatum` (6 fields) are intentionally distinct
 //// shapes so a well-formed order can NEVER be parsed as the pool — this is what
 //// makes the order-spend deferral safe against a solver relabelling an order as
 //// "the pool" to skip its checks (§5.4 role-identification).
@@ -39,6 +39,14 @@ pub type AssetId {
 /// pair, so no separate buy/sell field is needed.
 pub type OrderDatum {
   owner: Credential,
+  /// The owner's chosen **stake credential** for the settled-funds payout. The
+  /// settlement owner-payout lands at `Address { payment = owner, stake =
+  /// owner_stake }`: `Some(c)` → a **base** address (so delegating/Lace-style
+  /// wallets display + spend it), `None` → an enterprise address (undelegated).
+  /// Read FROM this datum, so the solver can neither choose nor redirect it — the
+  /// payout address stays fully pinned (audit M-01 preserved). It governs only the
+  /// stake half; spending is always controlled by `owner`.
+  owner_stake: Option<Credential>,
   pool_nft: AssetId,
   sell_a: Bool,
   sell_amount: Int,
@@ -60,7 +68,7 @@ pub type OrderRedeemer {
 
 /// Pool UTXO datum (§5.1). Reserves are read from the UTXO *value*; `k` is NOT
 /// stored. Identity (`nft`) + the traded pair (`asset_a`, `asset_b`) + static fee.
-/// Either asset may be ADA. Distinct shape (6 fields) from `OrderDatum` (8).
+/// Either asset may be ADA. Distinct shape (6 fields) from `OrderDatum` (9).
 ///
 /// `creator` is the credential that may tear down a created-but-never-seeded pool
 /// via `ClosePool` (§5.1 path c). It authorizes the teardown by **signature**, so it

@@ -27,6 +27,7 @@ import type { Asset, Data } from "@meshsdk/core";
 import {
   assetFromUnit,
   assetUnit,
+  type Credential,
   encodeOrderDatum,
   isAda,
   type OrderDatum,
@@ -37,6 +38,12 @@ import { ORDER_ADDR, ORDER_MIN_ADA } from "./deployment.ts";
 export interface OrderIntent {
   /** Owner = the wallet's payment key hash (28-byte hex). MUST be a vkey (reclaim). */
   ownerPkh: string;
+  /**
+   * The owner's stake credential for the settled-funds payout, or `null` for an
+   * enterprise payout. Non-null makes the payout a **base** address (so Lace-style
+   * wallets display + spend it). Usually the wallet's own reward-address stake cred.
+   */
+  ownerStake: Credential | null;
   /** Pool NFT unit (`policy+name`) the order consents to — its identity binding. */
   poolNftUnit: string;
   /** The pool's pair, by unit ("lovelace" or `policy+name`). */
@@ -73,6 +80,7 @@ const HEX28 = /^[0-9a-fA-F]{56}$/;
 export function buildOrder(intent: OrderIntent): BuiltOrder {
   const {
     ownerPkh,
+    ownerStake,
     poolNftUnit,
     assetAUnit,
     assetBUnit,
@@ -86,6 +94,9 @@ export function buildOrder(intent: OrderIntent): BuiltOrder {
 
   if (!HEX28.test(ownerPkh)) {
     throw new Error("order owner must be a 28-byte payment key hash (vkey)");
+  }
+  if (ownerStake !== null && !HEX28.test(ownerStake.hash)) {
+    throw new Error("owner stake credential must be a 28-byte hash");
   }
   if (assetAUnit === assetBUnit) {
     throw new Error("pool pair assets must differ");
@@ -105,6 +116,10 @@ export function buildOrder(intent: OrderIntent): BuiltOrder {
 
   const orderDatum: OrderDatum = {
     owner: { kind: "key", hash: ownerPkh.toLowerCase() },
+    ownerStake:
+      ownerStake === null
+        ? null
+        : { kind: ownerStake.kind, hash: ownerStake.hash.toLowerCase() },
     poolNft: assetFromUnit(poolNftUnit),
     sellA,
     sellAmount,

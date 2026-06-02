@@ -17,9 +17,11 @@ ORDER_ADA=$((SELL + ORDER_MIN_ADA + TIP))
 
 POOL_POLICY=$(python3 -c "import json;print(json.load(open('$WORK/pool.json'))['pool_policy'])")
 
+# owner_stake = Some(VerificationKey(SOLVER_STAKE_PKH)) -> base-address payout (Rev 21).
 cat > "$WORK/order.ada.datum.json" <<JSON
 {"constructor":0,"fields":[
   {"constructor":0,"fields":[{"bytes":"$SOLVER_PKH"}]},
+  {"constructor":0,"fields":[{"constructor":0,"fields":[{"bytes":"$SOLVER_STAKE_PKH"}]}]},
   {"constructor":0,"fields":[{"bytes":"$POOL_POLICY"},{"bytes":"$NFT_NAME"}]},
   {"constructor":0,"fields":[]},
   {"int":$SELL},

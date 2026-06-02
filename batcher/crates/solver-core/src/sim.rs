@@ -155,6 +155,7 @@ fn make_orders(sc: &Scenario) -> Vec<OrderInput> {
             let limit = sell * spot_num / spot_den * (10_000 - sc.slack_bps) / 10_000;
             OrderDatum {
                 owner: owner(),
+                owner_stake: None,
                 pool_nft: nft(),
                 sell_a: true,
                 sell_amount: sell,
@@ -168,6 +169,7 @@ fn make_orders(sc: &Scenario) -> Vec<OrderInput> {
             let limit = sell * spot_den / spot_num * 10_000 / (10_000 + sc.slack_bps);
             OrderDatum {
                 owner: owner(),
+                owner_stake: None,
                 pool_nft: nft(),
                 sell_a: false,
                 sell_amount: sell,

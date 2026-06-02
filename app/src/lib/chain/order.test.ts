@@ -15,10 +15,12 @@ const TEST_UNIT =
 const POOL_NFT =
   "1c3be7b9fe09c169ae92722eac4961f1a2d94274a7669190828605d04e4654";
 const PKH = "ab".repeat(28);
+const STAKE = "e1".repeat(28);
 
 // asset_a = TEST, asset_b = ADA (matches the live pool orientation).
 const base: OrderIntent = {
   ownerPkh: PKH,
+  ownerStake: null,
   poolNftUnit: POOL_NFT,
   assetAUnit: TEST_UNIT,
   assetBUnit: "lovelace",
@@ -42,6 +44,18 @@ test("token-seller: value = min+tip lovelace + the sold token; sell_a=true", () 
   assert.equal(d.sellAmount, 100_000_000n);
   assert.equal(d.limit, 50_000_000n);
   assert.deepEqual(d.owner, { kind: "key", hash: PKH });
+  assert.equal(d.ownerStake, null); // base fixture is enterprise
+});
+
+test("base-address order carries the owner's stake credential in the datum", () => {
+  const built = buildOrder({ ...base, ownerStake: { kind: "key", hash: STAKE } });
+  const d = decodeOrderDatum(toCbor(built.datum));
+  assert.deepEqual(d.ownerStake, { kind: "key", hash: STAKE });
+  // the payout stake is independent of the order value layout.
+  assert.deepEqual(built.value, [
+    { unit: "lovelace", quantity: (ORDER_MIN_ADA + 2_000_000n).toString() },
+    { unit: TEST_UNIT, quantity: "100000000" },
+  ]);
 });
 
 test("partial order pre-funds 2× order_min_ada (remainder funding)", () => {
@@ -92,6 +106,10 @@ test("malformed intents are rejected (never silently posted)", () => {
   assert.throws(() => buildOrder({ ...base, limit: 0n }));
   assert.throws(() => buildOrder({ ...base, tip: -1n }));
   assert.throws(() => buildOrder({ ...base, ownerPkh: "tooshort" }));
+  // malformed stake credential hash
+  assert.throws(() =>
+    buildOrder({ ...base, ownerStake: { kind: "key", hash: "tooshort" } }),
+  );
   // sell asset not part of the pool pair
   assert.throws(() => buildOrder({ ...base, sellUnit: "deadbeef".repeat(7) }));
   // degenerate pair

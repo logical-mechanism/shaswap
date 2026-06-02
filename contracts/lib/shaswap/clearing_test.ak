@@ -113,6 +113,7 @@ fn pool_ref() -> OutputReference {
 fn order_datum() -> OrderDatum {
   OrderDatum {
     owner: VerificationKey(owner_vkh),
+    owner_stake: None,
     pool_nft: nft,
     sell_a: True,
     sell_amount: sell,
@@ -207,6 +208,7 @@ fn ada_order_input(i: Int, sell_ada_amt: Int, lim: Int) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          owner_stake: None,
           pool_nft: nft,
           sell_a: False,
           sell_amount: sell_ada_amt,
@@ -611,6 +613,7 @@ fn partial_token_order(allow_partial: Bool) -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          owner_stake: None,
           pool_nft: nft,
           sell_a: True,
           sell_amount: sell,
@@ -634,6 +637,7 @@ fn partial_ada_order() -> Input {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          owner_stake: None,
           pool_nft: nft,
           sell_a: False,
           sell_amount: 1_000_000,
@@ -662,6 +666,7 @@ fn remainder_output(
     datum: InlineDatum(
       OrderDatum {
         owner: VerificationKey(owner_vkh),
+        owner_stake: None,
         pool_nft: nft,
         // is_ada = the order sells ADA (asset_b) ⟺ sell_a == False
         sell_a: !is_ada,
@@ -1162,6 +1167,210 @@ test settlement_remainder_ref_script() fail {
   clearing.run(s(), redeemer([400_000]), tx)
 }
 
+// ---- base-address owner payout (datum-pinned stake credential) --------------
+// `OrderDatum.owner_stake` lets the USER pin the payout's stake credential, so a
+// settled payout can land at a BASE address (delegating/Lace-style wallets show +
+// spend it). It is read FROM the order datum, so the solver still can't choose or
+// redirect it — the payout address stays fully pinned (M-01 preserved). `None`
+// keeps the enterprise payout (covered by every happy_n* / hijack test above).
+
+const stake_vkh = #"e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1"
+
+const stake_sch = #"e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2"
+
+// a base address: payment credential + an inline stake credential.
+fn base_addr(payment: Credential, stake: Credential) -> Address {
+  Address { payment_credential: payment, stake_credential: Some(Inline(stake)) }
+}
+
+// a full-fill token-seller order whose datum pins `owner_stake` for its payout.
+fn order_input_stake(owner_stake: Option<Credential>) -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: tok_val(order_in_ada, sell),
+      datum: InlineDatum(OrderDatum { ..order_datum(), owner_stake }),
+      reference_script: None,
+    },
+  }
+}
+
+// the single-order happy payout (owner_out_ada lovelace) at an arbitrary address.
+fn payout_at(addr: Address) -> Output {
+  Output {
+    address: addr,
+    value: assets.from_lovelace(owner_out_ada),
+    datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+    reference_script: None,
+  }
+}
+
+fn build_payout(owner_stake: Option<Credential>, payout: Output) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [order_input_stake(owner_stake), pool_input(True)],
+    outputs: [
+      payout,
+      pool_output(pool_ada_in - received, pool_tok_in + sell),
+      solver_output(tip),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+// (c) datum pins a base address (KEY stake cred); paying there is accepted.
+test settlement_base_payout_key_stake_ok() {
+  let stake = VerificationKey(stake_vkh)
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    build_payout(
+      Some(stake),
+      payout_at(base_addr(VerificationKey(owner_vkh), stake)),
+    ),
+  )
+}
+
+// (c) a SCRIPT stake credential pinned by the datum is honored too.
+test settlement_base_payout_script_stake_ok() {
+  let stake = Script(stake_sch)
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    build_payout(
+      Some(stake),
+      payout_at(base_addr(VerificationKey(owner_vkh), stake)),
+    ),
+  )
+}
+
+// (a) datum pins stake X but the solver pays a DIFFERENT stake Y: rejected.
+test settlement_base_payout_wrong_stake() fail {
+  let pinned = VerificationKey(stake_vkh)
+  let other = VerificationKey(stake_sch)
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    build_payout(
+      Some(pinned),
+      payout_at(base_addr(VerificationKey(owner_vkh), other)),
+    ),
+  )
+}
+
+// (a) datum pins a stake but the solver drops it (enterprise payout): rejected.
+test settlement_base_payout_dropped_stake() fail {
+  let pinned = VerificationKey(stake_vkh)
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    build_payout(Some(pinned), payout_at(plain(VerificationKey(owner_vkh)))),
+  )
+}
+
+// PROPERTY (a): with the datum pinning a KEY stake, ANY script-stake payout (over
+// the whole hash space) is rejected — a Script cred can never equal the pinned VK
+// cred, so the pin bites for every sample (no need to dodge a hash collision).
+test prop_reject_base_payout_stake(h via fuzz.bytearray_fixed(28)) fail {
+  let payout = payout_at(base_addr(VerificationKey(owner_vkh), Script(h)))
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    build_payout(Some(VerificationKey(stake_vkh)), payout),
+  )
+}
+
+// ---- base-address payout: remainder continuity (partial fill) ---------------
+// A partially-filled base-address order re-locks a remainder; the rollover must
+// carry the SAME `owner_stake`, so a later settlement can't swap the payout
+// delegation. Numbers mirror `partial_token_seller` (fill 400_000 of 1_000_000).
+
+fn partial_order_stake(owner_stake: Option<Credential>) -> Input {
+  Input {
+    output_reference: order_ref(0),
+    output: Output {
+      address: tagged(Script(o_hash)),
+      value: tok_val(tip + 2 * order_min_ada, sell),
+      datum: InlineDatum(
+        OrderDatum { ..order_datum(), owner_stake, partial: True },
+      ),
+      reference_script: None,
+    },
+  }
+}
+
+fn remainder_stake(owner_stake: Option<Credential>) -> Output {
+  Output {
+    address: tagged(Script(o_hash)),
+    value: tok_val(3_200_000, 600_000),
+    datum: InlineDatum(
+      OrderDatum {
+        ..order_datum(),
+        owner_stake,
+        sell_a: True,
+        sell_amount: 600_000,
+        limit: 240_000,
+        tip: 1_200_000,
+        partial: False,
+      },
+    ),
+    reference_script: None,
+  }
+}
+
+fn partial_base_tx(
+  order_stake: Option<Credential>,
+  rem_stake: Option<Credential>,
+  payout_addr: Address,
+) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_order_stake(order_stake), pool_input(True)],
+    outputs: [
+      Output {
+        address: payout_addr,
+        value: assets.from_lovelace(2_200_000),
+        datum: InlineDatum(BoundDatum { order_ref: order_ref(0) }),
+        reference_script: None,
+      },
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      remainder_stake(rem_stake),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+// (happy) partial fill of a base-address order: owner payout at the pinned base
+// address, remainder carries the same stake. Accepted.
+test partial_base_payout_ok() {
+  let stake = VerificationKey(stake_vkh)
+  clearing.run(
+    s(),
+    redeemer([400_000]),
+    partial_base_tx(
+      Some(stake),
+      Some(stake),
+      base_addr(VerificationKey(owner_vkh), stake),
+    ),
+  )
+}
+
+// (a) the remainder drops the pinned stake: rejected by the continuity pin.
+test partial_remainder_wrong_stake() fail {
+  let stake = VerificationKey(stake_vkh)
+  clearing.run(
+    s(),
+    redeemer([400_000]),
+    partial_base_tx(
+      Some(stake),
+      None,
+      base_addr(VerificationKey(owner_vkh), stake),
+    ),
+  )
+}
+
 // ---- clearing price must be strictly positive (L-02) -----------------------
 // price_num/price_den are now explicitly guarded > 0, instead of relying on
 // emergent div-by-zero + the floor check.
@@ -1257,6 +1466,7 @@ fn settlement_tt(pool_held_out: Int) -> Transaction {
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          owner_stake: None,
           pool_nft: nft,
           sell_a: True,
           sell_amount: 1000,
@@ -1437,6 +1647,7 @@ fn ts_settlement(
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          owner_stake: None,
           pool_nft: nft,
           sell_a: True,
           sell_amount,
@@ -1472,6 +1683,7 @@ fn ts_settlement(
         datum: InlineDatum(
           OrderDatum {
             owner: VerificationKey(owner_vkh),
+            owner_stake: None,
             pool_nft: nft,
             sell_a: True,
             sell_amount: unsold,
@@ -1518,6 +1730,7 @@ fn as_settlement(
       datum: InlineDatum(
         OrderDatum {
           owner: VerificationKey(owner_vkh),
+          owner_stake: None,
           pool_nft: nft,
           sell_a: False,
           sell_amount,
@@ -1553,6 +1766,7 @@ fn as_settlement(
         datum: InlineDatum(
           OrderDatum {
             owner: VerificationKey(owner_vkh),
+            owner_stake: None,
             pool_nft: nft,
             sell_a: False,
             sell_amount: unsold,

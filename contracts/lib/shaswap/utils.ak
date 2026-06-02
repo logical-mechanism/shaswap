@@ -23,12 +23,22 @@ pub fn is_protocol_output(o: Output, addr: Address) -> Bool {
 }
 
 /// An owner payout output: the payment credential is the owner's, the stake
-/// credential is fixed to `None` (a fresh, undelegated payout — so a solver can't
-/// hijack its staking rewards by setting a stake credential it controls, audit
-/// M-01), and no reference script rides along (audit L-01). Value/datum are pinned
-/// by the caller.
-pub fn is_payout_output(o: Output, owner: Credential) -> Bool {
-  o.address == Address { payment_credential: owner, stake_credential: None } && o.reference_script == None
+/// credential is pinned to the owner's own choice `owner_stake` carried in the
+/// order datum — `Some(c)` yields a base address, `None` an enterprise one. Because
+/// it is read FROM the datum (never the solver's redeemer), the solver still can't
+/// hijack the payout's staking rewards by attaching a stake credential it controls
+/// (audit M-01): the address is fully deterministic and pinned. No reference script
+/// rides along (audit L-01). Value/datum are pinned by the caller.
+pub fn is_payout_output(
+  o: Output,
+  owner: Credential,
+  owner_stake: Option<Credential>,
+) -> Bool {
+  let stake = when owner_stake is {
+    Some(c) -> Some(Inline(c))
+    None -> None
+  }
+  o.address == Address { payment_credential: owner, stake_credential: stake } && o.reference_script == None
 }
 
 /// Is the settlement withdraw-0 present for credential `s`? (O(1) deferral.)

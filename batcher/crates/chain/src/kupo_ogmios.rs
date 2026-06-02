@@ -274,6 +274,29 @@ pub fn parse_kupo_checkpoint(reply: &Json) -> Result<u64, ChainError> {
     as_u64(field(latest, "slot_no")?, "checkpoint.slot_no")
 }
 
+/// Parse `GET /patterns` → Kupo's active match patterns (a JSON array of strings,
+/// e.g. `["*/<S_HASH>", "60<solver_pkh>"]`). Used by the deployment preflight.
+pub fn parse_kupo_patterns(reply: &Json) -> Result<Vec<String>, ChainError> {
+    reply
+        .as_array()
+        .ok_or_else(|| ChainError::Shape("patterns not an array".into()))?
+        .iter()
+        .map(|p| {
+            p.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| ChainError::Shape("pattern not a string".into()))
+        })
+        .collect()
+}
+
+/// Does Kupo's pattern set index THIS deployment? Every order/pool UTXO is stake-
+/// tagged with the settlement credential `S` (§5.4), so the indexer must carry the
+/// wildcard `*/<S_HASH>`. Pure (network-free) so it can be unit-tested.
+pub fn patterns_index_settlement(patterns: &[String], settlement_hash: &str) -> bool {
+    let want = format!("*/{settlement_hash}");
+    patterns.iter().any(|p| p == &want)
+}
+
 /// Parse a `GET /matches/...` array.
 pub fn parse_kupo_matches(arr: &Json) -> Result<Vec<KupoMatch>, ChainError> {
     arr.as_array()
@@ -474,6 +497,31 @@ impl KupoOgmios {
     /// the block's data), rather than on a blind fixed timer.
     pub fn kupo_checkpoint(&self) -> Result<u64, ChainError> {
         parse_kupo_checkpoint(&self.kupo_get("/checkpoints")?)
+    }
+
+    /// Kupo's active match patterns (`GET /patterns`).
+    pub fn kupo_patterns(&self) -> Result<Vec<String>, ChainError> {
+        parse_kupo_patterns(&self.kupo_get("/patterns")?)
+    }
+
+    /// Preflight: confirm the connected Kupo is indexing THIS deployment — its
+    /// patterns must include `*/<settlement_hash>` (every order/pool UTXO is stake-
+    /// tagged with `S`, §5.4). A **redeploy changes `S`**, so a Kupo still indexing a
+    /// prior deployment would silently surface zero pools; we fail fast with a
+    /// remediation hint instead. (Kupo owns its own db — rebuilding a stale index is
+    /// `run-kupo.sh`'s job, which auto-detects this and rebuilds; or `KUPO_RESET=1`.)
+    pub fn preflight_deployment(&self, settlement_hash: &str) -> Result<(), ChainError> {
+        let have = self.kupo_patterns()?;
+        if patterns_index_settlement(&have, settlement_hash) {
+            Ok(())
+        } else {
+            Err(ChainError::Service(format!(
+                "Kupo is not indexing this deployment: expected pattern `*/{settlement_hash}`, \
+                 but Kupo's patterns are {have:?}. Its index is for a different (stale) \
+                 deployment — rebuild it: re-run `run-kupo.sh` (it auto-rebuilds a stale \
+                 index), or wipe with `KUPO_RESET=1`."
+            )))
+        }
     }
 
     /// Decode a match at the order address into an [`OrderInput`], or `None`
@@ -710,6 +758,29 @@ mod tests {
         assert_eq!(parse_kupo_checkpoint(&reply).unwrap(), 124_659_676);
         assert!(matches!(
             parse_kupo_checkpoint(&serde_json::json!([])),
+            Err(ChainError::Shape(_))
+        ));
+    }
+
+    #[test]
+    fn preflight_detects_stale_vs_matching_patterns() {
+        let reply: Json =
+            serde_json::from_str(include_str!("../tests/fixtures/kupo-patterns.json")).unwrap();
+        let patterns = parse_kupo_patterns(&reply).unwrap();
+        assert_eq!(patterns.len(), 2);
+        // the deployment's S is indexed (the `*/<S>` wildcard is present) -> OK.
+        assert!(patterns_index_settlement(
+            &patterns,
+            "a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e"
+        ));
+        // a different deployment's S (e.g. the prior one) is NOT indexed -> stale.
+        assert!(!patterns_index_settlement(
+            &patterns,
+            "82039119bc85e1b8fb4fab8cfb0628f487e64f0b6338da842950500c"
+        ));
+        // a non-array body is a shape error, not a silent pass.
+        assert!(matches!(
+            parse_kupo_patterns(&serde_json::json!({})),
             Err(ChainError::Shape(_))
         ));
     }
