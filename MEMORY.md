@@ -62,8 +62,18 @@ High-signal pointers only:
   own spike (est. lowers N to ~30–40).
 - **Spec stubs to finish** (`spec/partial-fills.md`, `spec/clearing-price.md`,
   `spec/ada-triple-role.md`) → full specs during the deep dive.
-- Solver tip mechanics; order rollover; `λ`/fee defaults; sharding defaults; data
-  provider choice.
+- Solver tip mechanics; order rollover; `λ`/fee defaults; sharding defaults; ~~data
+  provider choice~~ (app uses **Blockfrost** behind the seam, server-side key).
+- **⚠️ PRE-RELEASE: owner payout is an ENTERPRISE address → breaks some wallets.**
+  Settlement pins each owner payout to `payment = owner, stake = None`
+  (`clearing.ak:147` "owner payout: payment cred = owner, stake = None", M-01/L-01).
+  Wallets that don't track the enterprise variant of their own keys (**Lace**) never
+  show the settled funds; **Eternl** does, and the funds are always key-controlled (not
+  lost). Confirmed live during the app test (2026-06-01). **Fix before release (contract
+  + app):** carry the owner's **stake credential** in the order so payouts land at a
+  **base** address — e.g. `OrderDatum.owner` becomes a full address (or +stake cred) and
+  the settlement payout pin uses it; the app's `buildOrder` would attach the wallet's
+  reward-address stake credential. Until then, recommend Eternl for testing.
 
 ## Log
 
