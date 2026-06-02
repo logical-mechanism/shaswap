@@ -112,7 +112,12 @@ High-signal pointers only:
   liquidity" hand-off self-heals during the indexing gap (was a terminal "Pool not found");
   `assetFromUnit` rejects **odd-length hex** (MeshJS would silently encode it as text) and
   `buildCreatePool` compares **normalized AssetIds** not raw units ("lovelace"≡"", case-variants)
-  — both uphold the strict-rejection invariant. **Base-branch note:** the LP work (`app/lp-add-remove`) wasn't on `main`
+  — both uphold the strict-rejection invariant. A second **xhigh 9-angle review** (67 agents) found
+  no fund/protocol bug; 4 more fixes: `usePools` now **suppresses transient poll errors once a list
+  loaded** (the new 15s poll was stacking a "Failed to load" banner over a still-valid list — a
+  regression vs the old fetch-once), an **in-flight guard** on the create submit (a fast double-click
+  no longer double-spends the seed), a friendlier `/pools/[id]` not-found message during the indexing
+  gap, and dropped the unused `reload` export. **Base-branch note:** the LP work (`app/lp-add-remove`) wasn't on `main`
   yet, so per the maintainer it was **fast-forwarded into `main` first**, then `app/create-pool`
   branched off the updated `main`. **Owed (maintainer):** the live in-browser preprod run —
   create a pool, confirm `{NFT:1,LP:total_lp}` under the freshly-applied policy in one

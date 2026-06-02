@@ -43,7 +43,8 @@ export default function PoolManagePage({
 
       {!loading && !error && !pool && (
         <div className="rounded-2xl border border-white/10 bg-surface/40 px-4 py-12 text-center text-sm text-muted">
-          Pool not found.
+          Pool not found yet. If you just created it, it may still be confirming
+          on-chain — this page refreshes automatically.
         </div>
       )}
 

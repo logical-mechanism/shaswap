@@ -15,7 +15,7 @@
  * to match the live pool orientation.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useAssets, useNetwork, useWallet } from "@meshsdk/react";
 import type { TokenInfo } from "@/lib/data";
@@ -83,6 +83,10 @@ export default function CreatePoolPage() {
   const [tokenB, setTokenB] = useState<TokenInfo | undefined>(ADA_TOKEN);
   const [bpsInput, setBpsInput] = useState("30");
   const [state, setState] = useState<TxState>({ kind: "idle" });
+  // Guard a synchronous double-click: both clicks see canSubmit=true before React
+  // re-renders to "busy", which would build + submit two txs spending the SAME seed
+  // (the second double-spends → node rejects). The ref blocks the second call instantly.
+  const submitting = useRef(false);
 
   const wrongNetwork =
     connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
@@ -115,7 +119,8 @@ export default function CreatePoolPage() {
     (state.kind === "idle" || state.kind === "error");
 
   async function submit() {
-    if (!canSubmit || !tokenA || !tokenB || !fee) return;
+    if (!canSubmit || !tokenA || !tokenB || !fee || submitting.current) return;
+    submitting.current = true;
     setState({ kind: "busy" });
     try {
       // Normalise ADA to asset_b to match the live pool orientation (asset_a = token).
@@ -133,6 +138,8 @@ export default function CreatePoolPage() {
       setState({ kind: "success", hash: res.txHash, poolId: res.poolId });
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
     }
   }
 

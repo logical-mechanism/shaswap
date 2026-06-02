@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Pool } from "@/lib/data";
 import { fetchPools } from "@/lib/client/api";
 
@@ -13,6 +13,11 @@ export function usePools() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  // Once a list has loaded, a later POLL failure (a transient network blip) must NOT
+  // surface an error banner over the still-valid list — the consumers render the table
+  // and the error banner independently, so we'd stack "Failed to load" on working data.
+  // Keep showing the stale list; only a genuine first-load failure (no data) surfaces.
+  const loaded = useRef(false);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
@@ -23,10 +28,11 @@ export function usePools() {
       .then((p) => {
         if (ac.signal.aborted) return;
         setPools(p);
+        loaded.current = true;
         setError(null);
       })
       .catch((e: unknown) => {
-        if (!ac.signal.aborted) setError(String(e));
+        if (!ac.signal.aborted && !loaded.current) setError(String(e));
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
@@ -43,5 +49,5 @@ export function usePools() {
     return () => clearInterval(id);
   }, [reload]);
 
-  return { pools, loading, error, reload };
+  return { pools, loading, error };
 }
