@@ -18,6 +18,7 @@ import {
   withdrawLiquidity,
 } from "@/lib/client/tx";
 import { toUserMessage } from "@/lib/client/errors";
+import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
 
@@ -75,7 +76,18 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
             Remove
           </TabButton>
         </div>
-        <SlippageSettings value={slippage} onChange={setSlippage} />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={reload}
+            title="Refresh pool data"
+            aria-label="Refresh pool data"
+            className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
+          >
+            ↻
+          </button>
+          <SlippageSettings value={slippage} onChange={setSlippage} />
+        </div>
       </div>
 
       {loading && !stats && <Skeleton />}
@@ -111,6 +123,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
             <RemoveForm
               pool={pool}
               view={view}
+              stats={stats}
               slippage={slippage}
               lpBalance={lpBalance}
               wallet={wallet}
@@ -286,6 +299,7 @@ function AddForm({
 function RemoveForm({
   pool,
   view,
+  stats,
   slippage,
   lpBalance,
   wallet,
@@ -296,6 +310,7 @@ function RemoveForm({
 }: {
   pool: Pool;
   view: PoolView;
+  stats: PoolStats;
   slippage: number;
   lpBalance: bigint;
   wallet: ReturnType<typeof useWallet>["wallet"];
@@ -306,6 +321,15 @@ function RemoveForm({
 }) {
   const [lpInput, setLpInput] = useState("");
   const [state, setState] = useState<TxState>({ kind: "idle" });
+
+  // The most LP that can be burned: your balance, capped so circulating never drops
+  // below the permanently-locked min_liq (else the validator rejects).
+  const maxBurnable =
+    stats.circ > MIN_LIQ
+      ? lpBalance < stats.circ - MIN_LIQ
+        ? lpBalance
+        : stats.circ - MIN_LIQ
+      : 0n;
 
   // LP is an integer share count (no decimals). Plain render computation.
   const lpToBurn = /^\d+$/.test(lpInput.trim()) ? toBig(lpInput.trim()) : 0n;
@@ -357,7 +381,7 @@ function RemoveForm({
           : overBalance
             ? "More than your LP"
             : preview?.error
-              ? "Amount too small or too large"
+              ? "Can't withdraw that amount"
               : state.kind === "busy"
                 ? "Withdrawing…"
                 : "Remove liquidity";
@@ -369,10 +393,10 @@ function RemoveForm({
           <span>LP to burn</span>
           <button
             type="button"
-            onClick={() => setLpInput(lpBalance.toString())}
+            onClick={() => setLpInput(maxBurnable.toString())}
             className="text-accent hover:underline"
           >
-            Max {lpBalance.toLocaleString()}
+            Max {maxBurnable.toLocaleString()}
           </button>
         </div>
         <input
@@ -410,10 +434,30 @@ function RemoveForm({
         </Row>
       </div>
 
+      {lpToBurn > 0n && !overBalance && preview?.error && (
+        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+          {withdrawErrorMessage(preview.error)}
+        </div>
+      )}
+
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Liquidity removed" />
     </div>
   );
+}
+
+/** Map a `buildWithdraw` throw into a user-facing explanation. */
+function withdrawErrorMessage(err: string): string {
+  if (/no circulating LP|more than circulating/i.test(err)) {
+    return "The pool data shown may be a step behind a recent deposit. It refreshes automatically every few seconds — or hit ↻ — then try again.";
+  }
+  if (/below min_liq/i.test(err)) {
+    return "That would leave less than the pool's permanently-locked minimum liquidity. Withdraw a little less (use Max for the largest allowed).";
+  }
+  if (/rounds to zero/i.test(err)) {
+    return "That amount is too small to return any tokens. Increase it.";
+  }
+  return err;
 }
 
 // ---- shared bits ----
