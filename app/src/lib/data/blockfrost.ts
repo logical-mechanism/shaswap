@@ -58,13 +58,11 @@ function hexToAscii(hex: string): string {
   }
 }
 
-/** Best-effort `TokenInfo` for an on-chain asset (no metadata lookup in v1). */
-function tokenInfoOf(asset: AssetId): TokenInfo {
-  if (isAda(asset)) return ADA_TOKEN;
-  const unit = assetUnit(asset);
-  const ticker = hexToAscii(asset.name) || unit.slice(0, 8);
-  return { unit, ticker, name: ticker, decimals: 0 };
-}
+/** A decoded pool plus the raw datum it came from. */
+type PoolEntry = { pool: Pool; datum: ReturnType<typeof decodePoolDatum> };
+
+/** How long a decoded-pool snapshot is reused before re-scanning the pool address. */
+const POOLS_TTL_MS = 6_000;
 
 /** Quantity of `unit` in a Mesh value, as bigint. */
 function qtyOfUnit(amount: Asset[], unit: string): bigint {
@@ -97,15 +95,50 @@ function findPool(pools: Pool[], inUnit: string, outUnit: string): Pool | undefi
 export class BlockfrostDataProvider implements DataProvider {
   readonly name = "blockfrost";
   private readonly bf: BlockfrostProvider;
+  private readonly decimalsCache = new Map<string, number>();
+  private poolsCache?: { at: number; entries: PoolEntry[] };
 
   constructor(projectId: string) {
     this.bf = new BlockfrostProvider(projectId);
   }
 
-  /** Decode the genuine pools at the pool address (skip junk/non-pool UTXOs). */
-  private async fetchPools(): Promise<{ pool: Pool; datum: ReturnType<typeof decodePoolDatum> }[]> {
+  /** Decimals for an asset: ADA = 6; native tokens from registry metadata (cached, fallback 0). */
+  private async decimalsOf(asset: AssetId): Promise<number> {
+    if (isAda(asset)) return 6;
+    const unit = assetUnit(asset);
+    const cached = this.decimalsCache.get(unit);
+    if (cached !== undefined) return cached;
+    let decimals = 0;
+    try {
+      const meta = (await this.bf.fetchAssetMetadata(unit)) as
+        | { decimals?: number }
+        | undefined;
+      if (meta && typeof meta.decimals === "number" && meta.decimals >= 0) {
+        decimals = meta.decimals;
+      }
+    } catch {
+      // no registry entry / fetch error → treat as 0 (raw base units)
+    }
+    this.decimalsCache.set(unit, decimals);
+    return decimals;
+  }
+
+  /** Best-effort `TokenInfo`: ticker from the asset name, decimals from metadata. */
+  private async tokenInfo(asset: AssetId): Promise<TokenInfo> {
+    if (isAda(asset)) return ADA_TOKEN;
+    const unit = assetUnit(asset);
+    const ticker = hexToAscii(asset.name) || unit.slice(0, 8);
+    return { unit, ticker, name: ticker, decimals: await this.decimalsOf(asset) };
+  }
+
+  /** Decode the genuine pools at the pool address (cached briefly; deterministic order). */
+  private async fetchPools(): Promise<PoolEntry[]> {
+    const now = Date.now();
+    if (this.poolsCache && now - this.poolsCache.at < POOLS_TTL_MS) {
+      return this.poolsCache.entries;
+    }
     const utxos = await this.bf.fetchAddressUTxOs(POOL_ADDR);
-    const out: { pool: Pool; datum: ReturnType<typeof decodePoolDatum> }[] = [];
+    const out: PoolEntry[] = [];
     for (const u of utxos) {
       const cbor = u.output.plutusData;
       if (!cbor) continue;
@@ -117,18 +150,25 @@ export class BlockfrostDataProvider implements DataProvider {
       }
       // A genuine pool holds exactly one of the NFT it declares (batcher find_pools).
       if (qtyOfUnit(u.output.amount, assetUnit(datum.nft)) !== 1n) continue;
+      const [tokenA, tokenB] = await Promise.all([
+        this.tokenInfo(datum.assetA),
+        this.tokenInfo(datum.assetB),
+      ]);
       out.push({
         datum,
         pool: {
           id: assetUnit(datum.nft),
-          tokenA: tokenInfoOf(datum.assetA),
-          tokenB: tokenInfoOf(datum.assetB),
+          tokenA,
+          tokenB,
           reserveA: reserveOf(u.output.amount, datum.assetA).toString(),
           reserveB: reserveOf(u.output.amount, datum.assetB).toString(),
           feeBps: feeToBps(datum.feeNum, datum.feeDen),
         },
       });
     }
+    // Deterministic order (by pool NFT) so independent reads agree on first-match.
+    out.sort((a, b) => (a.pool.id < b.pool.id ? -1 : a.pool.id > b.pool.id ? 1 : 0));
+    this.poolsCache = { at: now, entries: out };
     return out;
   }
 
@@ -238,7 +278,17 @@ export class BlockfrostDataProvider implements DataProvider {
 
   async resolveUtxo(txHash: string, index: number): Promise<UTxO | null> {
     const utxos = await this.bf.fetchUTxOs(txHash, index);
-    return utxos[0] ?? null;
+    const u = utxos[0];
+    if (!u) return null;
+    // `fetchUTxOs` (txs/{hash}/utxos) returns a tx's outputs even after they are
+    // spent, so confirm this output is still UNSPENT at its address before handing
+    // it to the reclaim builder — otherwise reclaim builds a doomed tx instead of
+    // surfacing the clean "already spent / settled" message (provider contract).
+    const live = await this.bf.fetchAddressUTxOs(u.output.address);
+    const stillUnspent = live.some(
+      (x) => x.input.txHash === txHash && x.input.outputIndex === index,
+    );
+    return stillUnspent ? u : null;
   }
 }
 

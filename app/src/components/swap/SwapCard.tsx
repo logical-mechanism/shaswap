@@ -55,14 +55,23 @@ export function SwapCard() {
     quote && toToken ? formatUnits(quote.amountOut, toToken.decimals) : "";
 
   // The pool that trades this pair (also identifies the order's pool_nft binding).
+  // Bind to the SAME pool the quote was priced against (quote.poolId) so the floor
+  // and the order's pool_nft can never reference two different same-pair pools;
+  // fall back to a pair match before any quote has loaded.
   const pool: Pool | undefined = useMemo(() => {
     if (!fromToken || !toToken) return undefined;
-    return pools.find(
-      (p) =>
-        (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
-        (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
+    const byQuote = quote?.poolId
+      ? pools.find((p) => p.id === quote.poolId)
+      : undefined;
+    return (
+      byQuote ??
+      pools.find(
+        (p) =>
+          (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
+          (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
+      )
     );
-  }, [pools, fromToken, toToken]);
+  }, [pools, fromToken, toToken, quote]);
 
   // Per-order floor (limit): the worst output the user will accept = the estimated
   // output minus slippage. The solver may NEVER settle below this (§5.2.5).
@@ -76,12 +85,15 @@ export function SwapCard() {
     !!baseAmountIn && /^[0-9]+$/.test(baseAmountIn) && BigInt(baseAmountIn) > 0n;
   const wrongNetwork =
     connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
+  // Fail CLOSED: only allow posting once the wallet's network is KNOWN and correct
+  // (networkId is undefined for a beat after connect — don't post a preprod order
+  // through a wallet whose network we haven't confirmed yet).
+  const networkReady = connected && networkId === APP_CONFIG.networkId;
   const tipLovelace = toBaseUnits(tip || "0", 6);
   const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") >= 0n;
 
   const canPost =
-    connected &&
-    !wrongNetwork &&
+    networkReady &&
     hasAmount &&
     !!pool &&
     !!quote &&
@@ -122,15 +134,21 @@ export function SwapCard() {
     ? { label: "Connect wallet", disabled: true }
     : wrongNetwork
       ? { label: "Wrong network", disabled: true }
-      : !hasAmount
-        ? { label: "Enter an amount", disabled: true }
-        : !pool
-          ? { label: "No pool for this pair", disabled: true }
-          : !quote || quoteLoading
-            ? { label: "Fetching quote…", disabled: true }
-            : post.kind === "posting"
-              ? { label: "Posting order…", disabled: true }
-              : { label: "Post order", disabled: false };
+      : !networkReady
+        ? { label: "Checking network…", disabled: true }
+        : !hasAmount
+          ? { label: "Enter an amount", disabled: true }
+          : !pool
+            ? { label: "No pool for this pair", disabled: true }
+            : !quote || quoteLoading
+              ? { label: "Fetching quote…", disabled: true }
+              : floor <= 0n
+                ? { label: "Amount too small", disabled: true }
+                : !tipValid
+                  ? { label: "Enter a valid tip", disabled: true }
+                  : post.kind === "posting"
+                    ? { label: "Posting order…", disabled: true }
+                    : { label: "Post order", disabled: false };
 
   return (
     <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">

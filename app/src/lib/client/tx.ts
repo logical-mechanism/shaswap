@@ -148,6 +148,16 @@ export async function reclaimOrder(
     throw new Error("no collateral in wallet — set a collateral UTXO and retry");
   }
 
+  // The collateral input must be DISJOINT from regular spend inputs (the ledger
+  // rejects a tx that uses one UTXO as both), so exclude every collateral UTXO from
+  // the funding-selection set — otherwise coin selection can pick it to cover the fee.
+  const collateralRefs = new Set(
+    collateral.map((c) => `${c.input.txHash}#${c.input.outputIndex}`),
+  );
+  const fundingUtxos = utxos.filter(
+    (u) => !collateralRefs.has(`${u.input.txHash}#${u.input.outputIndex}`),
+  );
+
   const txBuilder = new MeshTxBuilder({ params, evaluator });
   const unsignedTx = await txBuilder
     .spendingPlutusScriptV3()
@@ -173,7 +183,7 @@ export async function reclaimOrder(
     )
     .requiredSignerHash(ownerPkh)
     .changeAddress(changeAddress)
-    .selectUtxosFrom(utxos)
+    .selectUtxosFrom(fundingUtxos)
     .complete();
 
   const signedTx = await wallet.signTx(unsignedTx);

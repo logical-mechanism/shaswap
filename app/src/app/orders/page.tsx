@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useAddress, useWallet } from "@meshsdk/react";
+import { useEffect, useState } from "react";
+import { useWallet } from "@meshsdk/react";
 import type { WalletPosition } from "@/lib/data";
 import { useOrders } from "@/hooks/useOrders";
 import { reclaimOrder } from "@/lib/client/tx";
@@ -22,8 +22,28 @@ type ReclaimState =
 
 export default function OrdersPage() {
   const { connected, wallet } = useWallet();
-  const address = useAddress();
-  const { orders, loading, error, reload } = useOrders(address);
+  // Query by the wallet's CHANGE address — that is the payment key hash an order is
+  // posted under (`postOrder` uses getChangeAddress), so it matches the order owner.
+  // `useAddress()` (first used address) can differ on HD wallets that rotate
+  // addresses, which would hide the user's own freshly-posted order. We only set
+  // state from the async callback (never synchronously in the effect) and derive the
+  // disconnected case, so there are no cascading renders.
+  const [changeAddr, setChangeAddr] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    wallet
+      .getChangeAddress()
+      .then((a) => {
+        if (!cancelled) setChangeAddr(a);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, wallet]);
+  const owner = connected ? changeAddr : undefined;
+  const { orders, loading, error, reload } = useOrders(owner);
   const [reclaim, setReclaim] = useState<ReclaimState>({ kind: "idle" });
 
   async function onReclaim(ref: string) {
@@ -36,6 +56,10 @@ export default function OrdersPage() {
       setReclaim({ kind: "error", ref, message: errMessage(e) });
     }
   }
+
+  // Also show the loading skeleton while the change address is still resolving, so
+  // there's no "No live orders" flash before the first fetch can even start.
+  const showLoading = loading || (connected && owner === undefined);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
@@ -55,7 +79,7 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {connected && loading && (
+      {connected && showLoading && (
         <div className="space-y-2">
           {[0, 1].map((i) => (
             <div
@@ -66,11 +90,11 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {connected && !loading && !error && orders.length === 0 && (
+      {connected && !showLoading && !error && orders.length === 0 && (
         <Empty>No live orders. Post one from the Swap page.</Empty>
       )}
 
-      {connected && !loading && orders.length > 0 && (
+      {connected && !showLoading && orders.length > 0 && (
         <ul className="space-y-2">
           {orders.map((o) => (
             <OrderRow
