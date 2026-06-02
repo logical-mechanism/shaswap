@@ -89,7 +89,8 @@ fn deadline_ok(deadline: Option<Int>, tx_upper: Option<Int>) -> Bool {
 /// must sit at the order's own address (so it stays a reclaimable order tagged
 /// `S`), hold exactly the unsold asset + pre-funded min-ADA + leftover tip, and
 /// carry a one-level (`partial == False`) order datum that preserves the owner,
-/// direction, deadline, and the limit *price* (`limit'·sell ≥ limit·sell'`).
+/// the payout stake credential, direction, deadline, and the limit *price*
+/// (`limit'·sell ≥ limit·sell'`).
 fn consume_remainder(
   remainders: List<Output>,
   order: OrderDatum,
@@ -109,6 +110,9 @@ fn consume_remainder(
   expect InlineDatum(rd) = rem.datum
   expect ro: OrderDatum = rd
   expect ro.owner == order.owner
+  // the remainder is a continuing order that will itself pay out later, so it must
+  // carry the SAME payout stake credential (the solver can't swap it on the rollover)
+  expect ro.owner_stake == order.owner_stake
   expect ro.sell_a == order.sell_a
   expect ro.sell_amount == new_sell
   expect ro.tip == tip_rem
@@ -144,8 +148,10 @@ fn check_one(
   expect InlineDatum(bd) = bound.datum
   expect b: BoundDatum = bd
   expect b.order_ref == input.output_reference
-  // owner payout: payment cred = owner, stake = None, no ref script (M-01/L-01)
-  expect utils.is_payout_output(bound, order.owner)
+  // owner payout: payment cred = owner, stake = the datum-pinned owner_stake (base
+  // address when Some, enterprise when None), no ref script (M-01/L-01). The stake
+  // half is read from the order datum, so the solver can't redirect the payout.
+  expect utils.is_payout_output(bound, order.owner, order.owner_stake)
 
   expect f >= 1
   expect f <= order.sell_amount

@@ -3,10 +3,10 @@
   "network_magic": 1,
   "kupo_url": "http://127.0.0.1:1442",
   "ogmios_url": "http://127.0.0.1:1337",
-  "settlement_hash": "82039119bc85e1b8fb4fab8cfb0628f487e64f0b6338da842950500c",
-  "order_script_hash": "65261b26df3cb88e75bfb936df8d479de2a43e3fef276a1f0e2e4e94",
-  "pool_script_hash": "dfa55af00c04e5ce5d982e7d8e7b991fbc5e96c261f401259ef8b510",
-  "pool_mint_policy": "1c3be7b9fe09c169ae92722eac4961f1a2d94274a7669190828605d0",
+  "settlement_hash": "a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e",
+  "order_script_hash": "801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2",
+  "pool_script_hash": "4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b",
+  "pool_mint_policy": "3d36f7963dcca05ba53e32babdf3c2572d467c7388dbb1cf4b28645f",
   "nft_name": "4e4654",
   "lp_name": "4c50",
   "total_lp": 9223372036854775807,
@@ -14,15 +14,15 @@
   "pool_min_ada": 2000000,
   "order_min_ada": 2000000,
   "settlement_ref": {
-    "tx_id": "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
+    "tx_id": "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
     "index": 0
   },
   "order_ref": {
-    "tx_id": "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
+    "tx_id": "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
     "index": 2
   },
   "pool_ref": {
-    "tx_id": "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
+    "tx_id": "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
     "index": 1
   },
   "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey",

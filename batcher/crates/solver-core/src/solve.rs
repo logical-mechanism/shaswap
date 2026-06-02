@@ -340,6 +340,7 @@ mod cap_tests {
             ),
             datum: OrderDatum {
                 owner: Credential::VerificationKey(vec![0xb1u8; 28]),
+                owner_stake: None,
                 pool_nft: nft(),
                 sell_a: true,
                 sell_amount: sell,

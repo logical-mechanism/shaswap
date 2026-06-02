@@ -3,7 +3,8 @@
 //! (future) `txbuild` crate to lower them into a real Pallas transaction.
 //!
 //! Only the `Inline` stake-credential form is modelled (the protocol tags UTXOs
-//! with `Some(Inline(S))`; payouts pin `stake = None`).
+//! with `Some(Inline(S))`; payouts pin the order datum's `owner_stake` — `Some(c)`
+//! for a base address, `None` for an enterprise one).
 
 use crate::types::{BoundDatum, Credential, OrderDatum, OutputReference, PoolDatum};
 use crate::value::Value;
@@ -18,12 +19,14 @@ pub struct Address {
 }
 
 impl Address {
-    /// An owner payout address: payment = owner, `stake = None`, per
-    /// `utils.is_payout_output` (M-01: solver can't hijack staking rewards).
-    pub fn payout(owner: Credential) -> Self {
+    /// An owner payout address: payment = owner, stake = the order datum's
+    /// `owner_stake` (`Some(c)` → base address, `None` → enterprise), per
+    /// `utils.is_payout_output`. The stake is read from the datum, never chosen by
+    /// the solver (M-01: solver can't redirect the payout / hijack staking rewards).
+    pub fn payout(owner: Credential, owner_stake: Option<Credential>) -> Self {
         Address {
             payment: owner,
-            stake: None,
+            stake: owner_stake,
         }
     }
 

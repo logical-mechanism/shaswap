@@ -24,13 +24,13 @@ export const DEPLOYMENT_NETWORK_ID: NetworkId = 0;
 
 /** Settlement validator hash — also the stake-credential tag `S` (§5.4). */
 export const SETTLEMENT_HASH =
-  "82039119bc85e1b8fb4fab8cfb0628f487e64f0b6338da842950500c";
+  "a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e";
 /** Order validator hash (payment credential of the order address). */
 export const ORDER_SCRIPT_HASH =
-  "65261b26df3cb88e75bfb936df8d479de2a43e3fef276a1f0e2e4e94";
+  "801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2";
 /** Pool validator hash (payment credential of the pool address). */
 export const POOL_SCRIPT_HASH =
-  "dfa55af00c04e5ce5d982e7d8e7b991fbc5e96c261f401259ef8b510";
+  "4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b";
 
 /**
  * First pool's one-shot mint policy. NOTE: each pool has its OWN seed-parameterised
@@ -39,7 +39,7 @@ export const POOL_SCRIPT_HASH =
  * mirroring the batcher's `find_pools`). Kept for reference/diagnostics only.
  */
 export const FIRST_POOL_MINT_POLICY =
-  "1c3be7b9fe09c169ae92722eac4961f1a2d94274a7669190828605d0";
+  "3d36f7963dcca05ba53e32babdf3c2572d467c7388dbb1cf4b28645f";
 
 /** `constants.nft_name` = "NFT" (the pool NFT asset name, shared across pools). */
 export const NFT_NAME_HEX = "4e4654";
@@ -57,17 +57,17 @@ export const ORDER_MIN_ADA = 2_000_000n;
  * without inlining the validator. The settlement/pool refs are the solver's concern.
  */
 export const ORDER_REF = {
-  txHash: "032ded5d46603fa3f8be759d64e9fb0bfb68576e945ccb18f0c72e94cf0af5f5",
+  txHash: "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
   outputIndex: 2,
 } as const;
 
 /**
  * Byte size of the deployed order validator (the `cborHex` of
- * `contracts/happy_path/scripts/order.plutus` is 1072 hex chars = 536 bytes). Passed
+ * `contracts/happy_path/scripts/order.plutus` is 1074 hex chars = 537 bytes). Passed
  * to `spendingTxInReference` so the client can compute the Conway reference-script fee
  * without an extra round-trip to resolve the ref UTXO.
  */
-export const ORDER_SCRIPT_SIZE = 536;
+export const ORDER_SCRIPT_SIZE = 537;
 
 /**
  * Where orders live: a base address tagged with `S`.
@@ -79,8 +79,8 @@ export const ORDER_SCRIPT_SIZE = 536;
  * by `address.test.ts` — a hash/address drift fails that test.
  */
 export const ORDER_ADDR =
-  "addr_test1xpjjvxexmu7t3rn4h7undhudg7w79fp78lhjw6slpchya9yzqwg3n0y9uxu0knat3nasv285slny7zmr8rdgg22s2qxq6qyt8t";
+  "addr_test1xzqpc7jvgf5tnpksmlvsqy8wt4ts3svtrxlysk6nazxj9u490hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0q4qj5a7";
 
 /** Where the pool lives: base address (payment = POOL_SCRIPT_HASH, stake = `S`). */
 export const POOL_ADDR =
-  "addr_test1xr062khspszwtnjanqh8mrnmny0mch5kcfslgqf9nmut2yyzqwg3n0y9uxu0knat3nasv285slny7zmr8rdgg22s2qxqqn86nz";
+  "addr_test1xpzz0muy20c6ed86cwzyl0ruxjzjlcvguj4enula5pa4xwa90hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0qvte56r";

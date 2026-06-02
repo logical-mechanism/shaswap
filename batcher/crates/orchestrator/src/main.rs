@@ -176,6 +176,11 @@ fn run() -> Result<(), Err> {
         .unwrap_or_default();
 
     let backend = KupoOgmios::new(cfg.clone()).map_err(|e| format!("backend: {e:?}"))?;
+    // Preflight: refuse to run against a Kupo indexing a DIFFERENT deployment (a stale
+    // index after a redeploy would silently yield zero pools). Fails fast with a hint.
+    backend
+        .preflight_deployment(&raw.settlement_hash)
+        .map_err(|e| format!("kupo preflight: {e:?}"))?;
     let skey = assemble::load_signing_key(&signing_key_path).map_err(|e| format!("skey: {e:?}"))?;
     let solver_addr = solver_address(network_id, &skey)?;
     let submit = std::env::var("SHASWAP_SUBMIT").as_deref() == Ok("1");

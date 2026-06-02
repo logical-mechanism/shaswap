@@ -64,19 +64,57 @@ High-signal pointers only:
   `spec/ada-triple-role.md`) → full specs during the deep dive.
 - Solver tip mechanics; order rollover; `λ`/fee defaults; sharding defaults; ~~data
   provider choice~~ (app uses **Blockfrost** behind the seam, server-side key).
-- **⚠️ PRE-RELEASE: owner payout is an ENTERPRISE address → breaks some wallets.**
-  Settlement pins each owner payout to `payment = owner, stake = None`
-  (`clearing.ak:147` "owner payout: payment cred = owner, stake = None", M-01/L-01).
-  Wallets that don't track the enterprise variant of their own keys (**Lace**) never
-  show the settled funds; **Eternl** does, and the funds are always key-controlled (not
-  lost). Confirmed live during the app test (2026-06-01). **Fix before release (contract
-  + app):** carry the owner's **stake credential** in the order so payouts land at a
-  **base** address — e.g. `OrderDatum.owner` becomes a full address (or +stake cred) and
-  the settlement payout pin uses it; the app's `buildOrder` would attach the wallet's
-  reward-address stake credential. Until then, recommend Eternl for testing.
+- ~~**⚠️ PRE-RELEASE: owner payout is an ENTERPRISE address → breaks some wallets.**~~
+  **RESOLVED 2026-06-01 (Blueprint Rev 21, base-address payout).** `OrderDatum` gained
+  `owner_stake: Option<Credential>` (field index 1); the settlement owner-payout pin now
+  builds `{ payment = owner, stake = owner_stake }` — `Some` → a **base** address (Lace
+  shows + spends it), `None` → enterprise. The stake is read FROM the datum so the solver
+  can't redirect it (M-01 preserved). Mirrored in the batcher + app; the app's `buildOrder`
+  attaches the wallet's reward-address stake cred. **Verified live on the redeployed
+  preprod** (see the 2026-06-01 base-address log entry): a settlement paid the owner at a
+  base address that the owner key then spent. (Lace *display* is the maintainer's final
+  browser check.)
 
 ## Log
 
+- **2026-06-01** — **🎉 BASE-ADDRESS owner payout — full redeploy + live proof (branch
+  `contracts/base-address-payout` off `main`, app branch merged in).** Resolved the
+  pre-release enterprise-payout limitation across all four layers + Blueprint Rev 21.
+  **Design:** `OrderDatum` gains `owner_stake: Option<Credential>` (field index 1, right
+  after `owner`; OrderDatum now **9 fields**, still distinct from PoolDatum's 6). The
+  settlement owner-payout pin (`utils.is_payout_output`) now builds `{ payment = owner,
+  stake = owner_stake }` instead of `stake = None`: `Some(c)` → a **base** address (so
+  Lace-style delegating wallets display + spend the settled funds), `None` → the prior
+  enterprise address. **M-01 preserved:** the stake half is read FROM the order datum, so
+  the solver can neither choose nor redirect it (address stays deterministic + fully
+  pinned; `reference_script == None` for L-01; owner payment cred stays VK for reclaim). A
+  partial-fill **remainder** must carry the same `owner_stake` (continuity pin), so the
+  rollover can't swap the delegation. **Layers:** (1) `contracts/` — `types.ak`/`utils.ak`/
+  `clearing.ak`; +7 Aiken negatives/positives (**103 green**: base key/script-stake OK,
+  wrong-stake/dropped-stake/script-stake-fuzz rejected, remainder-stake continuity).
+  (2) `batcher/` — `solver-core` types/output/clearing + `txbuild::plutus` encode +
+  `chain::decode` decode (encoder↔decoder round-trip + golden CBOR green; clippy -D + fmt
+  clean). (3) `app/` — `datums.ts` codec (9-field, new golden CBOR byte-identical to the
+  batcher), `order.ts`/`tx.ts` (`buildOrder` + `postOrder` derive the wallet's stake cred
+  from the change address; null → enterprise), `deployment.ts`/`address.test.ts` synced to
+  the new identities; **25 tests, build + lint green** (Node 22). (4) **Redeployed
+  preprod** end-to-end via `happy_path/` (cardano-cli): regenerated param-applied scripts,
+  re-registered `S` (publish handler authorized it), redeployed 3 ref scripts, re-minted
+  TEST + recreated/seeded a pool, posted an order with `owner_stake` = a new solver stake
+  key, **settled** it — the owner payout landed at the **base** address
+  `addr_test1qq6vymyr2…` (`addr_test1q…` = payment+stake) and the **owner key then spent
+  it** (proving spendability). **New live identities** (also in `happy_path/deployment.json`
+  + app `deployment.ts`): S `a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e`,
+  order `801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2`, pool
+  `4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b`, pool_mint
+  `3d36f7963dcca05ba53e32babdf3c2572d467c7388dbb1cf4b28645f`, TEST policy `8160c878…`
+  (unchanged, deterministic sig-policy), ref scripts tx
+  `78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e` (settlement#0,
+  pool#1, order#2), settle tx `751f7a6e6cdc670cb41f6ff479b84b07d7eec03c64d41270a0dfa5951d3c7545`.
+  Order ref-script byte size 536→**537**. **Owed (maintainer):** the final in-browser Lace
+  check (post from the app with a funded Lace wallet, settle, confirm Lace *displays* the
+  base-address payout) — can't be done headlessly. **Not committed-to-PR** — branch left
+  for the maintainer to test then open the PR.
 - **2026-06-01** — **App goes live on preprod: real reads + non-custodial order
   POST & RECLAIM (branch `app/onchain-read-post-reclaim` off `main`).** The web app now
   *does* things on-chain (settlement stays the solver's job). **Provider (user choice):

@@ -11,8 +11,8 @@
  *  - `AssetId`        → `Constr 0 [policy, name]`            (ADA = `Constr 0 [h'', h'']`)
  *  - `Credential`     → key `Constr 0 [hash]`, script `Constr 1 [hash]`
  *  - `OutputReference`→ `Constr 0 [tx_id, index]`
- *  - `OrderDatum`     → `Constr 0 [owner, pool_nft, sell_a, sell_amount, limit, tip,
- *                                  partial, deadline]`
+ *  - `OrderDatum`     → `Constr 0 [owner, owner_stake, pool_nft, sell_a, sell_amount,
+ *                                  limit, tip, partial, deadline]`
  *  - `PoolDatum`      → `Constr 0 [nft, asset_a, asset_b, fee_num, fee_den, creator]`
  *  - `BoundDatum`     → `Constr 0 [order_ref]`
  *  - `Bool`           → `False = Constr 0 []`, `True = Constr 1 []`
@@ -53,6 +53,13 @@ export interface OutputReference {
 /** `types.OrderDatum` — a trade intent against one pool's `(asset_a, asset_b)`. */
 export interface OrderDatum {
   owner: Credential;
+  /**
+   * The owner's chosen stake credential for the settled-funds payout. A non-null
+   * value makes the payout land at a **base** address (delegating/Lace-style wallets
+   * show + spend it); `null` is an enterprise payout. Pinned from the datum, so the
+   * solver can't redirect it (audit M-01).
+   */
+  ownerStake: Credential | null;
   poolNft: AssetId;
   /** `true` sells `asset_a` for `asset_b`; `false` sells `asset_b` for `asset_a`. */
   sellA: boolean;
@@ -106,6 +113,10 @@ function optionInt(v: bigint | null): Data {
   return v === null ? mConStr(1, []) : mConStr(0, [v]);
 }
 
+function optionCredential(c: Credential | null): Data {
+  return c === null ? mConStr(1, []) : mConStr(0, [encodeCredential(c)]);
+}
+
 export function encodeAssetId(a: AssetId): Data {
   return mConStr(0, [a.policy, a.name]);
 }
@@ -121,6 +132,7 @@ export function encodeOutputReference(r: OutputReference): Data {
 export function encodeOrderDatum(d: OrderDatum): Data {
   return mConStr(0, [
     encodeCredential(d.owner),
+    optionCredential(d.ownerStake),
     encodeAssetId(d.poolNft),
     bool(d.sellA),
     d.sellAmount,
@@ -217,6 +229,13 @@ function decodeOptionInt(d: PlutusJson): bigint | null {
   throw new Error(`unknown Option constructor ${index}`);
 }
 
+function decodeOptionCredential(d: PlutusJson): Credential | null {
+  const { index, fields } = readConstr(d);
+  if (index === 1) return null;
+  if (index === 0) return decodeCredential(fields[0]);
+  throw new Error(`unknown Option constructor ${index}`);
+}
+
 function decodeBool(d: PlutusJson): boolean {
   const { index } = readConstr(d);
   if (index === 1) return true;
@@ -228,16 +247,17 @@ function decodeBool(d: PlutusJson): boolean {
 export function decodeOrderDatum(cborHex: string): OrderDatum {
   const root = deserializeDatum<PlutusJson>(cborHex);
   const f = asConstr(root, 0);
-  if (f.length !== 8) throw new Error(`OrderDatum: expected 8 fields, got ${f.length}`);
+  if (f.length !== 9) throw new Error(`OrderDatum: expected 9 fields, got ${f.length}`);
   return {
     owner: decodeCredential(f[0]),
-    poolNft: decodeAssetId(f[1]),
-    sellA: decodeBool(f[2]),
-    sellAmount: asInt(f[3]),
-    limit: asInt(f[4]),
-    tip: asInt(f[5]),
-    partial: decodeBool(f[6]),
-    deadline: decodeOptionInt(f[7]),
+    ownerStake: decodeOptionCredential(f[1]),
+    poolNft: decodeAssetId(f[2]),
+    sellA: decodeBool(f[3]),
+    sellAmount: asInt(f[4]),
+    limit: asInt(f[5]),
+    tip: asInt(f[6]),
+    partial: decodeBool(f[7]),
+    deadline: decodeOptionInt(f[8]),
   };
 }
 

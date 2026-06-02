@@ -7,7 +7,7 @@
 //! - `AssetId` → `Constr 0 [policy, name]`
 //! - `Credential` → `VerificationKey` = `Constr 0 [hash]`, `Script` = `Constr 1 [hash]`
 //! - `OutputReference` → `Constr 0 [tx_id, index]` (Plutus v3: tx_id is plain bytes)
-//! - `OrderDatum` → `Constr 0 [owner, pool_nft, sell_a, sell_amount, limit, tip, partial, deadline]`
+//! - `OrderDatum` → `Constr 0 [owner, owner_stake, pool_nft, sell_a, sell_amount, limit, tip, partial, deadline]`
 //! - `PoolDatum` → `Constr 0 [nft, asset_a, asset_b, fee_num, fee_den, creator]`
 //! - `BoundDatum` → `Constr 0 [order_ref]`
 //! - `SettlementRedeemer` → `Constr 0 [price_num, price_den, asset_a, asset_b, pool_nft, fills]`
@@ -83,6 +83,13 @@ fn option_int(o: Option<i64>) -> PlutusData {
     }
 }
 
+fn option_credential(o: &Option<Credential>) -> PlutusData {
+    match o {
+        Some(c) => constr(0, vec![credential(c)]),
+        None => constr(1, vec![]),
+    }
+}
+
 pub fn asset_id(a: &AssetId) -> PlutusData {
     constr(0, vec![bytes(&a.policy), bytes(&a.name)])
 }
@@ -106,6 +113,7 @@ pub fn order_datum(d: &OrderDatum) -> PlutusData {
         0,
         vec![
             credential(&d.owner),
+            option_credential(&d.owner_stake),
             asset_id(&d.pool_nft),
             bool_data(d.sell_a),
             int(d.sell_amount),
@@ -219,6 +227,7 @@ mod tests {
         use pallas_codec::minicbor;
         let d = order_datum(&OrderDatum {
             owner: Credential::VerificationKey(vec![0xab; 28]),
+            owner_stake: Some(Credential::VerificationKey(vec![0xe1; 28])),
             pool_nft: AssetId::new(vec![0x44; 28], vec![0x4e, 0x46, 0x54]),
             sell_a: true,
             sell_amount: 1_000_000,
