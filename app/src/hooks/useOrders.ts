@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { WalletPosition } from "@/lib/data";
 import { fetchOrders } from "@/lib/client/api";
 
@@ -12,11 +12,19 @@ import { fetchOrders } from "@/lib/client/api";
  * yet) rather than a separately-toggled flag — so there's no first-frame
  * "not loading, empty" flash, and state is only written inside async callbacks
  * (never synchronously in the effect body).
+ *
+ * `reload()` re-fetches (e.g. after a reclaim removes an order from the chain).
  */
 export function useOrders(address: string | undefined) {
   const [orders, setOrders] = useState<WalletPosition[]>([]);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  const reload = useCallback(() => {
+    setLoadedFor(null);
+    setNonce((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     if (!address) return;
@@ -34,12 +42,13 @@ export function useOrders(address: string | undefined) {
         setLoadedFor(address);
       });
     return () => ac.abort();
-  }, [address]);
+  }, [address, nonce]);
 
   const resolved = !!address && loadedFor === address;
   return {
     orders: address ? orders : [],
     loading: !!address && !resolved,
     error: resolved ? error : null,
+    reload,
   };
 }

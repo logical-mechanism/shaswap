@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Unit tests run on Node's runner with TS type-stripping (see package.json
+    // `test`); they use `.ts` import specifiers the bundler/lint config rejects.
+    "**/*.test.ts",
   ]),
 ]);
 

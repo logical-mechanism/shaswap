@@ -84,6 +84,17 @@ export function TokenSelect({
 }
 
 function TokenIcon({ token }: { token: TokenInfo | undefined }) {
+  // Real registry logo (a data-URI) as a background — avoids next/image config and
+  // the no-img-element rule, and degrades to the gradient initials when absent.
+  if (token?.icon) {
+    return (
+      <span
+        className="h-6 w-6 shrink-0 rounded-full bg-white/10 bg-cover bg-center"
+        style={{ backgroundImage: `url("${token.icon}")` }}
+        aria-hidden
+      />
+    );
+  }
   return (
     <span
       className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-accent/80 to-accent-2/80 text-[10px] font-bold text-black"
