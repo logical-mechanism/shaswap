@@ -323,6 +323,21 @@ export class BlockfrostDataProvider implements DataProvider {
     return retry(() => this.bf.fetchProtocolParameters());
   }
 
+  /**
+   * The network's Plutus cost models as ordered `[v1, v2, v3]` parameter arrays. Read
+   * from Blockfrost's `epochs/latest/parameters.cost_models_raw` (the canonical, ledger-
+   * ordered integer arrays — NOT the named `cost_models` map, whose key order is not
+   * guaranteed). Empty arrays for any absent language. `fetchProtocolParameters` drops
+   * these, so we fetch the raw record directly.
+   */
+  async costModels(): Promise<number[][]> {
+    const raw = (await retry(() =>
+      this.bf.get("epochs/latest/parameters"),
+    )) as { cost_models_raw?: Record<string, number[] | null> | null };
+    const cm = raw?.cost_models_raw ?? {};
+    return [cm.PlutusV1 ?? [], cm.PlutusV2 ?? [], cm.PlutusV3 ?? []];
+  }
+
   evaluateTx(txCbor: string): Promise<Omit<Action, "data">[]> {
     return retry(() => this.bf.evaluateTx(txCbor));
   }

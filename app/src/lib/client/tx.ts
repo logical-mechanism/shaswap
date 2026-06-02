@@ -34,12 +34,25 @@ import {
   POOL_SCRIPT_SIZE,
 } from "@/lib/chain/deployment";
 
-/** Protocol params via the seam (server fetches them from the provider). */
-async function fetchProtocolParams(): Promise<Protocol> {
+/**
+ * Protocol params + on-chain cost models via the seam (server fetches them from the
+ * provider). The cost models are the per-language parameter arrays `[v1, v2, v3]`; they
+ * are needed to compute the script-integrity hash for Plutus spends — MeshJS otherwise
+ * falls back to stale baked-in defaults, and preprod is on a newer protocol version
+ * (e.g. PlutusV3 = 350 params vs MeshJS's 297), so the node would reject the tx with a
+ * "script integrity hash doesn't match" error. ADA-only paths (postOrder) ignore them.
+ */
+async function fetchProtocolParams(): Promise<{
+  params: Protocol;
+  costModels: number[][];
+}> {
   const res = await fetch("/api/protocol-params");
   if (!res.ok) throw new Error(`protocol-params request failed (${res.status})`);
-  const { params } = (await res.json()) as { params: Protocol };
-  return params;
+  const { params, costModels } = (await res.json()) as {
+    params: Protocol;
+    costModels: number[][];
+  };
+  return { params, costModels: costModels ?? [] };
 }
 
 /** Resolve a single on-chain UTXO (value + inline datum) via the seam. */
@@ -143,7 +156,8 @@ export async function postOrder(
     deadline: args.deadline,
   });
 
-  const [params, utxos] = await Promise.all([
+  // postOrder is a plain payment (no Plutus script), so it needs no cost models.
+  const [{ params }, utxos] = await Promise.all([
     fetchProtocolParams(),
     wallet.getUtxos(),
   ]);
@@ -182,13 +196,14 @@ export async function reclaimOrder(
     throw new Error(`malformed order ref: ${ref}`);
   }
 
-  const [order, params, changeAddress, collateral, utxos] = await Promise.all([
+  const [order, protocol, changeAddress, collateral, utxos] = await Promise.all([
     fetchUtxo(txHash, index),
     fetchProtocolParams(),
     wallet.getChangeAddress(),
     wallet.getCollateral(),
     wallet.getUtxos(),
   ]);
+  const { params, costModels } = protocol;
   const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
   const col = collateral[0];
   if (!col) {
@@ -206,6 +221,8 @@ export async function reclaimOrder(
   );
 
   const txBuilder = new MeshTxBuilder({ params, evaluator });
+  // Inject the network's real cost models so the script-integrity hash matches the node.
+  txBuilder.setCostModels(costModels);
   const unsignedTx = await txBuilder
     .spendingPlutusScriptV3()
     .txIn(
@@ -245,12 +262,13 @@ export async function reclaimOrder(
  * handling in `reclaimOrder`.
  */
 async function spendContext(wallet: IWallet) {
-  const [params, changeAddress, collateral, utxos] = await Promise.all([
+  const [protocol, changeAddress, collateral, utxos] = await Promise.all([
     fetchProtocolParams(),
     wallet.getChangeAddress(),
     wallet.getCollateral(),
     wallet.getUtxos(),
   ]);
+  const { params, costModels } = protocol;
   const col = collateral[0];
   if (!col) {
     throw new Error("no collateral in wallet — set a collateral UTXO and retry");
@@ -261,7 +279,7 @@ async function spendContext(wallet: IWallet) {
   const fundingUtxos = utxos.filter(
     (u) => !collateralRefs.has(`${u.input.txHash}#${u.input.outputIndex}`),
   );
-  return { params, changeAddress, col, fundingUtxos };
+  return { params, costModels, changeAddress, col, fundingUtxos };
 }
 
 export interface DepositLiquidityArgs {
@@ -309,9 +327,12 @@ export async function depositLiquidity(
     minLpOut: args.minLpOut,
   });
 
-  const { params, changeAddress, col, fundingUtxos } = await spendContext(wallet);
+  const { params, costModels, changeAddress, col, fundingUtxos } =
+    await spendContext(wallet);
 
   const txBuilder = new MeshTxBuilder({ params, evaluator });
+  // Inject the network's real cost models so the script-integrity hash matches the node.
+  txBuilder.setCostModels(costModels);
   txBuilder
     .spendingPlutusScriptV3()
     .txIn(
@@ -395,7 +416,8 @@ export async function withdrawLiquidity(
     minBOut: args.minBOut,
   });
 
-  const { params, changeAddress, col, fundingUtxos } = await spendContext(wallet);
+  const { params, costModels, changeAddress, col, fundingUtxos } =
+    await spendContext(wallet);
 
   // Preflight: the recreated pool output needs `lpToBurn` more LP than the pool input
   // carries, so the wallet must supply it via coin selection. Surface a clear error up
@@ -412,6 +434,8 @@ export async function withdrawLiquidity(
   }
 
   const txBuilder = new MeshTxBuilder({ params, evaluator });
+  // Inject the network's real cost models so the script-integrity hash matches the node.
+  txBuilder.setCostModels(costModels);
   const unsignedTx = await txBuilder
     .spendingPlutusScriptV3()
     .txIn(

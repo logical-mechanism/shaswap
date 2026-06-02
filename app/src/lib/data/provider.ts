@@ -59,6 +59,15 @@ export interface DataProvider {
   protocolParameters(): Promise<Protocol>;
 
   /**
+   * The network's current Plutus cost models as ordered parameter arrays
+   * `[plutusV1, plutusV2, plutusV3]`. The MeshJS `Protocol` type drops these, but they
+   * are required to compute a Plutus spend's script-integrity hash that matches the
+   * node — MeshJS otherwise uses stale baked-in defaults and the node rejects the tx.
+   * Served via `/api/protocol-params` alongside the params.
+   */
+  costModels(): Promise<number[][]>;
+
+  /**
    * Script execution units for a draft tx (the Plutus `Reclaim` spend). Served via
    * `/api/tx/evaluate`; the client feeds the result to `MeshTxBuilder`'s evaluator.
    */
