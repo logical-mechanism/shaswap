@@ -213,6 +213,7 @@ export async function reclaimOrder(
       order.input.outputIndex,
       order.output.amount,
       order.output.address,
+      0, // scriptSize: the order UTXO carries no attached reference script. Required so MeshTxBuilder.complete() doesn't demand a fetcher (this MeshJS version flags an input with scriptSize===undefined as incomplete).
     )
     .spendingTxInReference(
       ORDER_REF.txHash,
@@ -318,6 +319,7 @@ export async function depositLiquidity(
       poolUtxo.input.outputIndex,
       poolUtxo.output.amount,
       poolUtxo.output.address,
+      0, // scriptSize: the pool UTXO carries no attached reference script (out.reference_script == None). Required so MeshTxBuilder.complete() doesn't demand a fetcher to resolve it.
     )
     .spendingTxInReference(
       POOL_REF.txHash,
@@ -417,6 +419,7 @@ export async function withdrawLiquidity(
       poolUtxo.input.outputIndex,
       poolUtxo.output.amount,
       poolUtxo.output.address,
+      0, // scriptSize: the pool UTXO carries no attached reference script (out.reference_script == None). Required so MeshTxBuilder.complete() doesn't demand a fetcher to resolve it.
     )
     .spendingTxInReference(
       POOL_REF.txHash,
