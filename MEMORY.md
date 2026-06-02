@@ -28,7 +28,8 @@ a continuous loop (it's currently one-shot per invocation), mempool-aware order 
 multi-funding/auto-split when <2 pure-ADA UTXOs. **Still owed on-chain:** an **emulator
 pass** with a real `Data` ScriptContext (confirms the ~40-order ceiling + decoding cost),
 and folding the clearing-price/ADA-triple-role specs into exact rounding rules. Later:
-**true-equilibrium** cost spike (§5.2.7); the **app** data-access layer. **Done on-chain:**
+**true-equilibrium** cost spike (§5.2.7). The **app** now reads preprod live + posts/reclaims
+orders behind the data seam (see the 2026-06-01 log entry). **Done on-chain:**
 trust anchor, order/pool/pool_mint validators, LP path, pool close, bidirectional netting,
 deadlines, partial fills.
 
@@ -66,6 +67,46 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-01** — **App goes live on preprod: real reads + non-custodial order
+  POST & RECLAIM (branch `app/onchain-read-post-reclaim` off `main`).** The web app now
+  *does* things on-chain (settlement stays the solver's job). **Provider (user choice):
+  Blockfrost (hosted)** behind the existing seam — `BLOCKFROST_PROJECT_ID` is
+  **server-only** (read in `getDataProvider()`/route handlers, never shipped to the
+  browser; safe as a plain DigitalOcean env var); `.env.example` committed, `.env.local`
+  gitignored. Falls back to `MockProvider` with no key. **(1) Real reads:**
+  `app/src/lib/data/blockfrost.ts` (`implements DataProvider`) discovers pools/orders at
+  the `S`-tagged pool/order addresses and decodes inline datums; pools identified
+  **generically** (UTXO holds the NFT its own `PoolDatum` declares — mirrors batcher
+  `find_pools`, so no per-pool config; both live pools surface). Reserves carve
+  `pool_min_ada` from an ADA side (`reserve_of`). Verified live: `/api/pools` returns the
+  two real TEST/ADA pools, `/api/quote` computes off real reserves, `/api/tokens`,
+  `/api/orders` all serve preprod data; key stayed server-side. **(2) Plutus codec**
+  `app/src/lib/chain/datums.ts` mirrors `plutus.json` + the batcher's `txbuild::plutus`
+  — MeshJS `mConStr`/`serializeData` produce **byte-identical** CBOR (`d87980`,
+  `d8799f4040ff`, full order datum golden = the Rust `round_trips_through_decode`
+  fixture). **`buildOrder` rejects malformed intents (throws — never silently posts).**
+  **(3) Post order:** client-side `MeshTxBuilder` (`lib/client/tx.ts` `postOrder`) builds a
+  plain payment to `ORDER_ADDR` with the inline `OrderDatum` + value (min-ADA + tip [+
+  sold ADA for the ADA triple-role]); wallet signs+submits (non-custodial). Wired into
+  `SwapCard` (Connect → amount → Post order; floor = quote × (1−slippage); advanced
+  tip/partial). **(4) Reclaim:** `reclaimOrder` spends the order UTXO with `Reclaim`
+  (`Constr 1 []`) via the on-chain **order reference script** (`ORDER_REF`, size 536 B),
+  owner-signed, collateral from wallet, ex-units via `/api/tx/evaluate`; `/orders` page
+  shows a Reclaim button per live order. **Seam additions** (all behind `/api/*`, key
+  server-side): `protocolParameters` (`/api/protocol-params`), `evaluateTx`
+  (`/api/tx/evaluate`), `resolveUtxo` (`/api/tx/utxo`); client uses thin shims so no
+  provider SDK runs in the browser. **Order/pool addresses** derived in
+  `lib/chain/address.ts` via `Cardano.BaseAddress.fromCredentials` with **script** stake
+  cred (MeshJS `scriptHashToBech32` makes a *key* stake cred → wrong type); **pinned** to
+  the committed constants by `address.test.ts`. **Tooling:** tests run on Node's built-in
+  runner with `--experimental-strip-types` (zero new deps; `*.test.ts` excluded from the
+  Next build + eslint, use explicit `.ts` specifiers; `allowImportingTsExtensions` on so
+  source `./x.ts` imports satisfy both Node and Turbopack). **13 tests, `npm run build` +
+  `lint` green** (nvm node 22 — snap node swallows stdout). De-risked the build path
+  offline: post-order tx builds with REAL preprod params (no fetcher needed, 389-byte
+  CBOR). **Owed (user, in browser):** the final live post+reclaim with a CIP-30 wallet
+  funded on preprod. **Not merged** — PR left for the maintainer; `contracts/`/`batcher/`
+  untouched.
 - **2026-06-01** — **App skeleton stood up (`app/`, branch `app/skeleton`).** Scaffolded
   the web dApp shell — structure + clean swap-card UI + wallet connect + the data-access
   seam — wired end-to-end against **mock data**. **No** settlement/clearing/order-building

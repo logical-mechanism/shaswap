@@ -1,7 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { useAddress, useWallet } from "@meshsdk/react";
+import type { WalletPosition } from "@/lib/data";
 import { useOrders } from "@/hooks/useOrders";
+import { reclaimOrder } from "@/lib/client/tx";
+import { explorerTxUrl } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -10,24 +14,40 @@ const STATUS_STYLE: Record<string, string> = {
   reclaimable: "bg-amber-500/15 text-amber-300",
 };
 
+type ReclaimState =
+  | { kind: "idle" }
+  | { kind: "busy"; ref: string }
+  | { kind: "done"; ref: string; hash: string }
+  | { kind: "error"; ref: string; message: string };
+
 export default function OrdersPage() {
-  const { connected } = useWallet();
+  const { connected, wallet } = useWallet();
   const address = useAddress();
-  const { orders, loading, error } = useOrders(address);
+  const { orders, loading, error, reload } = useOrders(address);
+  const [reclaim, setReclaim] = useState<ReclaimState>({ kind: "idle" });
+
+  async function onReclaim(ref: string) {
+    setReclaim({ kind: "busy", ref });
+    try {
+      const hash = await reclaimOrder(wallet, ref);
+      setReclaim({ kind: "done", ref, hash });
+      reload();
+    } catch (e) {
+      setReclaim({ kind: "error", ref, message: errMessage(e) });
+    }
+  }
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
         <p className="mt-1 text-sm text-muted">
-          Your open orders and positions, read through the data-access layer
-          (mock data).
+          Your live orders on preprod, read through the data-access layer. Reclaim
+          any of them at any time — every order is owner-reclaimable.
         </p>
       </header>
 
-      {!connected && (
-        <Empty>Connect a wallet to view your orders.</Empty>
-      )}
+      {!connected && <Empty>Connect a wallet to view your orders.</Empty>}
 
       {connected && error && (
         <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
@@ -47,40 +67,96 @@ export default function OrdersPage() {
       )}
 
       {connected && !loading && !error && orders.length === 0 && (
-        <Empty>No orders yet.</Empty>
+        <Empty>No live orders. Post one from the Swap page.</Empty>
       )}
 
       {connected && !loading && orders.length > 0 && (
         <ul className="space-y-2">
           {orders.map((o) => (
-            <li
+            <OrderRow
               key={o.ref}
-              className="flex items-center justify-between rounded-xl border border-white/10 bg-surface/60 px-4 py-3"
-            >
-              <div>
-                <div className="font-medium">
-                  {formatUnits(o.amountIn, o.tokenIn.decimals)}{" "}
-                  {o.tokenIn.ticker} → {o.tokenOut.ticker}
-                </div>
-                <div className="mt-0.5 font-mono text-xs text-muted">
-                  {truncate(o.ref, 10, 4)} · min{" "}
-                  {formatUnits(o.minOut, o.tokenOut.decimals)}{" "}
-                  {o.tokenOut.ticker}
-                </div>
-              </div>
-              <span
-                className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                  STATUS_STYLE[o.status] ?? "bg-white/10 text-muted"
-                }`}
-              >
-                {o.status}
-              </span>
-            </li>
+              order={o}
+              reclaim={reclaim}
+              onReclaim={() => onReclaim(o.ref)}
+            />
           ))}
         </ul>
       )}
     </div>
   );
+}
+
+function OrderRow({
+  order: o,
+  reclaim,
+  onReclaim,
+}: {
+  order: WalletPosition;
+  reclaim: ReclaimState;
+  onReclaim: () => void;
+}) {
+  const busy = reclaim.kind === "busy" && reclaim.ref === o.ref;
+  const done = reclaim.kind === "done" && reclaim.ref === o.ref;
+  const failed = reclaim.kind === "error" && reclaim.ref === o.ref;
+
+  return (
+    <li className="rounded-xl border border-white/10 bg-surface/60 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium">
+            {formatUnits(o.amountIn, o.tokenIn.decimals)} {o.tokenIn.ticker} →{" "}
+            {o.tokenOut.ticker}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-xs text-muted">
+            {truncate(o.ref, 10, 4)} · min{" "}
+            {formatUnits(o.minOut, o.tokenOut.decimals)} {o.tokenOut.ticker}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+              STATUS_STYLE[o.status] ?? "bg-white/10 text-muted"
+            }`}
+          >
+            {o.status}
+          </span>
+          <button
+            type="button"
+            onClick={onReclaim}
+            disabled={busy}
+            className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium transition-colors hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Reclaiming…" : "Reclaim"}
+          </button>
+        </div>
+      </div>
+
+      {done && (
+        <div className="mt-2 text-xs text-accent">
+          Reclaimed ✓{" "}
+          <a
+            href={explorerTxUrl(reclaim.hash)}
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono underline decoration-dotted underline-offset-2"
+          >
+            {truncate(reclaim.hash, 10, 8)} ↗
+          </a>
+        </div>
+      )}
+      {failed && (
+        <div className="mt-2 break-words text-xs text-red-300">
+          {reclaim.message}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function errMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  const s = String(e);
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
 }
 
 function Empty({ children }: { children: React.ReactNode }) {

@@ -1,3 +1,4 @@
+import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
 
@@ -157,6 +158,21 @@ export class MockProvider implements DataProvider {
     // Skeleton: return the same illustrative set regardless of address.
     void address;
     return POSITIONS;
+  }
+
+  // The mock has no chain access, so it cannot supply protocol params or evaluate a
+  // tx. These only matter on the order build/reclaim paths, which require a real
+  // provider; fail loudly rather than hand back fake values.
+  async protocolParameters(): Promise<Protocol> {
+    throw new Error("MockProvider cannot supply protocol parameters");
+  }
+
+  async evaluateTx(): Promise<Omit<Action, "data">[]> {
+    throw new Error("MockProvider cannot evaluate transactions");
+  }
+
+  async resolveUtxo(): Promise<UTxO | null> {
+    throw new Error("MockProvider cannot resolve UTXOs");
   }
 }
 

@@ -1,31 +1,46 @@
 import type { DataProvider } from "./provider";
 import { MockProvider } from "./mock";
+import { BlockfrostDataProvider } from "./blockfrost";
 
 export type { DataProvider } from "./provider";
 export type * from "./types";
 
 /**
- * THE single swap point for the data-access abstraction.
+ * THE single swap point for the data-access abstraction (CLAUDE.md HARD RULE).
  *
- * To move from mock data to a real source (Koios / Blockfrost / Maestro / our
- * own Dolos node), implement `DataProvider` in a new file under this folder and
- * return it here — keyed off an env var. That is the ONLY edit required; every
+ * To change the backing source (Blockfrost / Koios / Maestro / Kupo+Ogmios / our own
+ * Dolos node later), implement `DataProvider` in a new file under this folder and
+ * return it here — keyed off `DATA_PROVIDER`. That is the ONLY edit required; every
  * route handler and hook goes through this function, so no caller changes.
  *
- * This runs server-side (called from route handlers), so any future provider
- * keys read here stay off the client.
+ * This runs server-side ONLY (called from `/api/*` route handlers), so the provider
+ * key (`BLOCKFROST_PROJECT_ID`) read here never reaches the client — safe to set as a
+ * plain server env var (e.g. on the DigitalOcean app). The browser only fetches
+ * `/api/*`. Defaults to `blockfrost` when a key is present, else the offline mock.
  */
 let cached: DataProvider | undefined;
 
 export function getDataProvider(): DataProvider {
   if (cached) return cached;
-
-  // const which = process.env.DATA_PROVIDER ?? "mock";
-  // switch (which) {
-  //   case "blockfrost": cached = new BlockfrostProvider(process.env.BLOCKFROST_KEY!); break;
-  //   case "dolos":      cached = new DolosProvider(process.env.DOLOS_URL!); break;
-  //   default:           cached = new MockProvider();
-  // }
-  cached = new MockProvider();
+  cached = createDataProvider();
   return cached;
+}
+
+function createDataProvider(): DataProvider {
+  const projectId = process.env.BLOCKFROST_PROJECT_ID;
+  const which = process.env.DATA_PROVIDER ?? (projectId ? "blockfrost" : "mock");
+  switch (which) {
+    case "blockfrost":
+      if (!projectId) {
+        throw new Error(
+          "DATA_PROVIDER=blockfrost but BLOCKFROST_PROJECT_ID is not set " +
+            "(add it to .env.local for local dev, or the server env in prod).",
+        );
+      }
+      return new BlockfrostDataProvider(projectId);
+    case "mock":
+      return new MockProvider();
+    default:
+      throw new Error(`unknown DATA_PROVIDER: ${which}`);
+  }
 }
