@@ -127,11 +127,19 @@ export class MockProvider implements DataProvider {
     throw new Error("MockProvider cannot supply protocol parameters");
   }
 
+  async costModels(): Promise<number[][]> {
+    throw new Error("MockProvider cannot supply cost models");
+  }
+
   async evaluateTx(): Promise<Omit<Action, "data">[]> {
     throw new Error("MockProvider cannot evaluate transactions");
   }
 
   async resolveUtxo(): Promise<UTxO | null> {
+    throw new Error("MockProvider cannot resolve UTXOs");
+  }
+
+  async resolvePoolUtxo(): Promise<UTxO | null> {
     throw new Error("MockProvider cannot resolve UTXOs");
   }
 }

@@ -1,3 +1,4 @@
+import type { UTxO } from "@meshsdk/core";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "@/lib/data";
 
 /**
@@ -53,4 +54,21 @@ export async function fetchOrders(
     signal,
   );
   return orders;
+}
+
+/**
+ * Resolve the live pool UTXO (value + inline `PoolDatum` CBOR) for a pool, by its NFT
+ * unit. Used by the LP manage page to read current reserves / circulating LP for the
+ * deposit/withdraw previews. Returns null if no live pool UTXO holds that NFT.
+ */
+export async function fetchPoolUtxo(
+  nftUnit: string,
+  signal?: AbortSignal,
+): Promise<UTxO | null> {
+  const qs = new URLSearchParams({ nft: nftUnit });
+  const { utxo } = await getJson<{ utxo: UTxO | null }>(
+    `/api/tx/pool-utxo?${qs.toString()}`,
+    signal,
+  );
+  return utxo;
 }

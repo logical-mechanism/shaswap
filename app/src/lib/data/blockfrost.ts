@@ -323,6 +323,21 @@ export class BlockfrostDataProvider implements DataProvider {
     return retry(() => this.bf.fetchProtocolParameters());
   }
 
+  /**
+   * The network's Plutus cost models as ordered `[v1, v2, v3]` parameter arrays. Read
+   * from Blockfrost's `epochs/latest/parameters.cost_models_raw` (the canonical, ledger-
+   * ordered integer arrays — NOT the named `cost_models` map, whose key order is not
+   * guaranteed). Empty arrays for any absent language. `fetchProtocolParameters` drops
+   * these, so we fetch the raw record directly.
+   */
+  async costModels(): Promise<number[][]> {
+    const raw = (await retry(() =>
+      this.bf.get("epochs/latest/parameters"),
+    )) as { cost_models_raw?: Record<string, number[] | null> | null };
+    const cm = raw?.cost_models_raw ?? {};
+    return [cm.PlutusV1 ?? [], cm.PlutusV2 ?? [], cm.PlutusV3 ?? []];
+  }
+
   evaluateTx(txCbor: string): Promise<Omit<Action, "data">[]> {
     return retry(() => this.bf.evaluateTx(txCbor));
   }
@@ -340,6 +355,26 @@ export class BlockfrostDataProvider implements DataProvider {
       (x) => x.input.txHash === txHash && x.input.outputIndex === index,
     );
     return stillUnspent ? u : null;
+  }
+
+  async resolvePoolUtxo(poolNftUnit: string): Promise<UTxO | null> {
+    // Live UTXOs at the pool address; the genuine pool is the one holding exactly one
+    // of the requested NFT with a decodable inline `PoolDatum` (same identity rule as
+    // `fetchPools` / the batcher's `find_pools`). `fetchAddressUTxOs` returns only
+    // UNSPENT outputs, so this is already the live UTXO the LP builder must spend.
+    const utxos = await retry(() => this.bf.fetchAddressUTxOs(POOL_ADDR));
+    for (const u of utxos) {
+      if (qtyOfUnit(u.output.amount, poolNftUnit) !== 1n) continue;
+      const cbor = u.output.plutusData;
+      if (!cbor) continue;
+      try {
+        decodePoolDatum(cbor);
+      } catch {
+        continue; // not a pool — skip
+      }
+      return u;
+    }
+    return null;
   }
 }
 

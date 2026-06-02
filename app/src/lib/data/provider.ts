@@ -59,6 +59,15 @@ export interface DataProvider {
   protocolParameters(): Promise<Protocol>;
 
   /**
+   * The network's current Plutus cost models as ordered parameter arrays
+   * `[plutusV1, plutusV2, plutusV3]`. The MeshJS `Protocol` type drops these, but they
+   * are required to compute a Plutus spend's script-integrity hash that matches the
+   * node — MeshJS otherwise uses stale baked-in defaults and the node rejects the tx.
+   * Served via `/api/protocol-params` alongside the params.
+   */
+  costModels(): Promise<number[][]>;
+
+  /**
    * Script execution units for a draft tx (the Plutus `Reclaim` spend). Served via
    * `/api/tx/evaluate`; the client feeds the result to `MeshTxBuilder`'s evaluator.
    */
@@ -70,4 +79,12 @@ export interface DataProvider {
    * `/api/tx/utxo`. Returns null if it is already spent / not found.
    */
   resolveUtxo(txHash: string, index: number): Promise<UTxO | null>;
+
+  /**
+   * Resolve the live pool UTXO (value + inline `PoolDatum`) for a pool, by its NFT
+   * unit (`policy+name`, the pool id). Used by the LP deposit/withdraw builders to
+   * spend the pool on the `LpAction` path. Served via `/api/tx/pool-utxo`. Returns
+   * null if no live UTXO at the pool address holds that NFT (1) with a decodable datum.
+   */
+  resolvePoolUtxo(poolNftUnit: string): Promise<UTxO | null>;
 }
