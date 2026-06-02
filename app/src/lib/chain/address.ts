@@ -40,3 +40,22 @@ export function deriveBaseAddress(
     .toAddress()
     .toBech32();
 }
+
+/**
+ * Build the bech32 **enterprise** address for a single **script** payment credential
+ * (no stake part). This is `Script(scriptHash)` as an address — used for the LP
+ * first-deposit `min_liq` lock at `Script(nft.policy)` (the pool's own mint policy is
+ * an unspendable Plutus script, so LP parked there can never be reassembled, bounding
+ * the first-depositor donation attack — BLUEPRINT §6).
+ */
+export function deriveEnterpriseScriptAddress(
+  paymentScriptHash: string,
+  networkId: NetworkId,
+): string {
+  return Cardano.EnterpriseAddress.fromCredentials(
+    networkId as unknown as Cardano.NetworkId,
+    scriptCredential(paymentScriptHash),
+  )
+    .toAddress()
+    .toBech32();
+}

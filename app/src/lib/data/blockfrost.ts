@@ -341,6 +341,26 @@ export class BlockfrostDataProvider implements DataProvider {
     );
     return stillUnspent ? u : null;
   }
+
+  async resolvePoolUtxo(poolNftUnit: string): Promise<UTxO | null> {
+    // Live UTXOs at the pool address; the genuine pool is the one holding exactly one
+    // of the requested NFT with a decodable inline `PoolDatum` (same identity rule as
+    // `fetchPools` / the batcher's `find_pools`). `fetchAddressUTxOs` returns only
+    // UNSPENT outputs, so this is already the live UTXO the LP builder must spend.
+    const utxos = await retry(() => this.bf.fetchAddressUTxOs(POOL_ADDR));
+    for (const u of utxos) {
+      if (qtyOfUnit(u.output.amount, poolNftUnit) !== 1n) continue;
+      const cbor = u.output.plutusData;
+      if (!cbor) continue;
+      try {
+        decodePoolDatum(cbor);
+      } catch {
+        continue; // not a pool — skip
+      }
+      return u;
+    }
+    return null;
+  }
 }
 
 /** Map an order UTXO + datum (+ its pool, if on-chain) to a UI `WalletPosition`. */

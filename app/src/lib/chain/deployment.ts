@@ -52,13 +52,34 @@ export const POOL_MIN_ADA = 2_000_000n;
 export const ORDER_MIN_ADA = 2_000_000n;
 
 /**
+ * `constants.total_lp` — the full LP supply, minted into the pool UTXO at creation
+ * (i64::MAX). Circulating supply = `total_lp − (LP held in the pool UTXO)`; no counter
+ * is stored on-chain. The LP share math is derived from this and the held balance.
+ */
+export const TOTAL_LP = 9_223_372_036_854_775_807n;
+/**
+ * `constants.min_liq` — permanently-locked minimum liquidity (Uniswap-v2 style). The
+ * first deposit sends `min_liq` LP to `Script(nft.policy)`; circulating LP can never
+ * fall below it thereafter.
+ */
+export const MIN_LIQ = 1_000n;
+
+/**
  * On-chain reference scripts (all deployed in one tx; `contracts/happy_path`). The
- * app only needs the ORDER ref script — to spend an order on the `Reclaim` path
- * without inlining the validator. The settlement/pool refs are the solver's concern.
+ * app needs the ORDER ref script — to spend an order on the `Reclaim` path without
+ * inlining the validator — and the POOL ref script — to spend the pool UTXO on the
+ * standalone `LpAction` (deposit/withdraw) path (§6). The settlement ref is the
+ * solver's concern. Indices match `contracts/happy_path/deployment.json`
+ * (`order_ref` = #2, `pool_ref` = #1 of the same deploy tx).
  */
 export const ORDER_REF = {
   txHash: "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
   outputIndex: 2,
+} as const;
+
+export const POOL_REF = {
+  txHash: "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
+  outputIndex: 1,
 } as const;
 
 /**
@@ -68,6 +89,13 @@ export const ORDER_REF = {
  * without an extra round-trip to resolve the ref UTXO.
  */
 export const ORDER_SCRIPT_SIZE = 537;
+
+/**
+ * Byte size of the deployed pool validator (the `cborHex` of
+ * `contracts/happy_path/scripts/pool.plutus` is 4472 hex chars = 2236 bytes). Same
+ * role as `ORDER_SCRIPT_SIZE` for the `LpAction` spend.
+ */
+export const POOL_SCRIPT_SIZE = 2236;
 
 /**
  * Where orders live: a base address tagged with `S`.
@@ -84,3 +112,16 @@ export const ORDER_ADDR =
 /** Where the pool lives: base address (payment = POOL_SCRIPT_HASH, stake = `S`). */
 export const POOL_ADDR =
   "addr_test1xpzz0muy20c6ed86cwzyl0ruxjzjlcvguj4enula5pa4xwa90hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0qvte56r";
+
+/**
+ * The LP-token unit for a pool, given its NFT unit. LP and the NFT share the pool's
+ * one-shot mint policy (`nft.policy`); only the asset name differs (`4e4654` "NFT" vs
+ * `4c50` "LP"). So `lpUnit = poolNftPolicy + LP_NAME_HEX`. Pool ids in the UI are the
+ * NFT unit (`policy(56) + nftName`), so we take the policy off the front.
+ */
+export function lpUnitForPool(poolNftUnit: string): string {
+  if (poolNftUnit.length < 56 || !/^[0-9a-fA-F]+$/.test(poolNftUnit)) {
+    throw new Error(`malformed pool NFT unit: ${poolNftUnit}`);
+  }
+  return poolNftUnit.slice(0, 56).toLowerCase() + LP_NAME_HEX;
+}

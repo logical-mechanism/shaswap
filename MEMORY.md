@@ -28,8 +28,9 @@ a continuous loop (it's currently one-shot per invocation), mempool-aware order 
 multi-funding/auto-split when <2 pure-ADA UTXOs. **Still owed on-chain:** an **emulator
 pass** with a real `Data` ScriptContext (confirms the ~40-order ceiling + decoding cost),
 and folding the clearing-price/ADA-triple-role specs into exact rounding rules. Later:
-**true-equilibrium** cost spike (§5.2.7). The **app** now reads preprod live + posts/reclaims
-orders behind the data seam (see the 2026-06-01 log entry). **Done on-chain:**
+**true-equilibrium** cost spike (§5.2.7). The **app** now reads preprod live, posts/reclaims
+orders, and adds/removes liquidity (LP deposit/withdraw) behind the data seam (see the
+2026-06-01 and 2026-06-02 log entries). **Done on-chain:**
 trust anchor, order/pool/pool_mint validators, LP path, pool close, bidirectional netting,
 deadlines, partial fills.
 
@@ -77,6 +78,34 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-02** — **App LP add/remove — deposit + withdraw write path (branch
+  `app/lp-add-remove` off `main`).** Closed the last app UX gap: `/pools` was read-only, so
+  users couldn't provide/remove liquidity. Added the client-side LP **deposit** + **withdraw**
+  flows mirroring order post/reclaim — a standalone user-driven tx (no solver, no settlement
+  anchor): spend the pool UTXO with `LpAction` (Constr 1 []) via the pool **reference script**
+  (`POOL_REF` = `78130a6c…#1`, size **2236**), recreate the pool at the same address with the
+  **same inline datum** (CBOR passthrough → `out.datum == in.datum`), 1 NFT, reserves ±Δ and
+  the `held` LP moved by the share delta; `tx.mint == 0`; **no owner signature**
+  (`lp_action` checks per-share backing, not a sig). **Share math** is a pure, unit-tested
+  mirror of `spend.lp_action` in `app/src/lib/chain/lp.ts` — floor everything: subsequent
+  deposit `lp=min(⌊Δa·circ/res_a⌋,⌊Δb·circ/res_b⌋)`, withdraw `recv=⌊burn·res/circ⌋`, first
+  deposit `circ_out=⌊√(res_a·res_b)⌋` with `min_liq` locked at `Script(nft.policy)`;
+  `lp.test.ts` replicates every `lp_test.ak` fixture to the unit (**40 app tests, build +
+  lint green**, Node 22). **Layers (app only — no contract/batcher change):** `datums.ts`
+  (`lpActionRedeemer`), `deployment.ts` (`POOL_REF`/`POOL_SCRIPT_SIZE`/`TOTAL_LP`/`MIN_LIQ`/
+  `lpUnitForPool`), `address.ts` (`deriveEnterpriseScriptAddress` for the lock), the `lp.ts`
+  builders, data seam `resolvePoolUtxo` + `/api/tx/pool-utxo` route + client shim, `tx.ts`
+  `depositLiquidity`/`withdrawLiquidity`, and a **dedicated `/pools/[id]` manage page** +
+  `LiquidityPanel` (Add/Remove tabs, auto-paired deposit, LP/asset previews, slippage min-out
+  guard, "your position" from the wallet's LP balance). **Live LP unit** for the current pool:
+  `3d36f7963dcca05ba53e32babdf3c2572d467c7388dbb1cf4b28645f` + `4c50` (NFT `…4e4654`).
+  **cardano-cli ground truth:** `happy_path/07-lp-deposit.sh` (doubles as the **bootstrap** —
+  first-deposit `√` + `min_liq` lock, takes circ 0→>0) and `08-lp-withdraw.sh`, each printing
+  the computed reserves/circ to cross-check the app math. **Owed (maintainer):** the live
+  preprod run — bootstrap to `circ>0` (the redeployed pool is seeded res_a=res_b=1e9 with
+  `circ==0`), then in-browser deposit/withdraw + a deliberate overmint/over-withdraw rejection
+  (services `happy_path/run-{ogmios,kupo}.sh`). **Not committed-to-PR** — branch left for the
+  maintainer to test first.
 - **2026-06-01** — **🎉 BASE-ADDRESS owner payout — full redeploy + live proof (branch
   `contracts/base-address-payout` off `main`, app branch merged in).** Resolved the
   pre-release enterprise-payout limitation across all four layers + Blueprint Rev 21.

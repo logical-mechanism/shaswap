@@ -1,23 +1,37 @@
 "use client";
 
 /**
- * Client-side transaction building for the non-custodial paths (post order, reclaim).
+ * Client-side transaction building for the non-custodial paths (post order, reclaim,
+ * LP deposit/withdraw).
  *
  * The tx is BUILT and SIGNED in the browser with the connected wallet (CIP-30) — the
  * app never holds keys. Any chain data the build needs (protocol params, script
- * ex-units) is fetched from our OWN `/api/*` (the data seam), never a provider SDK in
- * the browser. Submission goes through the wallet.
+ * ex-units, the pool/order UTXO) is fetched from our OWN `/api/*` (the data seam),
+ * never a provider SDK in the browser. Submission goes through the wallet.
  */
 
 import { deserializeAddress, MeshTxBuilder } from "@meshsdk/core";
 import type { Action, IEvaluator, IWallet, Protocol, UTxO } from "@meshsdk/core";
 import type { Pool } from "@/lib/data";
 import { buildOrder } from "@/lib/chain/order";
-import { orderReclaimRedeemer } from "@/lib/chain/datums";
+import { decodePoolDatum, lpActionRedeemer, orderReclaimRedeemer } from "@/lib/chain/datums";
+import { deriveEnterpriseScriptAddress } from "@/lib/chain/address";
 import {
+  buildDeposit,
+  buildWithdraw,
+  type PoolView,
+} from "@/lib/chain/lp";
+import {
+  DEPLOYMENT_NETWORK_ID,
+  lpUnitForPool,
   ORDER_REF,
   ORDER_SCRIPT_HASH,
   ORDER_SCRIPT_SIZE,
+  POOL_ADDR,
+  POOL_MIN_ADA,
+  POOL_REF,
+  POOL_SCRIPT_HASH,
+  POOL_SCRIPT_SIZE,
 } from "@/lib/chain/deployment";
 
 /** Protocol params via the seam (server fetches them from the provider). */
@@ -34,6 +48,15 @@ async function fetchUtxo(txHash: string, index: number): Promise<UTxO> {
   if (!res.ok) throw new Error(`utxo resolve request failed (${res.status})`);
   const { utxo } = (await res.json()) as { utxo: UTxO | null };
   if (!utxo) throw new Error("order UTXO not found — already spent or settled");
+  return utxo;
+}
+
+/** Resolve the live pool UTXO (value + inline `PoolDatum`) by NFT unit, via the seam. */
+async function fetchPoolUtxo(nftUnit: string): Promise<UTxO> {
+  const res = await fetch(`/api/tx/pool-utxo?nft=${nftUnit}`);
+  if (!res.ok) throw new Error(`pool utxo resolve request failed (${res.status})`);
+  const { utxo } = (await res.json()) as { utxo: UTxO | null };
+  if (!utxo) throw new Error("pool UTXO not found — it may have just moved; refresh and retry");
   return utxo;
 }
 
@@ -212,4 +235,196 @@ export async function reclaimOrder(
 
   const signedTx = await wallet.signTx(unsignedTx);
   return wallet.submitTx(signedTx);
+}
+
+/**
+ * Shared wallet inputs for a Plutus spend: protocol params, change address, a
+ * collateral UTXO, and the funding set with every collateral UTXO excluded (the ledger
+ * rejects a UTXO used as both collateral and a regular input). Mirrors the collateral
+ * handling in `reclaimOrder`.
+ */
+async function spendContext(wallet: IWallet) {
+  const [params, changeAddress, collateral, utxos] = await Promise.all([
+    fetchProtocolParams(),
+    wallet.getChangeAddress(),
+    wallet.getCollateral(),
+    wallet.getUtxos(),
+  ]);
+  const col = collateral[0];
+  if (!col) {
+    throw new Error("no collateral in wallet — set a collateral UTXO and retry");
+  }
+  const collateralRefs = new Set(
+    collateral.map((c) => `${c.input.txHash}#${c.input.outputIndex}`),
+  );
+  const fundingUtxos = utxos.filter(
+    (u) => !collateralRefs.has(`${u.input.txHash}#${u.input.outputIndex}`),
+  );
+  return { params, changeAddress, col, fundingUtxos };
+}
+
+export interface DepositLiquidityArgs {
+  /** The pool to add liquidity to. */
+  pool: Pool;
+  /** Amount of `asset_a` to add (base units). */
+  deltaA: bigint;
+  /** Amount of `asset_b` to add (base units). */
+  deltaB: bigint;
+  /** Optional minimum LP to receive — a client-side slippage guard (throws if below). */
+  minLpOut?: bigint;
+}
+
+export interface LiquidityResult {
+  txHash: string;
+}
+
+/**
+ * Build → sign → submit an LP **deposit** (BLUEPRINT §6). A standalone tx like
+ * reclaim — no solver, no settlement anchor. Spends the pool UTXO with the `LpAction`
+ * redeemer via the pool reference script, recreates the pool (same address, same datum
+ * — CBOR passthrough so `out.datum == in.datum` — reserves +Δ, held LP lowered by the
+ * minted shares, 1 NFT, no reference script), and funds Δ from the wallet. The minted
+ * LP (and any change) returns to the wallet. On the FIRST deposit it also locks
+ * `min_liq` LP at the unspendable `Script(nft.policy)` address.
+ *
+ * The share math + value layout live in the pure `buildDeposit` (it throws on a
+ * malformed intent, so a bad deposit never reaches the chain). No owner signature is
+ * required — `lp_action` checks per-share backing, not a signature; the wallet still
+ * signs to spend its funding inputs.
+ */
+export async function depositLiquidity(
+  wallet: IWallet,
+  args: DepositLiquidityArgs,
+): Promise<LiquidityResult> {
+  const poolUtxo = await fetchPoolUtxo(args.pool.id);
+  const datumCbor = poolUtxo.output.plutusData;
+  if (!datumCbor) throw new Error("pool UTXO has no inline datum");
+  const datum = decodePoolDatum(datumCbor);
+  const view: PoolView = { value: poolUtxo.output.amount, datum };
+  const built = buildDeposit({
+    view,
+    deltaA: args.deltaA,
+    deltaB: args.deltaB,
+    minLpOut: args.minLpOut,
+  });
+
+  const { params, changeAddress, col, fundingUtxos } = await spendContext(wallet);
+
+  const txBuilder = new MeshTxBuilder({ params, evaluator });
+  txBuilder
+    .spendingPlutusScriptV3()
+    .txIn(
+      poolUtxo.input.txHash,
+      poolUtxo.input.outputIndex,
+      poolUtxo.output.amount,
+      poolUtxo.output.address,
+    )
+    .spendingTxInReference(
+      POOL_REF.txHash,
+      POOL_REF.outputIndex,
+      POOL_SCRIPT_SIZE.toString(),
+      POOL_SCRIPT_HASH,
+    )
+    .spendingReferenceTxInInlineDatumPresent()
+    .spendingReferenceTxInRedeemerValue(lpActionRedeemer)
+    .txInCollateral(
+      col.input.txHash,
+      col.input.outputIndex,
+      col.output.amount,
+      col.output.address,
+    )
+    .txOut(POOL_ADDR, built.poolValue)
+    .txOutInlineDatumValue(datumCbor, "CBOR");
+
+  // First deposit: permanently lock `min_liq` LP at `Script(nft.policy)` (the pool's
+  // own unspendable mint policy). The depositor's LP (circ_out − min_liq) is change.
+  if (built.firstDeposit && built.lockLp !== null) {
+    const lockAddr = deriveEnterpriseScriptAddress(
+      datum.nft.policy,
+      DEPLOYMENT_NETWORK_ID,
+    );
+    txBuilder.txOut(lockAddr, [
+      { unit: "lovelace", quantity: POOL_MIN_ADA.toString() },
+      { unit: lpUnitForPool(args.pool.id), quantity: built.lockLp.toString() },
+    ]);
+  }
+
+  const unsignedTx = await txBuilder
+    .changeAddress(changeAddress)
+    .selectUtxosFrom(fundingUtxos)
+    .complete();
+
+  const signedTx = await wallet.signTx(unsignedTx);
+  const txHash = await wallet.submitTx(signedTx);
+  return { txHash };
+}
+
+export interface WithdrawLiquidityArgs {
+  /** The pool to remove liquidity from. */
+  pool: Pool;
+  /** Circulating LP to burn (base units). */
+  lpToBurn: bigint;
+  /** Optional minimum `asset_a` / `asset_b` to receive — client-side slippage guards. */
+  minAOut?: bigint;
+  minBOut?: bigint;
+}
+
+/**
+ * Build → sign → submit an LP **withdraw** (BLUEPRINT §6). Spends the pool UTXO with
+ * the `LpAction` redeemer via the pool reference script and recreates the pool with
+ * reserves −recv and held LP raised by the burned shares. The wallet funds `lpToBurn`
+ * LP (coin selection picks the LP-bearing UTXO) and receives a proportional, floored
+ * share of both reserves as change. `buildWithdraw` enforces `circ_out ≥ min_liq` and
+ * throws on a malformed intent.
+ */
+export async function withdrawLiquidity(
+  wallet: IWallet,
+  args: WithdrawLiquidityArgs,
+): Promise<LiquidityResult> {
+  const poolUtxo = await fetchPoolUtxo(args.pool.id);
+  const datumCbor = poolUtxo.output.plutusData;
+  if (!datumCbor) throw new Error("pool UTXO has no inline datum");
+  const datum = decodePoolDatum(datumCbor);
+  const view: PoolView = { value: poolUtxo.output.amount, datum };
+  const built = buildWithdraw({
+    view,
+    lpToBurn: args.lpToBurn,
+    minAOut: args.minAOut,
+    minBOut: args.minBOut,
+  });
+
+  const { params, changeAddress, col, fundingUtxos } = await spendContext(wallet);
+
+  const txBuilder = new MeshTxBuilder({ params, evaluator });
+  const unsignedTx = await txBuilder
+    .spendingPlutusScriptV3()
+    .txIn(
+      poolUtxo.input.txHash,
+      poolUtxo.input.outputIndex,
+      poolUtxo.output.amount,
+      poolUtxo.output.address,
+    )
+    .spendingTxInReference(
+      POOL_REF.txHash,
+      POOL_REF.outputIndex,
+      POOL_SCRIPT_SIZE.toString(),
+      POOL_SCRIPT_HASH,
+    )
+    .spendingReferenceTxInInlineDatumPresent()
+    .spendingReferenceTxInRedeemerValue(lpActionRedeemer)
+    .txInCollateral(
+      col.input.txHash,
+      col.input.outputIndex,
+      col.output.amount,
+      col.output.address,
+    )
+    .txOut(POOL_ADDR, built.poolValue)
+    .txOutInlineDatumValue(datumCbor, "CBOR")
+    .changeAddress(changeAddress)
+    .selectUtxosFrom(fundingUtxos)
+    .complete();
+
+  const signedTx = await wallet.signTx(unsignedTx);
+  const txHash = await wallet.submitTx(signedTx);
+  return { txHash };
 }

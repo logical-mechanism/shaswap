@@ -162,6 +162,17 @@ export function encodeBoundDatum(orderRef: OutputReference): Data {
 export const orderSettleRedeemer: Data = mConStr(0, []);
 export const orderReclaimRedeemer: Data = mConStr(1, []);
 
+/**
+ * `PoolRedeemer` (nullary). Mirrors `types.PoolRedeemer`:
+ *  - `PoolSettle = Constr 0 []` (spent inside a settlement),
+ *  - `LpAction   = Constr 1 []` (the standalone LP deposit/withdraw, §6),
+ *  - `ClosePool  = Constr 2 []` (tear down a never-seeded pool).
+ * The LP write paths (deposit/withdraw) spend the pool UTXO with `lpActionRedeemer`.
+ */
+export const poolSettleRedeemer: Data = mConStr(0, []);
+export const lpActionRedeemer: Data = mConStr(1, []);
+export const closePoolRedeemer: Data = mConStr(2, []);
+
 /** Canonical CBOR hex of any `Data` (handy for tests / byte-verification). */
 export function toCbor(d: Data): string {
   return serializeData(d);

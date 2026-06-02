@@ -134,4 +134,8 @@ export class MockProvider implements DataProvider {
   async resolveUtxo(): Promise<UTxO | null> {
     throw new Error("MockProvider cannot resolve UTXOs");
   }
+
+  async resolvePoolUtxo(): Promise<UTxO | null> {
+    throw new Error("MockProvider cannot resolve UTXOs");
+  }
 }
