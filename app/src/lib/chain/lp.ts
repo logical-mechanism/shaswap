@@ -158,13 +158,6 @@ export function pairDeltaB(stats: PoolStats, deltaA: bigint): bigint {
   return ceilDiv(deltaA * stats.resB, stats.resA);
 }
 
-/** As {@link pairDeltaB} but pairing `asset_a` from a chosen `deltaB`. */
-export function pairDeltaA(stats: PoolStats, deltaB: bigint): bigint {
-  if (deltaB <= 0n) throw new Error("deltaB must be positive");
-  if (stats.resB <= 0n) throw new Error("cannot pair against a zero asset_b reserve");
-  return ceilDiv(deltaB * stats.resA, stats.resB);
-}
-
 /**
  * Build a deposit. `deltaA`/`deltaB` are the asset_a/asset_b amounts the user funds.
  * `minLpOut` (optional) is a client-side slippage guard: throw if the freshly-computed

@@ -37,9 +37,9 @@ function toBig(s: string): bigint {
   }
 }
 
-/** Apply a slippage haircut (bps) to a computed amount, flooring. */
+/** Apply a slippage haircut (bps) to a computed amount, flooring. Clamped to [0,100%]. */
 function withSlippage(amount: bigint, slippagePct: number): bigint {
-  const bps = BigInt(Math.round(slippagePct * 100));
+  const bps = BigInt(Math.min(10_000, Math.max(0, Math.round(slippagePct * 100))));
   return (amount * (10_000n - bps)) / 10_000n;
 }
 

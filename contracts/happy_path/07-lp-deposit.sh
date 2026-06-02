@@ -34,7 +34,10 @@ SOLVER_JSON=$(cli query utxo --address "$SOLVER_ADDR" --testnet-magic "$NET_MAGI
 # LpAction redeemer (Constr 1 []).
 echo '{"constructor":1,"fields":[]}' > "$WORK/lpaction.json"
 
-eval "$(POOL_POLICY="$POOL_POLICY" TEST_POLICY="$TEST_POLICY" \
+# Capture the python output and check its exit code BEFORE eval — `eval "$(... )"`
+# alone hides a failed guard (assert) from `set -e`, so a tripped check would
+# otherwise let the script build a malformed tx with unset vars.
+OUT=$(POOL_POLICY="$POOL_POLICY" TEST_POLICY="$TEST_POLICY" \
   POOL_JSON="$POOL_JSON" SOLVER_JSON="$SOLVER_JSON" \
   POOL_MIN_ADA="$POOL_MIN_ADA" TOTAL_LP="$TOTAL_LP" MIN_LIQ="$MIN_LIQ" \
   ADD_A="$ADD_A" ADD_B="$ADD_B" python3 - <<'PY'
@@ -78,10 +81,16 @@ pool_out_lovelace=res_b_out+pool_min
 
 # inputs: a TEST source (only if adding asset_a), max pure-ADA fund, distinct collateral.
 def pure(v): return list(v['value'])==['lovelace'] and not v.get('referenceScript')
-def hastest(v): return tp in v['value']
+def test_qty(v): return v['value'].get(tp,{}).get(TNAME,0)
 pures=sorted([k for k,v in solver.items() if pure(v)], key=lambda k:solver[k]['value']['lovelace'])
+assert len(pures)>=2, "need >=2 pure-ADA UTXOs (one fund + one distinct collateral)"
 fund=pures[-1]; coll=pures[0]
-test_in=next((k for k,v in solver.items() if hastest(v)), "") if add_a>0 else ""
+# adding asset_a: pick the UTXO holding the MOST TEST and require it covers add_a.
+test_in=""
+if add_a>0:
+    tests=sorted([k for k,v in solver.items() if test_qty(v)>0], key=lambda k:test_qty(solver[k]), reverse=True)
+    assert tests and test_qty(solver[tests[0]])>=add_a, f"no wallet UTXO holds >= {add_a} TEST for add_test"
+    test_in=tests[0]
 
 pool_value=f"{pool_out_lovelace}+{res_a_out} {tp}.{TNAME}+1 {pp}.{NFT}+{held_out} {pp}.{LP}"
 print(f"POOL_UTXO={p_ref}")
@@ -93,7 +102,8 @@ print(f"LOCK_LP={lock_lp}")
 print(f"FIRST={'1' if circ_in==0 else '0'}")
 print(f"# circ_in={circ_in} circ_out={circ_out} lp_to_user={lp_to_user} add_a={add_a} add_b={add_b} held_out={held_out}")
 PY
-)"
+) || { echo "LP-deposit share-math failed (see error above)" >&2; exit 1; }
+eval "$OUT"
 echo "POOL=$POOL_UTXO FUND=$FUND COLL=$COLL TEST_IN=$TEST_IN FIRST=$FIRST LOCK_LP=$LOCK_LP"
 echo "POOL_VALUE=$POOL_VALUE"
 

@@ -22,7 +22,9 @@ SOLVER_JSON=$(cli query utxo --address "$SOLVER_ADDR" --testnet-magic "$NET_MAGI
 # LpAction redeemer (Constr 1 []).
 echo '{"constructor":1,"fields":[]}' > "$WORK/lpaction.json"
 
-eval "$(POOL_POLICY="$POOL_POLICY" TEST_POLICY="$TEST_POLICY" \
+# Capture + check exit before eval — `eval "$(...)"` alone hides a failed python
+# guard (assert) from `set -e`, which would otherwise build a malformed tx.
+OUT=$(POOL_POLICY="$POOL_POLICY" TEST_POLICY="$TEST_POLICY" \
   POOL_JSON="$POOL_JSON" SOLVER_JSON="$SOLVER_JSON" \
   POOL_MIN_ADA="$POOL_MIN_ADA" TOTAL_LP="$TOTAL_LP" MIN_LIQ="$MIN_LIQ" BURN="$BURN" python3 - <<'PY'
 import os, json
@@ -60,6 +62,7 @@ def lp_qty(v): return v['value'].get(pp,{}).get(LP,0)
 lp_in=next((k for k,v in solver.items() if lp_qty(v)>=burn), "")
 assert lp_in, f"no wallet UTXO holds >= {burn} LP — split/fund the solver's LP first"
 pures=sorted([k for k,v in solver.items() if pure(v)], key=lambda k:solver[k]['value']['lovelace'])
+assert len(pures)>=2, "need >=2 pure-ADA UTXOs (one fund + one distinct collateral)"
 fund=pures[-1]; coll=pures[0]
 
 pool_value=f"{pool_out_lovelace}+{res_a_out} {tp}.{TNAME}+1 {pp}.{NFT}+{held_out} {pp}.{LP}"
@@ -70,7 +73,8 @@ print(f"COLL={coll}")
 print(f"POOL_VALUE='{pool_value}'")
 print(f"# circ_in={circ_in} burn={burn} circ_out={circ_out} recv_a={recv_a} recv_b={recv_b} held_out={held_out}")
 PY
-)"
+) || { echo "LP-withdraw share-math failed (see error above)" >&2; exit 1; }
+eval "$OUT"
 echo "POOL=$POOL_UTXO LP_IN=$LP_IN FUND=$FUND COLL=$COLL"
 echo "POOL_VALUE=$POOL_VALUE"
 

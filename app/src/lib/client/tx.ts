@@ -395,6 +395,20 @@ export async function withdrawLiquidity(
 
   const { params, changeAddress, col, fundingUtxos } = await spendContext(wallet);
 
+  // Preflight: the recreated pool output needs `lpToBurn` more LP than the pool input
+  // carries, so the wallet must supply it via coin selection. Surface a clear error up
+  // front rather than an opaque "not enough UTxOs" from the balancer (mirrors 08's assert).
+  const lpUnit = lpUnitForPool(args.pool.id);
+  const walletLp = fundingUtxos.reduce((sum, u) => {
+    const a = u.output.amount.find((x) => x.unit === lpUnit);
+    return sum + (a ? BigInt(a.quantity) : 0n);
+  }, 0n);
+  if (walletLp < args.lpToBurn) {
+    throw new Error(
+      `wallet holds ${walletLp} LP for this pool — not enough to burn ${args.lpToBurn}`,
+    );
+  }
+
   const txBuilder = new MeshTxBuilder({ params, evaluator });
   const unsignedTx = await txBuilder
     .spendingPlutusScriptV3()

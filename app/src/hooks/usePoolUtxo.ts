@@ -43,7 +43,13 @@ export function usePoolUtxo(poolId: string | undefined) {
         setError(null);
       })
       .catch((e: unknown) => {
-        if (!ac.signal.aborted) setError(String(e));
+        // Clear stale view/stats so the panel surfaces the error instead of rendering
+        // a previous successful load's reserves (the panel renders on `stats && view`).
+        if (!ac.signal.aborted) {
+          setView(null);
+          setStats(null);
+          setError(String(e));
+        }
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
