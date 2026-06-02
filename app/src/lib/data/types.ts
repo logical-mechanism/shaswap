@@ -85,4 +85,6 @@ export interface WalletPosition {
   amountIn: string;
   minOut: string;
   status: OrderStatus;
+  /** Whether the order allows partial fills (a partial leaves a reclaimable remainder). */
+  partial: boolean;
 }

@@ -1,75 +1,118 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@meshsdk/react";
-import type { WalletPosition } from "@/lib/data";
 import { useOrders } from "@/hooks/useOrders";
 import { reclaimOrder } from "@/lib/client/tx";
+import { getRecent, markReclaimed, type RecentOrder } from "@/lib/client/activity";
+import {
+  hasPending,
+  mergeRows,
+  type OrderRow,
+  type RowStatus,
+} from "@/lib/client/orderRows";
 import { toUserMessage } from "@/lib/client/errors";
 import { explorerTxUrl } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 
-const STATUS_STYLE: Record<string, string> = {
+const STATUS_STYLE: Record<RowStatus, string> = {
+  pending: "bg-amber-500/15 text-amber-300",
   open: "bg-accent/15 text-accent",
   settled: "bg-white/10 text-muted",
-  reclaimable: "bg-amber-500/15 text-amber-300",
+  reclaimed: "bg-emerald-500/15 text-emerald-300",
 };
 
 type ReclaimState =
   | { kind: "idle" }
   | { kind: "busy"; ref: string }
-  | { kind: "done"; ref: string; hash: string }
   | { kind: "error"; ref: string; message: string };
 
 export default function OrdersPage() {
   const { connected, wallet } = useWallet();
-  // Query by the wallet's CHANGE address — that is the payment key hash an order is
-  // posted under (`postOrder` uses getChangeAddress), so it matches the order owner.
-  // `useAddress()` (first used address) can differ on HD wallets that rotate
-  // addresses, which would hide the user's own freshly-posted order. We only set
-  // state from the async callback (never synchronously in the effect) and derive the
-  // disconnected case, so there are no cascading renders.
-  const [changeAddr, setChangeAddr] = useState<string | undefined>(undefined);
+  // Query by the wallet's CHANGE address — the payment key hash orders are posted
+  // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
+  // still see their own orders, and the local activity log keys match.
+  const [owner, setOwner] = useState<string | undefined>(undefined);
   useEffect(() => {
     if (!connected) return;
     let cancelled = false;
     wallet
       .getChangeAddress()
       .then((a) => {
-        if (!cancelled) setChangeAddr(a);
+        if (!cancelled) setOwner(a);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [connected, wallet]);
-  const owner = connected ? changeAddr : undefined;
-  const { orders, loading, error, reload } = useOrders(owner);
+  const ownerAddr = connected ? owner : undefined;
+
+  const { orders, loading, error, reload } = useOrders(ownerAddr);
+  const [recent, setRecent] = useState<RecentOrder[]>([]);
+  const [now, setNow] = useState(0);
   const [reclaim, setReclaim] = useState<ReclaimState>({ kind: "idle" });
+
+  // Re-read the local activity log + refetch the live set. Only ever sets state from
+  // here (a callback), never synchronously in an effect body.
+  const refresh = useCallback(() => {
+    reload();
+    setRecent(ownerAddr ? getRecent(ownerAddr, Date.now()) : []);
+    setNow(Date.now());
+  }, [ownerAddr, reload]);
+
+  // Initial load when the owner resolves (deferred out of the effect body).
+  useEffect(() => {
+    const id = setTimeout(refresh, 0);
+    return () => clearTimeout(id);
+  }, [refresh]);
+
+  const rows = useMemo(
+    () => (ownerAddr ? mergeRows(orders, recent, now) : []),
+    [ownerAddr, orders, recent, now],
+  );
+  const pending = hasPending(rows);
+
+  // Auto-refresh while something is pending confirmation (stops once it lands).
+  useEffect(() => {
+    if (!pending) return;
+    const id = setInterval(refresh, 10_000);
+    return () => clearInterval(id);
+  }, [pending, refresh]);
 
   async function onReclaim(ref: string) {
     setReclaim({ kind: "busy", ref });
     try {
       const hash = await reclaimOrder(wallet, ref);
-      setReclaim({ kind: "done", ref, hash });
-      reload();
+      if (ownerAddr) markReclaimed(ownerAddr, ref, hash);
+      setReclaim({ kind: "idle" });
+      refresh();
     } catch (e) {
       setReclaim({ kind: "error", ref, message: toUserMessage(e) });
     }
   }
 
-  // Also show the loading skeleton while the change address is still resolving, so
-  // there's no "No live orders" flash before the first fetch can even start.
-  const showLoading = loading || (connected && owner === undefined);
+  const showLoading = loading || (connected && ownerAddr === undefined);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
-        <p className="mt-1 text-sm text-muted">
-          Your live orders on preprod, read through the data-access layer. Reclaim
-          any of them at any time — every order is owner-reclaimable.
-        </p>
+      <header className="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
+          <p className="mt-1 text-sm text-muted">
+            Your live orders on preprod plus recent activity. Every order is
+            owner-reclaimable while it’s live.
+          </p>
+        </div>
+        {connected && (
+          <button
+            type="button"
+            onClick={refresh}
+            className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground"
+          >
+            Refresh
+          </button>
+        )}
       </header>
 
       {!connected && <Empty>Connect a wallet to view your orders.</Empty>}
@@ -80,7 +123,7 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {connected && showLoading && (
+      {connected && showLoading && rows.length === 0 && (
         <div className="space-y-2">
           {[0, 1].map((i) => (
             <div
@@ -91,18 +134,23 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {connected && !showLoading && !error && orders.length === 0 && (
-        <Empty>No live orders. Post one from the Swap page.</Empty>
+      {connected && !showLoading && !error && rows.length === 0 && (
+        <Empty>No orders yet. Post one from the Swap page.</Empty>
       )}
 
-      {connected && !showLoading && orders.length > 0 && (
+      {connected && rows.length > 0 && (
         <ul className="space-y-2">
-          {orders.map((o) => (
-            <OrderRow
-              key={o.ref}
-              order={o}
-              reclaim={reclaim}
-              onReclaim={() => onReclaim(o.ref)}
+          {rows.map((row) => (
+            <OrderRowItem
+              key={row.ref}
+              row={row}
+              busy={reclaim.kind === "busy" && reclaim.ref === row.ref}
+              error={
+                reclaim.kind === "error" && reclaim.ref === row.ref
+                  ? reclaim.message
+                  : undefined
+              }
+              onReclaim={() => onReclaim(row.ref)}
             />
           ))}
         </ul>
@@ -111,68 +159,69 @@ export default function OrdersPage() {
   );
 }
 
-function OrderRow({
-  order: o,
-  reclaim,
+function OrderRowItem({
+  row,
+  busy,
+  error,
   onReclaim,
 }: {
-  order: WalletPosition;
-  reclaim: ReclaimState;
+  row: OrderRow;
+  busy: boolean;
+  error?: string;
   onReclaim: () => void;
 }) {
-  const busy = reclaim.kind === "busy" && reclaim.ref === o.ref;
-  const done = reclaim.kind === "done" && reclaim.ref === o.ref;
-  const failed = reclaim.kind === "error" && reclaim.ref === o.ref;
-
   return (
     <li className="rounded-xl border border-white/10 bg-surface/60 px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-medium">
-            {formatUnits(o.amountIn, o.tokenIn.decimals)} {o.tokenIn.ticker} →{" "}
-            {o.tokenOut.ticker}
+          <div className="flex items-center gap-2 font-medium">
+            {formatUnits(row.amountIn, row.inDecimals)} {row.inTicker} →{" "}
+            {row.outTicker}
+            {row.partial && (
+              <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-normal text-muted">
+                partial ok
+              </span>
+            )}
           </div>
           <div className="mt-0.5 truncate font-mono text-xs text-muted">
-            {truncate(o.ref, 10, 4)} · min{" "}
-            {formatUnits(o.minOut, o.tokenOut.decimals)} {o.tokenOut.ticker}
+            {truncate(row.ref, 10, 4)} · min{" "}
+            {formatUnits(row.minOut, row.outDecimals)} {row.outTicker}
           </div>
         </div>
         <div className="flex items-center gap-2">
           <span
-            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-              STATUS_STYLE[o.status] ?? "bg-white/10 text-muted"
-            }`}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_STYLE[row.status]}`}
           >
-            {o.status}
+            {row.status}
           </span>
-          <button
-            type="button"
-            onClick={onReclaim}
-            disabled={busy}
-            className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium transition-colors hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy ? "Reclaiming…" : "Reclaim"}
-          </button>
+          {row.canReclaim && (
+            <button
+              type="button"
+              onClick={onReclaim}
+              disabled={busy}
+              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium transition-colors hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? "Reclaiming…" : "Reclaim"}
+            </button>
+          )}
         </div>
       </div>
 
-      {done && (
-        <div className="mt-2 text-xs text-accent">
+      {row.reclaimTx && (
+        <div className="mt-2 text-xs text-emerald-300">
           Reclaimed ✓{" "}
           <a
-            href={explorerTxUrl(reclaim.hash)}
+            href={explorerTxUrl(row.reclaimTx)}
             target="_blank"
             rel="noreferrer"
             className="font-mono underline decoration-dotted underline-offset-2"
           >
-            {truncate(reclaim.hash, 10, 8)} ↗
+            {truncate(row.reclaimTx, 10, 8)} ↗
           </a>
         </div>
       )}
-      {failed && (
-        <div className="mt-2 break-words text-xs text-red-300">
-          {reclaim.message}
-        </div>
+      {error && (
+        <div className="mt-2 break-words text-xs text-red-300">{error}</div>
       )}
     </li>
   );

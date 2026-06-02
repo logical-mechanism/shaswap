@@ -8,6 +8,7 @@ import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
 import { postOrder } from "@/lib/client/tx";
+import { recordPost } from "@/lib/client/activity";
 import { toUserMessage } from "@/lib/client/errors";
 import { formatPercent, formatUnits, toBaseUnits, truncate } from "@/lib/format";
 import { TokenSelect } from "./TokenSelect";
@@ -123,10 +124,10 @@ export function SwapCard() {
   }
 
   async function handlePost() {
-    if (!canPost || !pool || !fromToken) return;
+    if (!canPost || !pool || !fromToken || !toToken) return;
     setPost({ kind: "posting" });
     try {
-      const hash = await postOrder(wallet, {
+      const res = await postOrder(wallet, {
         pool,
         sellUnit: fromToken.unit,
         sellAmount: BigInt(baseAmountIn),
@@ -135,7 +136,22 @@ export function SwapCard() {
         partial,
         deadline: expiryDeadline(expiry),
       });
-      setPost({ kind: "success", hash });
+      // Record locally so it shows as "pending" under Orders until the chain indexes
+      // it (Blockfrost only lists live UTXOs).
+      recordPost(res.owner, {
+        ref: res.orderRef,
+        txHash: res.txHash,
+        inUnit: fromToken.unit,
+        inTicker: fromToken.ticker,
+        inDecimals: fromToken.decimals,
+        outTicker: toToken.ticker,
+        outDecimals: toToken.decimals,
+        amountIn: baseAmountIn,
+        minOut: floor.toString(),
+        partial,
+        ts: Date.now(),
+      });
+      setPost({ kind: "success", hash: res.txHash });
       setAmount("");
     } catch (e) {
       setPost({ kind: "error", message: toUserMessage(e) });

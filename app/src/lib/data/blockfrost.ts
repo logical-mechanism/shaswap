@@ -389,6 +389,7 @@ function toPosition(u: UTxO, d: OrderDatum, pool: Pool | undefined): WalletPosit
     amountIn: d.sellAmount.toString(),
     minOut: d.limit.toString(),
     status: "open",
+    partial: d.partial,
   };
 }
 

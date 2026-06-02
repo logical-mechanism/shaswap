@@ -76,11 +76,21 @@ export interface PostOrderArgs {
  * The order is validated + encoded by `buildOrder` (it throws on anything malformed,
  * so a bad order never reaches the chain). The owner is the wallet's own payment key
  * hash — making the order owner-reclaimable (the non-custodial guarantee).
+ *
+ * Returns the tx hash, the order's output reference (`<hash>#0` — the order is the
+ * first output; change is appended last), and the owner (change) address, so the UI
+ * can record a pending-activity entry and match it against the on-chain order list.
  */
+export interface PostOrderResult {
+  txHash: string;
+  orderRef: string;
+  owner: string;
+}
+
 export async function postOrder(
   wallet: IWallet,
   args: PostOrderArgs,
-): Promise<string> {
+): Promise<PostOrderResult> {
   const changeAddress = await wallet.getChangeAddress();
   const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
 
@@ -111,7 +121,8 @@ export async function postOrder(
     .complete();
 
   const signedTx = await wallet.signTx(unsignedTx);
-  return wallet.submitTx(signedTx);
+  const txHash = await wallet.submitTx(signedTx);
+  return { txHash, orderRef: `${txHash}#0`, owner: changeAddress };
 }
 
 /**

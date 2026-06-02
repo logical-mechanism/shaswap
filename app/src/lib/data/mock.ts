@@ -64,6 +64,7 @@ const POSITIONS: WalletPosition[] = [
     amountIn: "100000000",
     minOut: "50000000",
     status: "open",
+    partial: false,
   },
   {
     ref: "05d99063…#0",
@@ -72,6 +73,7 @@ const POSITIONS: WalletPosition[] = [
     amountIn: "20000000",
     minOut: "40000000",
     status: "settled",
+    partial: false,
   },
 ];
 

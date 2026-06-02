@@ -1,0 +1,83 @@
+"use client";
+
+/**
+ * A small per-wallet activity log in localStorage. Blockfrost only surfaces a wallet's
+ * *live* (unspent) orders, so without this a just-posted order is invisible until the
+ * network indexes it, and a settled/reclaimed one vanishes with no trace. We record
+ * what the user submitted (keyed by the owner = change address) so the Orders page can
+ * show pending → open → settled/reclaimed, merged with the authoritative on-chain set.
+ *
+ * This is convenience state only — never a source of truth for funds. The chain is.
+ */
+
+export interface RecentOrder {
+  /** Order output reference, `<txHash>#0`. */
+  ref: string;
+  txHash: string;
+  inUnit: string;
+  inTicker: string;
+  inDecimals: number;
+  outTicker: string;
+  outDecimals: number;
+  /** Base units. */
+  amountIn: string;
+  /** Floor (limit), base units. */
+  minOut: string;
+  partial: boolean;
+  /** Date.now() at submit. */
+  ts: number;
+  /** Set once the owner reclaims it. */
+  reclaimTx?: string;
+}
+
+const MAX_AGE_MS = 24 * 60 * 60 * 1000; // forget after a day
+const MAX_ENTRIES = 30;
+const keyFor = (owner: string) => `shaswap:recent:${owner}`;
+
+function read(owner: string): RecentOrder[] {
+  if (typeof window === "undefined" || !owner) return [];
+  try {
+    const raw = window.localStorage.getItem(keyFor(owner));
+    const arr = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(arr) ? (arr as RecentOrder[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function write(owner: string, list: RecentOrder[]): void {
+  if (typeof window === "undefined" || !owner) return;
+  try {
+    window.localStorage.setItem(
+      keyFor(owner),
+      JSON.stringify(list.slice(0, MAX_ENTRIES)),
+    );
+  } catch {
+    // storage full / disabled → silently skip; it's convenience state only
+  }
+}
+
+function prune(list: RecentOrder[], now: number): RecentOrder[] {
+  return list.filter((o) => now - o.ts < MAX_AGE_MS);
+}
+
+/** Record a freshly-posted order (dedup by ref). */
+export function recordPost(owner: string, order: RecentOrder): void {
+  const list = prune(read(owner), order.ts);
+  write(owner, [order, ...list.filter((o) => o.ref !== order.ref)]);
+}
+
+/** Mark a recorded order as reclaimed by its owner. */
+export function markReclaimed(owner: string, ref: string, reclaimTx: string): void {
+  write(
+    owner,
+    read(owner).map((o) => (o.ref === ref ? { ...o, reclaimTx } : o)),
+  );
+}
+
+/** Recent orders for a wallet, pruned of stale entries (and the prune persisted). */
+export function getRecent(owner: string, now: number): RecentOrder[] {
+  const list = prune(read(owner), now);
+  write(owner, list);
+  return list;
+}
