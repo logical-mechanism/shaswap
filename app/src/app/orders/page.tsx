@@ -5,6 +5,7 @@ import { useWallet } from "@meshsdk/react";
 import type { WalletPosition } from "@/lib/data";
 import { useOrders } from "@/hooks/useOrders";
 import { reclaimOrder } from "@/lib/client/tx";
+import { toUserMessage } from "@/lib/client/errors";
 import { explorerTxUrl } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 
@@ -53,7 +54,7 @@ export default function OrdersPage() {
       setReclaim({ kind: "done", ref, hash });
       reload();
     } catch (e) {
-      setReclaim({ kind: "error", ref, message: errMessage(e) });
+      setReclaim({ kind: "error", ref, message: toUserMessage(e) });
     }
   }
 
@@ -175,12 +176,6 @@ function OrderRow({
       )}
     </li>
   );
-}
-
-function errMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  const s = String(e);
-  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
 }
 
 function Empty({ children }: { children: React.ReactNode }) {

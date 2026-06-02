@@ -44,6 +44,31 @@ test("token-seller: value = min+tip lovelace + the sold token; sell_a=true", () 
   assert.deepEqual(d.owner, { kind: "key", hash: PKH });
 });
 
+test("partial order pre-funds 2× order_min_ada (remainder funding)", () => {
+  // token-seller, partial
+  const tokenPartial = buildOrder({ ...base, partial: true });
+  assert.deepEqual(tokenPartial.value, [
+    { unit: "lovelace", quantity: (ORDER_MIN_ADA * 2n + 2_000_000n).toString() },
+    { unit: TEST_UNIT, quantity: "100000000" },
+  ]);
+  assert.equal(decodeOrderDatum(toCbor(tokenPartial.datum)).partial, true);
+
+  // ADA-seller, partial: the second min-ADA is what keeps the owner output fundable
+  const adaPartial = buildOrder({
+    ...base,
+    sellUnit: "lovelace",
+    sellAmount: 50_000_000n,
+    limit: 90_000_000n,
+    partial: true,
+  });
+  assert.deepEqual(adaPartial.value, [
+    {
+      unit: "lovelace",
+      quantity: (50_000_000n + ORDER_MIN_ADA * 2n + 2_000_000n).toString(),
+    },
+  ]);
+});
+
 test("ADA-seller: lovelace carries sell + min + tip (triple role); sell_a=false", () => {
   const built = buildOrder({
     ...base,

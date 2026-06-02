@@ -8,6 +8,7 @@ import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
 import { postOrder } from "@/lib/client/tx";
+import { toUserMessage } from "@/lib/client/errors";
 import { formatPercent, formatUnits, toBaseUnits, truncate } from "@/lib/format";
 import { TokenSelect } from "./TokenSelect";
 import { SlippageSettings } from "./SlippageSettings";
@@ -30,6 +31,7 @@ export function SwapCard() {
   const [slippage, setSlippage] = useState<number>(0.5);
   const [tip, setTip] = useState<string>("2"); // solver tip, in ADA
   const [partial, setPartial] = useState<boolean>(false);
+  const [expiry, setExpiry] = useState<string>("none"); // none|1h|6h|1d|1w
   const [advanced, setAdvanced] = useState<boolean>(false);
   const [post, setPost] = useState<PostState>({ kind: "idle" });
 
@@ -121,12 +123,12 @@ export function SwapCard() {
         limit: floor,
         tip: BigInt(tipLovelace || "0"),
         partial,
-        deadline: null,
+        deadline: expiryDeadline(expiry),
       });
       setPost({ kind: "success", hash });
       setAmount("");
     } catch (e) {
-      setPost({ kind: "error", message: errMessage(e) });
+      setPost({ kind: "error", message: toUserMessage(e) });
     }
   }
 
@@ -218,7 +220,7 @@ export function SwapCard() {
         floorDisplay={floorDisplay}
       />
 
-      {/* advanced: tip + partial fills */}
+      {/* advanced: tip + partial fills + expiry */}
       <Advanced
         open={advanced}
         onToggle={() => setAdvanced((v) => !v)}
@@ -227,7 +229,27 @@ export function SwapCard() {
         tipValid={tipValid}
         partial={partial}
         onPartial={setPartial}
+        expiry={expiry}
+        onExpiry={setExpiry}
       />
+
+      {/* high price-impact caution (the quote is an estimate over real reserves) */}
+      {quote &&
+        hasAmount &&
+        quote.priceImpact >= 0.05 &&
+        post.kind !== "posting" && (
+          <div
+            className={`mt-3 rounded-xl border p-2.5 text-xs ${
+              quote.priceImpact >= 0.15
+                ? "border-red-500/25 bg-red-500/10 text-red-300"
+                : "border-amber-500/20 bg-amber-500/10 text-amber-300"
+            }`}
+          >
+            {quote.priceImpact >= 0.15 ? "Very high" : "High"} price impact (
+            {formatPercent(quote.priceImpact)}). This pool is shallow for that
+            size — consider a smaller amount or expect a worse fill.
+          </div>
+        )}
 
       <button
         type="button"
@@ -259,10 +281,17 @@ function toBig(s: string): bigint {
   }
 }
 
-function errMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  const s = String(e);
-  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+const EXPIRY_MS: Record<string, number> = {
+  "1h": 3_600_000,
+  "6h": 21_600_000,
+  "1d": 86_400_000,
+  "1w": 604_800_000,
+};
+
+/** Selected expiry → an absolute POSIX-ms deadline for the OrderDatum, or null. */
+function expiryDeadline(key: string): bigint | null {
+  const ms = EXPIRY_MS[key];
+  return ms ? BigInt(Date.now() + ms) : null;
 }
 
 function PostResult({ state }: { state: PostState }) {
@@ -270,6 +299,13 @@ function PostResult({ state }: { state: PostState }) {
     return (
       <div className="mt-3 rounded-xl border border-accent/20 bg-accent/10 p-3 text-xs">
         <div className="font-medium text-accent">Order posted ✓</div>
+        <p className="mt-0.5 text-muted">
+          It’ll appear under{" "}
+          <a href="/orders" className="underline underline-offset-2 hover:text-accent">
+            Orders
+          </a>{" "}
+          once the network confirms (~20–40s), where you can reclaim it.
+        </p>
         <a
           href={explorerTxUrl(state.hash)}
           target="_blank"
@@ -300,6 +336,8 @@ function Advanced({
   tipValid,
   partial,
   onPartial,
+  expiry,
+  onExpiry,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -308,6 +346,8 @@ function Advanced({
   tipValid: boolean;
   partial: boolean;
   onPartial: (v: boolean) => void;
+  expiry: string;
+  onExpiry: (v: string) => void;
 }) {
   return (
     <div className="mt-3 border-t border-white/5 pt-2">
@@ -353,6 +393,25 @@ function Advanced({
               onChange={(e) => onPartial(e.target.checked)}
               className="h-4 w-4 accent-accent"
             />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-xs">
+            <span className="text-muted">
+              Expiry
+              <span className="block text-[10px] text-muted/60">
+                a solver can only settle before this deadline (reclaim anytime)
+              </span>
+            </span>
+            <select
+              value={expiry}
+              onChange={(e) => onExpiry(e.target.value)}
+              className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-xs outline-none"
+            >
+              <option value="none">No expiry</option>
+              <option value="1h">1 hour</option>
+              <option value="6h">6 hours</option>
+              <option value="1d">1 day</option>
+              <option value="1w">1 week</option>
+            </select>
           </label>
         </div>
       )}

@@ -8,8 +8,15 @@
  * Value layout (mirrors `happy_path/05-post-order.sh` + `05b-post-ada-order.sh`):
  *  - the order holds the sold asset, the per-UTXO min-ADA, and the solver tip;
  *  - when the sold asset IS ADA, all three are lovelace (the §5.2.1 ADA triple-role):
- *    `lovelace = sellAmount + order_min_ada + tip`;
- *  - otherwise `lovelace = order_min_ada + tip` and the token rides as its own asset.
+ *    `lovelace = sellAmount + min-ADA + tip`;
+ *  - otherwise `lovelace = min-ADA + tip` and the token rides as its own asset.
+ *
+ * Partial fills need a SECOND `order_min_ada`: on a partial, the settlement validator
+ * moves one `order_min_ada` from the owner output into the remainder UTXO
+ * (`clearing.ak` `min_to_rem`), so a `partial` order pre-funds `2× order_min_ada` —
+ * the spare simply returns to the owner on a full fill. Without it an ADA-seller
+ * partial fill would leave a 0-lovelace owner output (unsettleable). A full-fill-only
+ * order uses `1× order_min_ada`.
  *
  * No script runs at creation — posting is a plain payment to the order address with
  * an inline datum. The stake tag `S` is baked into `ORDER_ADDR`, so the UTXO is
@@ -108,7 +115,9 @@ export function buildOrder(intent: OrderIntent): BuiltOrder {
   };
 
   // Value: min-ADA + tip (+ the sold ADA, if selling ADA) as lovelace; token aside.
-  const lovelace = ORDER_MIN_ADA + tip + (isAda(sold) ? sellAmount : 0n);
+  // Partial orders pre-fund a second order_min_ada to fund the remainder UTXO.
+  const minAda = partial ? ORDER_MIN_ADA * 2n : ORDER_MIN_ADA;
+  const lovelace = minAda + tip + (isAda(sold) ? sellAmount : 0n);
   const value: Asset[] = [{ unit: "lovelace", quantity: lovelace.toString() }];
   if (!isAda(sold)) {
     value.push({ unit: assetUnit(sold), quantity: sellAmount.toString() });
