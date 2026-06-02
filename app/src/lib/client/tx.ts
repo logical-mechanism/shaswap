@@ -14,7 +14,13 @@ import { deserializeAddress, MeshTxBuilder } from "@meshsdk/core";
 import type { Action, IEvaluator, IWallet, Protocol, UTxO } from "@meshsdk/core";
 import type { Pool } from "@/lib/data";
 import { buildOrder } from "@/lib/chain/order";
-import { decodePoolDatum, lpActionRedeemer, orderReclaimRedeemer } from "@/lib/chain/datums";
+import { buildCreatePool } from "@/lib/chain/createPool";
+import {
+  decodePoolDatum,
+  lpActionRedeemer,
+  mintCreateRedeemer,
+  orderReclaimRedeemer,
+} from "@/lib/chain/datums";
 import { deriveEnterpriseScriptAddress } from "@/lib/chain/address";
 import {
   buildDeposit,
@@ -23,7 +29,9 @@ import {
 } from "@/lib/chain/lp";
 import {
   DEPLOYMENT_NETWORK_ID,
+  LP_NAME_HEX,
   lpUnitForPool,
+  NFT_NAME_HEX,
   ORDER_REF,
   ORDER_SCRIPT_HASH,
   ORDER_SCRIPT_SIZE,
@@ -32,6 +40,7 @@ import {
   POOL_REF,
   POOL_SCRIPT_HASH,
   POOL_SCRIPT_SIZE,
+  TOTAL_LP,
 } from "@/lib/chain/deployment";
 
 /**
@@ -380,6 +389,126 @@ export async function depositLiquidity(
   const signedTx = await wallet.signTx(unsignedTx);
   const txHash = await wallet.submitTx(signedTx);
   return { txHash };
+}
+
+export interface CreatePoolArgs {
+  /** Token A unit ("lovelace" or `policy+name`). */
+  assetAUnit: string;
+  /** Token B unit. By live convention ADA (`"lovelace"`) when one side is ADA. */
+  assetBUnit: string;
+  /** Static fee numerator (`0 <= feeNum < feeDen`). */
+  feeNum: bigint;
+  /** Static fee denominator (`> 0`). */
+  feeDen: bigint;
+}
+
+export interface CreatePoolResult {
+  txHash: string;
+  /** The new pool's id (its NFT unit, `policyId + nft_name`) — for the deposit hand-off. */
+  poolId: string;
+}
+
+/**
+ * Build → sign → submit a pool creation (BLUEPRINT §5.1). A standalone, user-driven mint
+ * — no solver, no settlement anchor. Pool creation is permissionless (anyone may create a
+ * pool). Picks a wallet UTXO as the one-shot `seed`, instantiates the per-pool
+ * `pool_mint(seed)` policy client-side (`buildCreatePool`), mints `{NFT:1, LP:total_lp}`
+ * under it with the `Create` redeemer, and locks them into a single EMPTY pool UTXO at the
+ * shared `POOL_ADDR` with a well-formed inline `PoolDatum`. The creator adds the first
+ * liquidity afterward via `depositLiquidity` (a separate tx — the just-created pool can't
+ * be spent here).
+ *
+ * `buildCreatePool` validates + encodes everything (it throws on a malformed intent, so a
+ * bad create never reaches the chain). Returns the tx hash and the new pool id (NFT unit).
+ */
+export async function createPool(
+  wallet: IWallet,
+  args: CreatePoolArgs,
+): Promise<CreatePoolResult> {
+  const { params, costModels, changeAddress, col, fundingUtxos } =
+    await spendContext(wallet);
+
+  // The creator authorizes the pre-seed ClosePool by SIGNATURE, so the mint policy
+  // requires a VK creator (§I-03). Derive it from the change address; reject a
+  // script-credential wallet up front (no pubKeyHash).
+  const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
+  if (!ownerPkh) {
+    throw new Error(
+      "pool creation requires a key-based (VK) wallet — this wallet has a script credential",
+    );
+  }
+
+  // Pick the one-shot seed: prefer a pure-ADA funding UTXO (so we don't drag tokens
+  // through change), else any. `fundingUtxos` already excludes collateral; the seed is
+  // CONSUMED so it must also be excluded from the funding-selection set below.
+  const seedUtxo =
+    fundingUtxos.find(
+      (u) =>
+        u.output.amount.length === 1 &&
+        u.output.amount[0]?.unit === "lovelace",
+    ) ?? fundingUtxos[0];
+  if (!seedUtxo) {
+    throw new Error("no funding UTXO available to use as the pool seed");
+  }
+  const seed = {
+    txHash: seedUtxo.input.txHash,
+    index: seedUtxo.input.outputIndex,
+  };
+
+  const built = buildCreatePool({
+    seed,
+    ownerPkh,
+    assetAUnit: args.assetAUnit,
+    assetBUnit: args.assetBUnit,
+    feeNum: args.feeNum,
+    feeDen: args.feeDen,
+  });
+
+  const funding = fundingUtxos.filter(
+    (u) =>
+      !(u.input.txHash === seed.txHash && u.input.outputIndex === seed.index),
+  );
+
+  const txBuilder = new MeshTxBuilder({ params, evaluator });
+  // Inject the network's real cost models so the script-integrity hash matches the node.
+  txBuilder.setCostModels(costModels);
+  const unsignedTx = await txBuilder
+    // Consume the seed (a plain wallet input) so the one-shot policy is valid. scriptSize
+    // 0: it carries no attached reference script (also keeps complete() from demanding a fetcher).
+    .txIn(
+      seedUtxo.input.txHash,
+      seedUtxo.input.outputIndex,
+      seedUtxo.output.amount,
+      seedUtxo.output.address,
+      0,
+    )
+    // Mint exactly {NFT:1, LP:total_lp} under the per-seed policy with the Create redeemer.
+    // Both mints share one policy + redeemer (MeshJS auto-groups same-policy mints).
+    .mintPlutusScriptV3()
+    .mint("1", built.policyId, NFT_NAME_HEX)
+    .mintingScript(built.script)
+    .mintRedeemerValue(mintCreateRedeemer)
+    .mintPlutusScriptV3()
+    .mint(TOTAL_LP.toString(), built.policyId, LP_NAME_HEX)
+    .mintingScript(built.script)
+    .mintRedeemerValue(mintCreateRedeemer)
+    // ALL minted NFT+LP land in this ONE pool output (none to change), with the inline
+    // PoolDatum — `mint.create`'s "NFT + LP in one output" check fails otherwise.
+    .txOut(built.address, built.poolValue)
+    .txOutInlineDatumValue(built.datum)
+    .txInCollateral(
+      col.input.txHash,
+      col.input.outputIndex,
+      col.output.amount,
+      col.output.address,
+    )
+    .changeAddress(changeAddress)
+    .selectUtxosFrom(funding)
+    .complete();
+
+  const signedTx = await wallet.signTx(unsignedTx);
+  const txHash = await wallet.submitTx(signedTx);
+  return { txHash, poolId: built.nftUnit };
 }
 
 export interface WithdrawLiquidityArgs {

@@ -29,8 +29,8 @@ multi-funding/auto-split when <2 pure-ADA UTXOs. **Still owed on-chain:** an **e
 pass** with a real `Data` ScriptContext (confirms the ~40-order ceiling + decoding cost),
 and folding the clearing-price/ADA-triple-role specs into exact rounding rules. Later:
 **true-equilibrium** cost spike (§5.2.7). The **app** now reads preprod live, posts/reclaims
-orders, and adds/removes liquidity (LP deposit/withdraw) behind the data seam (see the
-2026-06-01 and 2026-06-02 log entries). **Done on-chain:**
+orders, adds/removes liquidity (LP deposit/withdraw), and **creates pools** behind the data
+seam (see the 2026-06-01 and 2026-06-02 log entries). **Done on-chain:**
 trust anchor, order/pool/pool_mint validators, LP path, pool close, bidirectional netting,
 deadlines, partial fills.
 
@@ -77,6 +77,49 @@ High-signal pointers only:
   browser check.)
 
 ## Log
+
+- **2026-06-02** — **App create-pool — mint a new pool (branch `app/create-pool`).**
+  Added the last missing app write path: `/pools` could read + LP, but couldn't **create** a
+  pool. Pool creation is **permissionless** (a hyperstructure requirement — anyone may create
+  one); it's a standalone user-driven **mint** tx (no solver, no settlement anchor) — and the
+  app's **first mint** (the LP paths only spent). The new technique vs. LP: each pool has its
+  **own one-shot policy** `pool_mint(seed)`, so the app instantiates it **client-side** —
+  `applyParamsToScript(POOL_MINT_COMPILED_CODE, [encodeOutputReference(seed)], "Mesh")` then
+  `resolveScriptHash(applied, "V3")` = the per-pool NFT/LP policy id (both pure → data seam
+  untouched). Mirrors `mint.create`: mint **exactly** `{NFT:1, LP:total_lp}` under that policy
+  and **nothing else**, both into **one** output at the shared `POOL_ADDR` (all pools share it —
+  the pool *validator* is parameterised by `S`, only the NFT/policy differs) with an inline
+  `PoolDatum` (`nft.policy==policyId`, `nft.name==4e4654`, `asset_a!=asset_b`, neither under the
+  new policy, `0<=fee_num<fee_den`, **VK** creator). **Creates an EMPTY pool** (no reserves ⇒
+  `circ==0`); the creator seeds it via the **existing deposit flow** (`/pools/[id]` first-deposit
+  branch) in a **separate** tx — avoids the first-depositor donation quirk and the can't-spend-
+  just-created-pool constraint. **Layers (app only — no contract/batcher change):** `datums.ts`
+  (`mintCreateRedeemer`/`mintCloseRedeemer`), `deployment.ts` (`POOL_MINT_COMPILED_CODE`, the
+  unapplied `pool_mint` compiledCode; unapplied hash `9ff1ef18…`), pure builder
+  `chain/createPool.ts` (`buildCreatePool` — throws on any malformed intent), `tx.ts`
+  `createPool` (seed = a pure-ADA wallet UTXO consumed via `.txIn`; two same-policy mints +
+  inline script + Create redeemer; one pool txOut; collateral + `setCostModels` + evaluator), and
+  a dedicated **`/pools/create`** page (token A/B from **wallet assets + ADA**, fee in bps →
+  reduced `num/den`, ADA normalised to `asset_b`) + a **Create pool** button on `/pools`; success
+  → "add initial liquidity" CTA to `/pools/[id]`. **Cross-checked the policy id byte-for-byte**
+  against the contract toolchain: for seed `(77×32)#3` (mint_test.ak's seed), MeshJS's
+  `applyParamsToScript`+`resolveScriptHash` == `aiken blueprint apply`+`cardano-cli policyid` =
+  `68cd7477…c408d` — pinned in `createPool.test.ts` (also determinism + the `create_ok` datum/
+  value + malformed-intent rejections). **47 app tests, build + lint green** (Node 22); `aiken
+  check` untouched/green. **Adversarial multi-lens review** (5 lenses + per-finding verification)
+  → 4 fixes: disable Create after success (a second click would mint a **duplicate** pool, new
+  seed, wasted funds); **`usePools` now polls 15s** (was fetch-once) so the create→"add initial
+  liquidity" hand-off self-heals during the indexing gap (was a terminal "Pool not found");
+  `assetFromUnit` rejects **odd-length hex** (MeshJS would silently encode it as text) and
+  `buildCreatePool` compares **normalized AssetIds** not raw units ("lovelace"≡"", case-variants)
+  — both uphold the strict-rejection invariant. **Base-branch note:** the LP work (`app/lp-add-remove`) wasn't on `main`
+  yet, so per the maintainer it was **fast-forwarded into `main` first**, then `app/create-pool`
+  branched off the updated `main`. **Owed (maintainer):** the live in-browser preprod run —
+  create a pool, confirm `{NFT:1,LP:total_lp}` under the freshly-applied policy in one
+  `POOL_ADDR` UTXO with the computed `policyId`, see it in `/pools`, then add initial liquidity
+  (services `happy_path/run-{ogmios,kupo}.sh`; `happy_path/04-create-pool.sh` is the cli ground
+  truth — note it *seeds* reserves, the app deliberately doesn't). **Not committed-to-PR** —
+  branch left for the maintainer.
 
 - **2026-06-02** — **App LP add/remove — deposit + withdraw write path (branch
   `app/lp-add-remove` off `main`).** Closed the last app UX gap: `/pools` was read-only, so
