@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchPoolUtxo } from "@/lib/client/api";
 import { decodePoolDatum } from "@/lib/chain/datums";
 import { poolStats, type PoolStats, type PoolView } from "@/lib/chain/lp";
@@ -21,6 +21,11 @@ export function usePoolUtxo(poolId: string | undefined) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  // The poolId we last loaded successfully. With no interval poll, a transient reload
+  // failure must NOT wipe a usable panel (it would strand it until a manual ↻ that happens
+  // to succeed) — so we keep the last-good view/stats on error, and only surface an error
+  // when there's no good data for THIS pool yet (first load). Mirrors usePools' guard.
+  const loadedFor = useRef<string | undefined>(undefined);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 
@@ -44,11 +49,14 @@ export function usePoolUtxo(poolId: string | undefined) {
         setView(v);
         setStats(poolStats(v));
         setError(null);
+        loadedFor.current = poolId;
       })
       .catch((e: unknown) => {
-        // Clear stale view/stats so the panel surfaces the error instead of rendering
-        // a previous successful load's reserves (the panel renders on `stats && view`).
-        if (!ac.signal.aborted) {
+        if (ac.signal.aborted) return;
+        // First-load failure for THIS pool (no good data yet) → surface the error and
+        // clear the view. A failure AFTER a good load (a manual-refresh blip) keeps the
+        // last-good reserves so the panel stays usable rather than collapsing to a note.
+        if (loadedFor.current !== poolId) {
           setView(null);
           setStats(null);
           setError(String(e));

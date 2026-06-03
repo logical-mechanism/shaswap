@@ -218,7 +218,6 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
               onRecheckCollateral={recheckCollateral}
-              onDone={reload}
             />
           ) : (
             <RemoveForm
@@ -233,7 +232,6 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
               onRecheckCollateral={recheckCollateral}
-              onDone={reload}
             />
           )}
 
@@ -275,7 +273,6 @@ function AddForm({
   collateralReady,
   needsCollateral,
   onRecheckCollateral,
-  onDone,
 }: {
   pool: Pool;
   view: PoolView;
@@ -287,7 +284,6 @@ function AddForm({
   collateralReady: boolean;
   needsCollateral: boolean;
   onRecheckCollateral: () => void;
-  onDone: () => void;
 }) {
   const [amountA, setAmountA] = useState("");
   const [amountB, setAmountB] = useState(""); // only editable on the first deposit
@@ -353,10 +349,12 @@ function AddForm({
         deltaB,
         minLpOut,
       });
+      // No auto-reload: during the ~20–40s indexing gap a reload would just re-cache the
+      // pre-deposit reserves (and there's no poll to self-heal it). The success banner
+      // points the user at ↻ to pull the updated view once it lands.
       setState({ kind: "success", hash: res.txHash });
       setAmountA("");
       setAmountB("");
-      onDone();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -479,7 +477,6 @@ function RemoveForm({
   collateralReady,
   needsCollateral,
   onRecheckCollateral,
-  onDone,
 }: {
   pool: Pool;
   view: PoolView;
@@ -492,7 +489,6 @@ function RemoveForm({
   collateralReady: boolean;
   needsCollateral: boolean;
   onRecheckCollateral: () => void;
-  onDone: () => void;
 }) {
   const [lpInput, setLpInput] = useState("");
   const [state, setState] = useState<TxState>({ kind: "idle" });
@@ -547,9 +543,10 @@ function RemoveForm({
         minAOut,
         minBOut,
       });
+      // No auto-reload (see AddForm): a reload here would re-cache the pre-withdraw
+      // reserves during the indexing gap. The banner points the user at ↻.
       setState({ kind: "success", hash: res.txHash });
       setLpInput("");
-      onDone();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {

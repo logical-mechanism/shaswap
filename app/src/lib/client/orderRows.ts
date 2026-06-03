@@ -36,12 +36,12 @@ export interface OrderRow {
 }
 
 /**
- * Fallback only: a recent post we've NEVER observed on-chain stays "pending" (and keeps
- * the page auto-refreshing) for this long, after which we assume it never landed and show
- * it as terminal — so a dropped/never-indexed tx doesn't poll forever. This window is
- * generous (covers real indexer + mempool delay); an order positively seen on-chain is
- * never bound by it (only its later disappearance is terminal). Replaces the old fixed
- * 3-min cutoff that wrongly reclassified still-confirming orders and killed the poll.
+ * Fallback only: a recent post we've NEVER observed on-chain stays "pending" for this
+ * long, after which we assume it never landed and show it as terminal — so a
+ * dropped/never-indexed tx doesn't sit "pending" forever. This window is generous
+ * (covers real indexer + mempool delay); an order positively seen on-chain is never
+ * bound by it (only its later disappearance is terminal). Replaces the old fixed 3-min
+ * cutoff that wrongly reclassified still-confirming orders.
  */
 export const OBSERVE_FALLBACK_MS = 30 * 60 * 1000;
 
@@ -84,7 +84,7 @@ export function mergeRows(
   //    An order stays "pending" until we've positively seen it on-chain at least once
   //    (`seenLive`); only a SUBSEQUENT disappearance is terminal ("completed"). A post
   //    never observed at all falls back to terminal after OBSERVE_FALLBACK_MS so a
-  //    dropped tx can't keep polling forever.
+  //    dropped tx doesn't sit "pending" forever.
   for (const r of recent) {
     if (seen.has(r.ref)) continue;
     const status: RowStatus = r.reclaimTx
@@ -113,7 +113,7 @@ export function mergeRows(
   return rows.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
 }
 
-/** True if any row is still awaiting confirmation (drives auto-refresh polling). */
+/** True if any order is still awaiting on-chain confirmation ("pending"). */
 export function hasPending(rows: OrderRow[]): boolean {
   return rows.some((r) => r.status === "pending");
 }
