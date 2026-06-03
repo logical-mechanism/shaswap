@@ -1,5 +1,5 @@
 /**
- * Public, committed preprod deployment identities for the ShaSwap contracts.
+ * Public, committed per-network deployment identities for the ShaSwap contracts.
  *
  * Source of truth: `contracts/happy_path/deployment.json` (+ `constants.ak`). These
  * are all derived/public values — script hashes, the settlement stake tag `S`, pool
@@ -16,11 +16,111 @@
  * `S` script hash). See `ORDER_ADDR` / `POOL_ADDR`.
  */
 
-import type { Network, NetworkId } from "@/lib/config";
+// Relative `.ts` import (not the `@/` alias) so the node test runner
+// (`--experimental-strip-types`) can resolve it — several tests load this module.
+// NOTE: kept free of any `@meshsdk/core-cst` runtime import on purpose — the order/pool
+// addresses are committed LITERALS (pinned to the canonical derivation by `address.test.ts`)
+// rather than derived here, so this stays pure data and loads in every test environment
+// (the jsdom vitest suite imports it via `fixtures.ts`, and core-cst's bech32 encoder
+// throws under jsdom's cross-realm Uint8Array).
+import { APP_CONFIG, type Network, type NetworkId } from "../config.ts";
 
-/** This deployment targets preprod. The whole app's network is one config value. */
-export const DEPLOYMENT_NETWORK: Network = "preprod";
-export const DEPLOYMENT_NETWORK_ID: NetworkId = 0;
+/**
+ * Per-network deployment identities. The whole app's network is one config value
+ * (`APP_CONFIG.network`, from `NEXT_PUBLIC_NETWORK`); this table maps it to the
+ * network-DEPENDENT values. The network-INDEPENDENT values below (script hashes,
+ * compiled code, asset names, on-chain constants) are the SAME on every network — a
+ * Plutus script hash is the hash of its compiled code, not network-tagged — so they are
+ * plain shared exports. Order/pool ADDRESSES are committed per-network LITERALS (see
+ * `ORDER_ADDR`/`POOL_ADDR`), each pinned to the canonical hash-based derivation for both
+ * networks by `address.test.ts`.
+ *
+ * Only the reference-script UTXOs are genuinely per-network. `deployed` gates the
+ * tx-building paths: a network whose reference scripts aren't live yet (preview,
+ * mainnet-before-launch) can still be READ — addresses resolve, pool/order scans just
+ * come back empty — but cannot build spends (see `requireDeployed`).
+ */
+type RefScript = { txHash: string; outputIndex: number };
+
+interface NetworkDeployment {
+  networkId: NetworkId;
+  /** Are ShaSwap's reference scripts deployed and live on this network? */
+  deployed: boolean;
+  /**
+   * Order address = base(payment = ORDER_SCRIPT_HASH, stake = `S`) for this network.
+   * A committed literal pinned to `deriveBaseAddress(...)` by `address.test.ts`. Testnets
+   * (preprod/preview) share one `addr_test1…` (the bech32 only tags testnet vs mainnet);
+   * mainnet is `addr1…`.
+   */
+  orderAddr: string;
+  /** Pool address = base(payment = POOL_SCRIPT_HASH, stake = `S`). Same rules as `orderAddr`. */
+  poolAddr: string;
+  /** Order reference-script UTXO — `null` until this network is deployed. */
+  orderRef: RefScript | null;
+  /** Pool reference-script UTXO — `null` until this network is deployed. */
+  poolRef: RefScript | null;
+}
+
+// Testnet order/pool addresses (preprod AND preview — identical, since a Cardano address
+// only tags testnet vs mainnet, not which testnet).
+const TESTNET_ORDER_ADDR =
+  "addr_test1xzqpc7jvgf5tnpksmlvsqy8wt4ts3svtrxlysk6nazxj9u490hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0q4qj5a7";
+const TESTNET_POOL_ADDR =
+  "addr_test1xpzz0muy20c6ed86cwzyl0ruxjzjlcvguj4enula5pa4xwa90hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0qvte56r";
+
+/**
+ * Per-network deployment identities, selected by `APP_CONFIG.network`. Reference-script
+ * UTXO indices match `contracts/happy_path/deployment.json` (`order_ref` = #2,
+ * `pool_ref` = #1 of the same deploy tx). To turn ShaSwap on for a network: deploy the
+ * reference scripts there, paste the deploy tx hash + indices here, and flip `deployed`.
+ */
+const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
+  preprod: {
+    networkId: 0,
+    deployed: true,
+    orderAddr: TESTNET_ORDER_ADDR,
+    poolAddr: TESTNET_POOL_ADDR,
+    orderRef: {
+      txHash: "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
+      outputIndex: 2,
+    },
+    poolRef: {
+      txHash: "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
+      outputIndex: 1,
+    },
+  },
+  // Contracts are not deployed on preview (addresses are the same as preprod's).
+  preview: {
+    networkId: 0,
+    deployed: false,
+    orderAddr: TESTNET_ORDER_ADDR,
+    poolAddr: TESTNET_POOL_ADDR,
+    orderRef: null,
+    poolRef: null,
+  },
+  // TODO(mainnet launch): deploy the reference scripts, fill orderRef/poolRef, flip
+  // `deployed` to true. Until then app.shaswap.org runs with NEXT_PUBLIC_NETWORK=preprod.
+  // Addresses are derivable now (same script hashes, mainnet network tag) and pinned by test.
+  mainnet: {
+    networkId: 1,
+    deployed: false,
+    orderAddr:
+      "addr1xxqpc7jvgf5tnpksmlvsqy8wt4ts3svtrxlysk6nazxj9u490hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0qkk053p",
+    poolAddr:
+      "addr1x9zz0muy20c6ed86cwzyl0ruxjzjlcvguj4enula5pa4xwa90hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0q0ay5ku",
+    orderRef: null,
+    poolRef: null,
+  },
+};
+
+/** The active network's deployment, selected by the one app-wide network knob. */
+const ACTIVE: NetworkDeployment = DEPLOYMENTS[APP_CONFIG.network];
+
+/** Active network — bound to `APP_CONFIG` so deployment and UI can never drift. */
+export const DEPLOYMENT_NETWORK: Network = APP_CONFIG.network;
+export const DEPLOYMENT_NETWORK_ID: NetworkId = ACTIVE.networkId;
+/** Whether ShaSwap's contracts are live on the active network (gates tx-building). */
+export const DEPLOYED: boolean = ACTIVE.deployed;
 
 /** Settlement validator hash — also the stake-credential tag `S` (§5.4). */
 export const SETTLEMENT_HASH =
@@ -65,22 +165,30 @@ export const TOTAL_LP = 9_223_372_036_854_775_807n;
 export const MIN_LIQ = 1_000n;
 
 /**
- * On-chain reference scripts (all deployed in one tx; `contracts/happy_path`). The
+ * On-chain reference scripts for the ACTIVE network (see the `DEPLOYMENTS` table). The
  * app needs the ORDER ref script — to spend an order on the `Reclaim` path without
  * inlining the validator — and the POOL ref script — to spend the pool UTXO on the
- * standalone `LpAction` (deposit/withdraw) path (§6). The settlement ref is the
- * solver's concern. Indices match `contracts/happy_path/deployment.json`
- * (`order_ref` = #2, `pool_ref` = #1 of the same deploy tx).
+ * standalone `LpAction` (deposit/withdraw) path (§6). The settlement ref is the solver's
+ * concern. These are `null` on a network that isn't deployed yet; tx builders go through
+ * `requireDeployed()` so a null never slips into a spend.
  */
-export const ORDER_REF = {
-  txHash: "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
-  outputIndex: 2,
-} as const;
+export const ORDER_REF: RefScript | null = ACTIVE.orderRef;
+export const POOL_REF: RefScript | null = ACTIVE.poolRef;
 
-export const POOL_REF = {
-  txHash: "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
-  outputIndex: 1,
-} as const;
+/**
+ * Narrow the per-network reference scripts for a tx-building path. Throws a legible error
+ * on a network where ShaSwap isn't live yet (e.g. mainnet before launch) instead of
+ * crashing on a null `txHash`. Reads never call this — they degrade to empty results.
+ */
+export function requireDeployed(): { orderRef: RefScript; poolRef: RefScript } {
+  if (!DEPLOYED || !ORDER_REF || !POOL_REF) {
+    throw new Error(
+      `ShaSwap contracts are not yet live on ${DEPLOYMENT_NETWORK}. ` +
+        `Posting orders and LP actions are disabled on this network.`,
+    );
+  }
+  return { orderRef: ORDER_REF, poolRef: POOL_REF };
+}
 
 /**
  * Byte size of the deployed order validator (the `cborHex` of
@@ -103,15 +211,14 @@ export const POOL_SCRIPT_SIZE = 2236;
  * Posting an order = a plain payment to this address with an inline `OrderDatum`; the
  * stake tag rides along in the bech32 so the UTXO is automatically delegated to `S`.
  *
- * Pinned to the derivation `deriveBaseAddress(ORDER_SCRIPT_HASH, SETTLEMENT_HASH, 0)`
- * by `address.test.ts` — a hash/address drift fails that test.
+ * The active network's committed literal (see the `DEPLOYMENTS` table). Pinned to
+ * `deriveBaseAddress(ORDER_SCRIPT_HASH, SETTLEMENT_HASH, networkId)` for BOTH networks by
+ * `address.test.ts` — a hash/address drift fails that test.
  */
-export const ORDER_ADDR =
-  "addr_test1xzqpc7jvgf5tnpksmlvsqy8wt4ts3svtrxlysk6nazxj9u490hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0q4qj5a7";
+export const ORDER_ADDR: string = ACTIVE.orderAddr;
 
 /** Where the pool lives: base address (payment = POOL_SCRIPT_HASH, stake = `S`). */
-export const POOL_ADDR =
-  "addr_test1xpzz0muy20c6ed86cwzyl0ruxjzjlcvguj4enula5pa4xwa90hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0qvte56r";
+export const POOL_ADDR: string = ACTIVE.poolAddr;
 
 /**
  * The LP-token unit for a pool, given its NFT unit. LP and the NFT share the pool's

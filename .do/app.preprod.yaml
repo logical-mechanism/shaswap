@@ -1,0 +1,55 @@
+# DigitalOcean App Platform spec — ShaSwap PREPROD (preprod.shaswap.org)
+#
+# This is the testnet app: it reads & writes the live preprod deployment. Create the app
+# from this file once:
+#   doctl apps create --spec .do/app.preprod.yaml
+# then set the BLOCKFROST_PROJECT_ID secret in the DO console (or `doctl apps update`).
+# With deploy_on_push: true, every push to `main` rebuilds and redeploys automatically.
+#
+# Build: DO's Node.js buildpack (no Dockerfile). Node version comes from app/.nvmrc (22)
+# + package.json engines (>=22.6.0). `next start` honors the $PORT DO injects.
+name: shaswap-preprod
+region: nyc
+services:
+  - name: web
+    github:
+      repo: logical-mechanism/shaswap
+      branch: main
+      deploy_on_push: true
+    # The app lives in the monorepo's app/ subdirectory.
+    source_dir: app
+    environment_slug: node-js
+    build_command: npm ci && npm run build
+    run_command: npm run start
+    http_port: 8080
+    instance_count: 1
+    # >=1 GiB: Next 16 + Turbopack + MeshJS WASM can OOM a 512 MiB (basic-xxs) build.
+    instance_size_slug: basic-xs
+    health_check:
+      # `/` renders server-side and returns 200 even with no pools — a valid liveness probe.
+      http_path: /
+    envs:
+      # ── Build-time inlined (NEXT_PUBLIC_*) — MUST be RUN_AND_BUILD_TIME, else the
+      #    client bundle bakes in the defaults (preprod / localhost). ───────────────────
+      - key: NEXT_PUBLIC_NETWORK
+        scope: RUN_AND_BUILD_TIME
+        value: preprod
+      - key: NEXT_PUBLIC_SITE_URL
+        scope: RUN_AND_BUILD_TIME
+        value: https://preprod.shaswap.org
+      # ── Server-only runtime secret. Never reaches the browser; skipped at build time. ──
+      #    Set the value in the DO console — a `preprod…` Blockfrost project id. The app
+      #    refuses to start if the key prefix doesn't match NEXT_PUBLIC_NETWORK.
+      - key: BLOCKFROST_PROJECT_ID
+        scope: RUN_TIME
+        type: SECRET
+      # ── Optional, explicit runtime config. ────────────────────────────────────────────
+      - key: DATA_PROVIDER
+        scope: RUN_TIME
+        value: blockfrost
+      - key: LOG_LEVEL
+        scope: RUN_TIME
+        value: info
+domains:
+  - domain: preprod.shaswap.org
+    type: PRIMARY
