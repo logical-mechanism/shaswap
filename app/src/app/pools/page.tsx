@@ -6,6 +6,7 @@ import type { Pool, TokenInfo } from "@/lib/data";
 import { usePools } from "@/hooks/usePools";
 import { networkLabel } from "@/lib/config";
 import { formatUnits } from "@/lib/format";
+import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
 
@@ -25,14 +26,6 @@ interface PairGroup {
   fees: number[]; // sorted unique fee bps
 }
 
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s);
-  } catch {
-    return 0n;
-  }
-}
-
 /** Canonical pair orientation: ADA sits second; otherwise order by unit. */
 function canonical(pool: Pool) {
   const aAda = pool.tokenA.unit === "lovelace";
@@ -44,7 +37,7 @@ function canonical(pool: Pool) {
 }
 
 export default function PoolsPage() {
-  const { pools, loading, error } = usePools();
+  const { pools, loading, error, reload } = usePools();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("liquidity");
   const [hideEmpty, setHideEmpty] = useState(false);
@@ -107,7 +100,7 @@ export default function PoolsPage() {
             Every pair Pip looks after. Pop one open to add or pull out liquidity.
           </p>
           {!loading && !error && poolCount > 0 && (
-            <p className="mt-1 text-xs text-muted/80">
+            <p className="mt-1 text-xs text-muted">
               {groups.length} {groups.length === 1 ? "pair" : "pairs"} · {poolCount}{" "}
               {poolCount === 1 ? "pool" : "pools"} on {networkLabel()}
             </p>
@@ -119,7 +112,16 @@ export default function PoolsPage() {
       </header>
 
       {error && (
-        <div className="k-note k-note-danger text-sm">Couldn’t load the pools: {error}</div>
+        <div className="k-note k-note-danger text-sm">
+          <div>Couldn’t load the pools: {error}</div>
+          <button
+            type="button"
+            onClick={reload}
+            className="k-btn-danger-soft mt-2 px-3 py-1.5 text-xs"
+          >
+            Retry
+          </button>
+        </div>
       )}
 
       {loading && <PipLoading label="Pip’s rounding up the pools…" />}

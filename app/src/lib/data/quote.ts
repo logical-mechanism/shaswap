@@ -1,4 +1,5 @@
 import type { Pool, Quote } from "./types";
+import { toBigInt as toBig } from "../bigint.ts";
 
 /**
  * Constant-product (x·y=k) quote with fee for ONE pool — a DISPLAY estimate over the
@@ -37,6 +38,8 @@ export function quoteConstantProduct(
   const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
 
   const SCALE = 1_000_000n;
+  // Price impact is computed on the raw BASE-unit ratios; it's dimensionless, so token
+  // decimals cancel and it needs no adjustment.
   const midScaled = (reserveOut * SCALE) / reserveIn;
   const execScaled = (amountOut * SCALE) / amtIn;
   const priceImpact =
@@ -44,21 +47,22 @@ export function quoteConstantProduct(
       ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
       : 0;
 
+  // DISPLAY price = tokenOut per tokenIn in HUMAN units = (reserveOut/reserveIn) ×
+  // 10^(decIn − decOut). Take the base-unit ratio with high-precision BigInt scaling, then
+  // apply the decimals factor in FLOAT. Using a final float (not BigInt floor division)
+  // keeps a genuinely small human price from flooring to 0 — e.g. selling a 0-decimal token
+  // for ADA, where one token is worth far less than 1e-6 ADA.
+  const RATIO_SCALE = 1_000_000_000_000n; // 1e12 — sub-1e-6 prices survive the divide
+  const baseRatio = Number((reserveOut * RATIO_SCALE) / reserveIn) / 1e12;
+  const price = baseRatio * 10 ** (tokenIn.decimals - tokenOut.decimals);
+
   return {
     tokenIn,
     tokenOut,
     amountIn,
     amountOut: amountOut.toString(),
-    price: (Number(midScaled) / Number(SCALE)).toString(),
+    price: price.toString(),
     priceImpact,
     poolId: pool.id,
   };
-}
-
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s.split(".")[0] || "0");
-  } catch {
-    return 0n;
-  }
 }

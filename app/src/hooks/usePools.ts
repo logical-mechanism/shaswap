@@ -49,5 +49,5 @@ export function usePools() {
     return () => clearInterval(id);
   }, [reload]);
 
-  return { pools, loading, error };
+  return { pools, loading, error, reload };
 }

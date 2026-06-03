@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import type { TokenInfo } from "@/lib/data";
+import { useMenu } from "@/hooks/useMenu";
 
 /** Token chip + dropdown. Presentation only — selecting just sets state. */
 export function TokenSelect({
@@ -15,27 +15,19 @@ export function TokenSelect({
   exclude?: string;
   onSelect: (t: TokenInfo) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  const { open, setOpen, containerRef, triggerRef } = useMenu();
 
   const options = tokens.filter((t) => t.unit !== exclude);
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={containerRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Select token${token ? ` (current: ${token.ticker})` : ""}`}
         className="k-pill shrink-0 py-1.5 pl-1.5 pr-3 text-sm font-semibold"
       >
         <TokenIcon token={token} />
@@ -59,11 +51,17 @@ export function TokenSelect({
       </button>
 
       {open && (
-        <div className="absolute right-0 z-30 mt-2 w-52 overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_24px_50px_-28px_rgba(150,110,190,0.5)]">
+        <div
+          role="listbox"
+          aria-label="Tokens"
+          className="k-pop absolute right-0 z-30 mt-2 w-52 overflow-hidden"
+        >
           {options.map((t) => (
             <button
               key={t.unit}
               type="button"
+              role="option"
+              aria-selected={t.unit === token?.unit}
               onClick={() => {
                 onSelect(t);
                 setOpen(false);

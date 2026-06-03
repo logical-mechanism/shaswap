@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { errText, log } from "./log";
 
 /**
  * Run a route handler's provider work and map any thrown error to a controlled
@@ -6,15 +7,30 @@ import { NextResponse } from "next/server";
  * server-side only). With the MockProvider this never throws, but the data seam
  * is built to swap in a real provider (Blockfrost / our own Dolos node), which
  * can fail on network/parse; this is the single place that failure is contained.
+ *
+ * Also the single place server reads are timed: a slow read is logged as a warning so
+ * a degraded provider is visible in the deploy logs (DigitalOcean captures stdout).
  */
+const SLOW_MS = 2000;
+
 export async function providerJson<T>(
   label: string,
   fn: () => Promise<T>,
 ): Promise<NextResponse> {
+  const started = Date.now();
   try {
-    return NextResponse.json(await fn());
+    const data = await fn();
+    const ms = Date.now() - started;
+    if (ms > SLOW_MS) log.warn("slow provider read", { label, ms });
+    return NextResponse.json(data);
   } catch (e) {
-    console.error(`[api] ${label} provider error:`, e);
+    log.error("provider error", {
+      label,
+      ms: Date.now() - started,
+      err: errText(e),
+      // Keep the stack for server-side debugging (the old console.error(…, e) had it).
+      stack: e instanceof Error ? e.stack : undefined,
+    });
     return NextResponse.json({ error: "provider unavailable" }, { status: 502 });
   }
 }

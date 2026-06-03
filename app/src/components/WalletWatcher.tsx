@@ -42,7 +42,7 @@ export function WalletWatcher() {
         variant: "success",
         mood: "cool",
         title: "Wallet connected",
-        message: "Pip's glad you're here. Happy swapping!",
+        message: "Pip’s glad you’re here. Happy swapping!",
       });
     } else {
       toast({
@@ -79,7 +79,7 @@ export function WalletWatcher() {
         variant: "success",
         mood: "love",
         title: `Back on ${networkLabel()}`,
-        message: "Networks match — you're all set.",
+        message: "Networks match — you’re all set.",
       });
     }
   }, [connected, networkId, toast]);

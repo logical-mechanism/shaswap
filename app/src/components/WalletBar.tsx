@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import {
   useAddress,
   useLovelace,
@@ -10,6 +9,7 @@ import {
 } from "@meshsdk/react";
 import { APP_CONFIG, networkLabel } from "@/lib/config";
 import { formatAda, truncate } from "@/lib/format";
+import { useMenu } from "@/hooks/useMenu";
 import { Pip } from "./Pip";
 
 /**
@@ -27,28 +27,10 @@ export function WalletBar() {
   );
 }
 
-/** Close `open` when a pointer-down lands outside `ref`. */
-function useOutsideClose(
-  ref: React.RefObject<HTMLElement | null>,
-  open: boolean,
-  onClose: () => void,
-) {
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [ref, open, onClose]);
-}
-
 function ConnectMenu() {
   const { connect, connecting } = useWallet();
   const wallets = useWalletList();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useOutsideClose(ref, open, () => setOpen(false));
+  const { open, setOpen, containerRef, triggerRef } = useMenu();
 
   async function pick(walletName: string) {
     setOpen(false);
@@ -60,18 +42,21 @@ function ConnectMenu() {
   }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={containerRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         disabled={connecting}
+        aria-haspopup="menu"
+        aria-expanded={open}
         className="k-btn px-4 py-2 text-sm"
       >
         {connecting ? "Connecting…" : "Connect wallet"}
       </button>
 
       {open && (
-        <div className="animate-pop absolute right-0 z-40 mt-2 w-64 rounded-2xl border border-border bg-surface p-2 shadow-[0_24px_50px_-22px_rgba(150,110,190,0.55)]">
+        <div className="k-pop animate-pop absolute right-0 z-40 mt-2 w-64 p-2">
           <div className="flex items-center gap-2 px-2 py-1.5">
             <Pip size={28} mood="wave" />
             <span className="font-display text-sm font-extrabold text-ink">
@@ -111,9 +96,7 @@ function ConnectedMenu() {
   const address = useAddress();
   const lovelace = useLovelace();
   const networkId = useNetwork();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useOutsideClose(ref, open, () => setOpen(false));
+  const { open, setOpen, containerRef, triggerRef } = useMenu();
 
   const mismatch =
     networkId !== undefined && networkId !== APP_CONFIG.networkId;
@@ -129,10 +112,12 @@ function ConnectedMenu() {
   }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={containerRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
         aria-expanded={open}
         title={mismatch ? "Wallet network differs from app network" : undefined}
         className="flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-2.5 pr-2 text-sm transition-colors hover:border-accent/40"
@@ -166,7 +151,7 @@ function ConnectedMenu() {
       </button>
 
       {open && (
-        <div className="animate-pop absolute right-0 z-40 mt-2 w-60 rounded-2xl border border-border bg-surface p-2 shadow-[0_24px_50px_-22px_rgba(150,110,190,0.55)]">
+        <div className="k-pop animate-pop absolute right-0 z-40 mt-2 w-60 p-2">
           <div className="flex items-center gap-2 px-2 py-1.5">
             <Pip size={26} mood="cool" />
             <span className="font-display text-sm font-extrabold capitalize text-ink">
@@ -180,6 +165,15 @@ function ConnectedMenu() {
             <span>Balance</span>
             <span className="tabular-nums">{formatAda(lovelace)} ₳</span>
           </div>
+          {/* CIP-30 reports every testnet as the same network id (0), so we can't tell
+              preprod from preview programmatically — surface a clear reminder instead of
+              a false "all good". On mainnet this isn't shown. */}
+          {APP_CONFIG.networkId === 0 && !mismatch && (
+            <p className="px-2 pb-2 text-[11px] leading-snug text-muted">
+              ShaSwap runs on <b className="text-foreground">{networkLabel()}</b>. Wallets
+              report all testnets alike, so make sure yours is on {networkLabel()} too.
+            </p>
+          )}
           <button
             type="button"
             onClick={() => {

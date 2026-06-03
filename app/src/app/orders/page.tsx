@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNetwork, useWallet } from "@meshsdk/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useWallet } from "@meshsdk/react";
 import { useOrders } from "@/hooks/useOrders";
-import { useWalletCollateral } from "@/hooks/useWalletCollateral";
+import { useWriteGate } from "@/hooks/useWriteGate";
 import { reclaimOrder } from "@/lib/client/tx";
 import {
   getRecent,
@@ -19,10 +19,11 @@ import {
   type RowStatus,
 } from "@/lib/client/orderRows";
 import { toUserMessage } from "@/lib/client/errors";
-import { APP_CONFIG, explorerTxUrl, networkLabel } from "@/lib/config";
+import { explorerTxUrl, networkLabel } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { CollateralNote } from "@/components/CollateralNote";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
   pending: "k-chip-warn",
@@ -54,15 +55,15 @@ type ReclaimState =
 
 export default function OrdersPage() {
   const { connected, wallet } = useWallet();
-  const networkId = useNetwork();
-  const { hasCollateral, loading: collateralLoading } = useWalletCollateral();
-  // Reclaim spends a script UTXO, so it carries the same gates as every other write
-  // flow: correct network + a collateral UTXO. (It was the only flow missing them.)
-  const wrongNetwork =
-    connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
-  const networkReady = connected && networkId === APP_CONFIG.networkId;
-  const collateralReady = hasCollateral || collateralLoading;
-  const needsCollateral = connected && !hasCollateral && !collateralLoading;
+  // Reclaim spends a script UTXO — the same gating as every write flow (network +
+  // collateral); shared via useWriteGate.
+  const {
+    networkReady,
+    wrongNetwork,
+    collateralReady,
+    needsCollateral,
+    recheckCollateral,
+  } = useWriteGate({ requireCollateral: true });
   // Query by the wallet's CHANGE address — the payment key hash orders are posted
   // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
   // still see their own orders, and the local activity log keys match.
@@ -95,6 +96,9 @@ export default function OrdersPage() {
   const [recent, setRecent] = useState<RecentOrder[]>([]);
   const [now, setNow] = useState(0);
   const [reclaim, setReclaim] = useState<ReclaimState>({ kind: "idle" });
+  // Synchronous re-entry latch (matches the other write flows) — a double-click would
+  // otherwise fire two reclaims of the same order (the second dies BadInputsUTxO).
+  const reclaiming = useRef(false);
 
   // Re-read the local activity log + refetch the live set. Only ever sets state from
   // here (a callback), never synchronously in an effect body. Also clears any stale
@@ -141,6 +145,8 @@ export default function OrdersPage() {
   }, [pending, refresh]);
 
   async function onReclaim(row: OrderRow) {
+    if (reclaiming.current) return;
+    reclaiming.current = true;
     setReclaim({ kind: "busy", ref: row.ref });
     try {
       const hash = await reclaimOrder(wallet, row.ref);
@@ -168,6 +174,8 @@ export default function OrdersPage() {
       refresh();
     } catch (e) {
       setReclaim({ kind: "error", ref: row.ref, message: toUserMessage(e) });
+    } finally {
+      reclaiming.current = false;
     }
   }
 
@@ -202,6 +210,13 @@ export default function OrdersPage() {
           </button>
         )}
       </header>
+
+      {connected && needsCollateral && (
+        <CollateralNote onRecheck={recheckCollateral}>
+          Reclaiming an order spends a script, so your wallet needs a collateral UTXO. Set
+          one in your wallet, then re-check.
+        </CollateralNote>
+      )}
 
       {!connected && <Empty>Connect a wallet and Pip will round up your orders.</Empty>}
 
@@ -239,6 +254,7 @@ export default function OrdersPage() {
               key={row.ref}
               row={row}
               busy={reclaim.kind === "busy" && reclaim.ref === row.ref}
+              anyBusy={reclaim.kind === "busy"}
               error={
                 reclaim.kind === "error" && reclaim.ref === row.ref
                   ? reclaim.message
@@ -260,6 +276,7 @@ export default function OrdersPage() {
 function OrderRowItem({
   row,
   busy,
+  anyBusy,
   error,
   wrongNetwork,
   networkReady,
@@ -269,6 +286,7 @@ function OrderRowItem({
 }: {
   row: OrderRow;
   busy: boolean;
+  anyBusy: boolean;
   error?: string;
   wrongNetwork: boolean;
   networkReady: boolean;
@@ -285,7 +303,9 @@ function OrderRowItem({
       : needsCollateral
         ? "Needs collateral"
         : null;
-  const reclaimDisabled = busy || !networkReady || !collateralReady;
+  // Reclaims are serialized (one global in-flight latch), so disable EVERY row's button
+  // while any reclaim is running — otherwise other rows look clickable but silently no-op.
+  const reclaimDisabled = busy || anyBusy || !networkReady || !collateralReady;
   return (
     <li className="k-card p-4">
       <div className="flex items-center justify-between gap-3">

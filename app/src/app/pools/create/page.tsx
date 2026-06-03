@@ -17,16 +17,18 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useAssets, useNetwork, useWallet } from "@meshsdk/react";
+import { useAssets, useWallet } from "@meshsdk/react";
 import type { TokenInfo } from "@/lib/data";
-import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
+import { explorerTxUrl } from "@/lib/config";
 import { usePools } from "@/hooks/usePools";
+import { useWriteGate } from "@/hooks/useWriteGate";
 import { createPool } from "@/lib/client/tx";
 import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
 import { truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
+import { CollateralNote } from "@/components/CollateralNote";
 
 type TxState =
   | { kind: "idle" }
@@ -79,9 +81,16 @@ function bpsToFee(bps: number): { num: bigint; den: bigint } {
 
 export default function CreatePoolPage() {
   const { connected, wallet } = useWallet();
-  const networkId = useNetwork();
   const assets = useAssets();
   const { pools } = usePools();
+  // Pool creation spends a script (the mint), so it needs collateral like every write flow.
+  const {
+    networkReady,
+    collateralReady,
+    needsCollateral,
+    recheckCollateral,
+    baseReason,
+  } = useWriteGate({ requireCollateral: true });
 
   const [tokenA, setTokenA] = useState<TokenInfo | undefined>(undefined);
   const [tokenB, setTokenB] = useState<TokenInfo | undefined>(ADA_TOKEN);
@@ -91,10 +100,6 @@ export default function CreatePoolPage() {
   // re-renders to "busy", which would build + submit two txs spending the SAME seed
   // (the second double-spends → node rejects). The ref blocks the second call instantly.
   const submitting = useRef(false);
-
-  const wrongNetwork =
-    connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
-  const networkReady = connected && networkId === APP_CONFIG.networkId;
 
   // Token universe: ADA + the wallet's own assets (deduped by unit).
   const tokens = useMemo(() => {
@@ -126,6 +131,7 @@ export default function CreatePoolPage() {
   }, [pools, tokenA, tokenB, samePair, validBps, bps]);
   const canSubmit =
     networkReady &&
+    collateralReady &&
     !!tokenA &&
     !!tokenB &&
     !samePair &&
@@ -160,23 +166,21 @@ export default function CreatePoolPage() {
     }
   }
 
-  const label = !connected
-    ? "Connect wallet"
-    : wrongNetwork
-      ? "Wrong network"
-      : !networkReady
-        ? "Checking network…"
-        : !tokenA || !tokenB
-          ? "Select both tokens"
-          : samePair
-            ? "Tokens must differ"
-            : !validBps
-              ? "Enter a fee (0–9999 bps)"
-              : state.kind === "busy"
-                ? "Creating pool…"
-                : state.kind === "success"
-                  ? "Pool created ✓"
-                  : "Create pool";
+  // Common gate label (connect → wrong-network → checking → collateral) comes from the
+  // shared hook; this flow appends only its own reasons.
+  const label =
+    baseReason ??
+    (!tokenA || !tokenB
+      ? "Select both tokens"
+      : samePair
+        ? "Tokens must differ"
+        : !validBps
+          ? "Enter a fee (0–9999 bps)"
+          : state.kind === "busy"
+            ? "Creating pool…"
+            : state.kind === "success"
+              ? "Pool created ✓"
+              : "Create pool");
 
   return (
     <div className="mx-auto w-full max-w-md px-4 py-10 sm:px-6 sm:py-14">
@@ -193,7 +197,7 @@ export default function CreatePoolPage() {
           Open a new pool for any pair you hold — anyone can. It starts empty, then you
           add the first liquidity right after.
         </p>
-        <p className="mt-1 text-xs text-muted/70">
+        <p className="mt-1 text-xs text-muted">
           Creating an empty pool locks a ~2 ₳ seed (plus network fees). As the creator you
           can close it and reclaim that seed any time — until someone seeds it with
           liquidity, after which it’s permanent.
@@ -201,7 +205,7 @@ export default function CreatePoolPage() {
       </header>
 
       <div className="k-card w-full p-5 sm:p-6">
-        <div className="mb-2 px-1 text-xs text-muted/70">
+        <div className="mb-2 px-1 text-xs text-muted">
           {connected
             ? "Tokens to choose from: ADA + the assets held in your wallet."
             : "Connect a wallet to choose tokens — the list is ADA + your held assets."}
@@ -278,6 +282,13 @@ export default function CreatePoolPage() {
           </div>
         )}
 
+        {needsCollateral && (
+          <CollateralNote onRecheck={recheckCollateral}>
+            Creating a pool spends a script, so your wallet needs a collateral UTXO. Set
+            one in your wallet, then re-check.
+          </CollateralNote>
+        )}
+
         <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
 
         {state.kind === "success" && (
@@ -312,7 +323,10 @@ export default function CreatePoolPage() {
 
         {state.kind === "error" && (
           <div className="k-note k-note-danger mt-3 text-xs">
-            <div className="font-bold">Transaction failed</div>
+            <div className="flex items-center gap-2">
+              <Pip size={26} mood="worried" />
+              <div className="font-bold">Hmm, that didn’t go through</div>
+            </div>
             <div className="mt-1 break-words opacity-90">{state.message}</div>
           </div>
         )}

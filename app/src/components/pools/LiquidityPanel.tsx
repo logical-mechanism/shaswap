@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { deserializeAddress } from "@meshsdk/core";
-import { useAddress, useNetwork, useWallet } from "@meshsdk/react";
+import { useAddress, useWallet } from "@meshsdk/react";
 import type { Pool } from "@/lib/data";
-import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
+import { explorerTxUrl } from "@/lib/config";
 import { usePoolUtxo } from "@/hooks/usePoolUtxo";
-import { useWalletCollateral } from "@/hooks/useWalletCollateral";
+import { useWriteGate } from "@/hooks/useWriteGate";
 import {
   buildDeposit,
   buildWithdraw,
@@ -24,8 +24,10 @@ import {
 import { toUserMessage } from "@/lib/client/errors";
 import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
+import { CollateralNote } from "@/components/CollateralNote";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
 
 type Tab = "add" | "remove";
@@ -36,14 +38,6 @@ type TxState =
   | { kind: "success"; hash: string }
   | { kind: "error"; message: string };
 
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s);
-  } catch {
-    return 0n;
-  }
-}
-
 /** Apply a slippage haircut (bps) to a computed amount, flooring. Clamped to [0,100%]. */
 function withSlippage(amount: bigint, slippagePct: number): bigint {
   const bps = BigInt(Math.min(10_000, Math.max(0, Math.round(slippagePct * 100))));
@@ -52,9 +46,15 @@ function withSlippage(amount: bigint, slippagePct: number): bigint {
 
 export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { connected, wallet } = useWallet();
-  const networkId = useNetwork();
   const address = useAddress();
-  const { hasCollateral, loading: collateralLoading } = useWalletCollateral();
+  // Shared write gating (network + collateral); deposit/withdraw/close are script spends.
+  const {
+    networkReady,
+    wrongNetwork,
+    collateralReady,
+    needsCollateral,
+    recheckCollateral,
+  } = useWriteGate({ requireCollateral: true });
   const { view, stats, loading, error, reload } = usePoolUtxo(pool.id);
 
   const [tab, setTab] = useState<Tab>("add");
@@ -63,15 +63,6 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   // persists: closing burns the pool UTXO, so onDone()→reload() then resolves to null and
   // would otherwise replace the success panel with a "Pool UTXO not found" error.
   const [closedTxHash, setClosedTxHash] = useState<string | null>(null);
-
-  const wrongNetwork =
-    connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
-  const networkReady = connected && networkId === APP_CONFIG.networkId;
-  // Gate script-spend writes on a detected collateral UTXO (deposit/withdraw/close all
-  // need one). While the check is in flight, don't block — some wallets set collateral on
-  // demand; only hard-disable once we positively know it's absent.
-  const collateralReady = hasCollateral || collateralLoading;
-  const needsCollateral = connected && !hasCollateral && !collateralLoading;
 
   // The connected wallet's payment key hash — gates the creator-only "Close empty pool"
   // affordance against the pool's `creator`. A never-seeded pool can be torn down by its
@@ -180,7 +171,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
             onClick={reload}
             title="Refresh pool data"
             aria-label="Refresh pool data"
-            className="k-pill px-2.5 py-1 text-xs text-muted hover:text-accent"
+            className="k-pill px-3 py-1.5 text-xs text-muted hover:text-accent"
           >
             ↻
           </button>
@@ -224,6 +215,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               connected={connected}
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
+              onRecheckCollateral={recheckCollateral}
               onDone={reload}
             />
           ) : (
@@ -239,6 +231,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               connected={connected}
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
+              onRecheckCollateral={recheckCollateral}
               onDone={reload}
             />
           )}
@@ -281,6 +274,7 @@ function AddForm({
   connected,
   collateralReady,
   needsCollateral,
+  onRecheckCollateral,
   onDone,
 }: {
   pool: Pool;
@@ -293,11 +287,15 @@ function AddForm({
   connected: boolean;
   collateralReady: boolean;
   needsCollateral: boolean;
+  onRecheckCollateral: () => void;
   onDone: () => void;
 }) {
   const [amountA, setAmountA] = useState("");
   const [amountB, setAmountB] = useState(""); // only editable on the first deposit
   const [state, setState] = useState<TxState>({ kind: "idle" });
+  // Synchronous re-entry latch (mirrors createPool/closePool) so a double-click can't
+  // build two deposits racing the same pool UTXO.
+  const submitting = useRef(false);
 
   const first = stats.firstDeposit;
 
@@ -346,7 +344,8 @@ function AddForm({
     state.kind !== "busy";
 
   async function submit() {
-    if (!canSubmit || !preview) return;
+    if (!canSubmit || submitting.current || !preview) return;
+    submitting.current = true;
     setState({ kind: "busy" });
     try {
       const res = await depositLiquidity(wallet, {
@@ -361,6 +360,8 @@ function AddForm({
       onDone();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -423,7 +424,7 @@ function AddForm({
       />
 
       {!first && deltaB > 0n && (
-        <p className="mt-1 px-1 text-[10px] text-muted/70">
+        <p className="mt-1 px-1 text-[11px] text-muted">
           Paired automatically at the current pool ratio and rounded up, so your share
           backing holds on both sides.
         </p>
@@ -454,10 +455,7 @@ function AddForm({
       )}
 
       {needsCollateral && (
-        <div className="k-note k-note-warn mt-3 text-xs">
-          This action spends a script UTXO, so your wallet needs a collateral UTXO. Set
-          one in your wallet, then retry.
-        </div>
+        <CollateralNote onRecheck={onRecheckCollateral} />
       )}
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
@@ -480,6 +478,7 @@ function RemoveForm({
   connected,
   collateralReady,
   needsCollateral,
+  onRecheckCollateral,
   onDone,
 }: {
   pool: Pool;
@@ -493,10 +492,13 @@ function RemoveForm({
   connected: boolean;
   collateralReady: boolean;
   needsCollateral: boolean;
+  onRecheckCollateral: () => void;
   onDone: () => void;
 }) {
   const [lpInput, setLpInput] = useState("");
   const [state, setState] = useState<TxState>({ kind: "idle" });
+  // Synchronous re-entry latch (mirrors createPool/closePool).
+  const submitting = useRef(false);
 
   // The most LP that can be burned: your balance, capped so circulating never drops
   // below the permanently-locked min_liq (else the validator rejects).
@@ -536,7 +538,8 @@ function RemoveForm({
     state.kind !== "busy";
 
   async function submit() {
-    if (!canSubmit || !preview) return;
+    if (!canSubmit || submitting.current || !preview) return;
+    submitting.current = true;
     setState({ kind: "busy" });
     try {
       const res = await withdrawLiquidity(wallet, {
@@ -550,6 +553,8 @@ function RemoveForm({
       onDone();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -633,10 +638,7 @@ function RemoveForm({
       )}
 
       {needsCollateral && (
-        <div className="k-note k-note-warn mt-3 text-xs">
-          This action spends a script UTXO, so your wallet needs a collateral UTXO. Set
-          one in your wallet, then retry.
-        </div>
+        <CollateralNote onRecheck={onRecheckCollateral} />
       )}
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
@@ -805,7 +807,7 @@ function PositionLine({
       <div className="flex items-center justify-between">
         <span className="text-muted">
           Your position
-          <span className="block text-[10px] text-muted/60">
+          <span className="block text-[11px] text-muted">
             LP tokens = your share of this pool’s reserves
           </span>
         </span>
@@ -820,12 +822,12 @@ function PositionLine({
           {formatUnits(position.b.toString(), pool.tokenB.decimals)}{" "}
           {pool.tokenB.ticker}
           {shareLabel && (
-            <span className="block text-[10px] text-muted/70">{shareLabel}</span>
+            <span className="block text-[11px] text-muted">{shareLabel}</span>
           )}
         </div>
       )}
       {firstDeposit && lpBalance === 0n && (
-        <div className="mt-1 text-right text-muted/70">no liquidity yet</div>
+        <div className="mt-1 text-right text-muted">no liquidity yet</div>
       )}
     </div>
   );
@@ -882,8 +884,9 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={`rounded-full px-3 py-1.5 transition-colors ${
-        active ? "bg-accent/12 font-bold text-accent" : "text-muted hover:text-accent"
+        active ? "k-toggle-active font-bold" : "text-muted hover:text-accent"
       }`}
     >
       {children}
@@ -947,7 +950,10 @@ function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
   if (state.kind === "error") {
     return (
       <div className="k-note k-note-danger mt-3 text-xs">
-        <div className="font-bold">Transaction failed</div>
+        <div className="flex items-center gap-2">
+          <Pip size={26} mood="worried" />
+          <div className="font-bold">Hmm, that didn’t go through</div>
+        </div>
         <div className="mt-1 break-words opacity-90">{state.message}</div>
       </div>
     );

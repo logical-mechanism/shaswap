@@ -10,6 +10,7 @@ import {
 } from "@meshsdk/react";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
+import { ORDER_MIN_ADA } from "@/lib/chain/deployment";
 import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
@@ -17,7 +18,14 @@ import { postOrder } from "@/lib/client/tx";
 import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
-import { formatPercent, formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import {
+  formatPercent,
+  formatUnits,
+  formatUnitsPlain,
+  toBaseUnits,
+  truncate,
+} from "@/lib/format";
+import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
@@ -33,10 +41,14 @@ export function SwapCard() {
   const { connected, wallet } = useWallet();
   const networkId = useNetwork();
   const address = useAddress();
-  const { tokens, loading: tokensLoading } = useTokens();
+  const { tokens, loading: tokensLoading, error: tokensError } = useTokens();
   const { pools } = usePools();
   const lovelace = useLovelace();
   const assets = useAssets();
+  // Synchronous re-entry latch: two same-tick clicks both pass `canPost` (the disabled
+  // state updates async), which would build two orders from overlapping UTXOs. Mirrors
+  // the guard createPool/closePool already use.
+  const submitting = useRef(false);
 
   const [fromUnit, setFromUnit] = useState<string>("lovelace");
   const [toUnit, setToUnit] = useState<string>("");
@@ -71,29 +83,44 @@ export function SwapCard() {
   const baseAmountIn =
     fromToken && amount ? toBaseUnits(amount, fromToken.decimals) : "";
 
-  const { quote, loading: quoteLoading } = useQuote(
-    fromToken?.unit,
-    toToken?.unit,
-    baseAmountIn,
-  );
+  const {
+    quote,
+    loading: quoteLoading,
+    error: quoteError,
+    reload: reloadQuote,
+  } = useQuote(fromToken?.unit, toToken?.unit, baseAmountIn);
 
-  // useQuote debounces (~250ms), so after switching tokens the PREVIOUS pair's quote
-  // can still be in hand. Treat a quote as usable only when it matches the CURRENT
-  // pair — otherwise the order could bind to the wrong pool with a stale floor.
+  // useQuote debounces (~250ms), so after changing the AMOUNT or pair the PREVIOUS
+  // quote can still be in hand. Treat a quote as usable only when it matches the CURRENT
+  // pair AND the current input amount — otherwise the order could bind to the wrong pool,
+  // or (worse) to a floor computed for a different amount, during the debounce/fetch gap.
   const quoteFresh =
     !!quote &&
     quote.tokenIn.unit === fromToken?.unit &&
-    quote.tokenOut.unit === toToken?.unit;
+    quote.tokenOut.unit === toToken?.unit &&
+    quote.amountIn === baseAmountIn;
 
   const toAmount =
     quoteFresh && quote && toToken
       ? formatUnits(quote.amountOut, toToken.decimals)
       : "";
 
+  // The pools that trade this pair (single scan — `pool` and `poolCount` both derive
+  // from it). The quote auto-picks the best-priced one.
+  const pairPools = useMemo(() => {
+    if (!fromToken || !toToken) return [];
+    return pools.filter(
+      (p) =>
+        (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
+        (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
+    );
+  }, [pools, fromToken, toToken]);
+  const poolCount = pairPools.length;
+
   // The pool that trades this pair (also identifies the order's pool_nft binding).
   // Bind to the SAME pool the FRESH quote was priced against (quote.poolId) so the
   // floor and the order's pool_nft can never reference two different same-pair pools;
-  // fall back to a pair match before/until a matching quote has loaded.
+  // fall back to the first pair match before/until a matching quote has loaded.
   const pool: Pool | undefined = useMemo(() => {
     if (!fromToken || !toToken) return undefined;
     const byQuote =
@@ -101,27 +128,10 @@ export function SwapCard() {
       quote.tokenIn.unit === fromToken.unit &&
       quote.tokenOut.unit === toToken.unit &&
       quote.poolId
-        ? pools.find((p) => p.id === quote.poolId)
+        ? pairPools.find((p) => p.id === quote.poolId)
         : undefined;
-    return (
-      byQuote ??
-      pools.find(
-        (p) =>
-          (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
-          (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
-      )
-    );
-  }, [pools, fromToken, toToken, quote]);
-
-  // How many pools trade this pair (the quote auto-picks the best-priced one).
-  const poolCount = useMemo(() => {
-    if (!fromToken || !toToken) return 0;
-    return pools.filter(
-      (p) =>
-        (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
-        (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
-    ).length;
-  }, [pools, fromToken, toToken]);
+    return byQuote ?? pairPools[0];
+  }, [pairPools, fromToken, toToken, quote]);
 
   // Per-order floor (limit): the worst output the user will accept = the estimated
   // output minus slippage. The solver may NEVER settle below this (§5.2.5).
@@ -154,7 +164,12 @@ export function SwapCard() {
       ? toBig(lovelace ?? "0")
       : toBig(assets?.find((a) => a.unit === fromToken?.unit)?.quantity ?? "0");
   const fromIsAda = fromToken?.unit === "lovelace";
-  const adaReserve = ADA_RESERVE + (fromIsAda ? BigInt(tipLovelace || "0") : 0n);
+  // ADA the order itself locks: its min-ADA — DOUBLED when partial fills are allowed, since
+  // a partial leaves a second reclaimable output (mirrors order.ts: minAda = (partial?2:1) ×
+  // ORDER_MIN_ADA) — plus headroom for the network fee. The solver tip is separate ADA on top.
+  const orderMinAda = (partial ? 2n : 1n) * ORDER_MIN_ADA;
+  const adaNeeded = orderMinAda + FEE_BUFFER;
+  const adaReserve = adaNeeded + (fromIsAda ? BigInt(tipLovelace || "0") : 0n);
   const spendable = fromIsAda
     ? fromBalance > adaReserve
       ? fromBalance - adaReserve
@@ -166,12 +181,24 @@ export function SwapCard() {
     connected && hasAmount && !overBalance && amountBig > spendable;
   const balanceOk = !overBalance && !overSpendable;
 
+  // A non-ADA sell still funds the order's min-ADA + tip + network fee from the wallet's
+  // lovelace. Verify the wallet holds that ADA up front (the ADA-sell path already
+  // reserves it inside `spendable`) instead of failing opaquely at coin selection.
+  const adaForOrder = adaNeeded + BigInt(tipLovelace || "0");
+  const insufficientAda =
+    connected && !fromIsAda && hasAmount && toBig(lovelace ?? "0") < adaForOrder;
+
+  // The quote read failed (provider blip) and we have no usable fresh quote to post.
+  const quoteFailed = !!quoteError && hasAmount && !!pool && !quoteFresh;
+
   const canPost =
     networkReady &&
     hasAmount &&
     balanceOk &&
+    !insufficientAda &&
     !!pool &&
     quoteFresh &&
+    !quoteLoading &&
     floor > 0n &&
     tipValid &&
     post.kind !== "posting";
@@ -187,12 +214,15 @@ export function SwapCard() {
 
   function setFromAmount(base: bigint) {
     if (!fromToken || base <= 0n) return;
-    setAmount(formatUnits(base.toString(), fromToken.decimals));
+    // Plain (non-grouped) so the value round-trips back through toBaseUnits and stays
+    // editable — a comma-grouped "1,000" would be rejected and dead-end the button.
+    setAmount(formatUnitsPlain(base.toString(), fromToken.decimals));
     if (post.kind !== "idle") setPost({ kind: "idle" });
   }
 
   async function handlePost() {
-    if (!canPost || !pool || !fromToken || !toToken) return;
+    if (!canPost || submitting.current || !pool || !fromToken || !toToken) return;
+    submitting.current = true;
     setPost({ kind: "posting" });
     try {
       const res = await postOrder(wallet, {
@@ -223,6 +253,8 @@ export function SwapCard() {
       setAmount("");
     } catch (e) {
       setPost({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -238,8 +270,12 @@ export function SwapCard() {
             ? { label: `Insufficient ${fromToken?.ticker ?? "balance"}`, disabled: true }
             : overSpendable
               ? { label: "Leave ADA for tip + fees", disabled: true }
+              : insufficientAda
+                ? { label: "Not enough ADA for fees", disabled: true }
               : !pool
                 ? { label: "No pool for this pair", disabled: true }
+            : quoteFailed
+              ? { label: "Quote unavailable", disabled: true }
             : !quoteFresh || quoteLoading
               ? { label: "Fetching quote…", disabled: true }
               : floor <= 0n
@@ -265,6 +301,12 @@ export function SwapCard() {
         </div>
         <SlippageSettings value={slippage} onChange={setSlippage} context="swap" />
       </div>
+
+      {tokensError && (
+        <div className="k-note k-note-danger mb-3 text-xs">
+          Pip couldn’t load the token list — check your connection and refresh the page.
+        </div>
+      )}
 
       {/* FROM */}
       <TokenField
@@ -376,6 +418,22 @@ export function SwapCard() {
           </div>
         )}
 
+      {quoteFailed && (
+        <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
+          <span className="flex items-center gap-2">
+            <Pip size={22} mood="worried" />
+            Couldn’t fetch a quote just now.
+          </span>
+          <button
+            type="button"
+            onClick={reloadQuote}
+            className="k-btn-danger-soft shrink-0 px-3 py-1 text-xs"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
       <button
         type="button"
         disabled={button.disabled}
@@ -385,22 +443,22 @@ export function SwapCard() {
         {button.label}
       </button>
 
+      {/* Announce the live estimate / minimum received to screen readers (the To field
+          is read-only, so its updates are otherwise silent). */}
+      <p aria-live="polite" className="sr-only">
+        {quoteFresh && toToken && toAmount
+          ? `Estimated ${toAmount} ${toToken.ticker}; minimum received ${floorDisplay} ${toToken.ticker}.`
+          : ""}
+      </p>
+
       <PostResult state={post} />
     </div>
   );
 }
 
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s.split(".")[0] || "0");
-  } catch {
-    return 0n;
-  }
-}
-
-// ADA held back when the FROM token is ADA, so a MAX swap still leaves room for the
-// network fee + the order's min-ADA (the tip is added on top of this). ~3 ₳.
-const ADA_RESERVE = 3_000_000n;
+// Headroom for the network fee, on top of the order's min-ADA (which the component sizes
+// from the partial flag) and the separate tip. ~1 ₳.
+const FEE_BUFFER = 1_000_000n;
 
 const EXPIRY_MS: Record<string, number> = {
   "1h": 3_600_000,
@@ -487,14 +545,14 @@ function Advanced({
         className="flex w-full items-center justify-between px-1 text-xs font-semibold text-muted transition-colors hover:text-accent"
       >
         <span>Advanced</span>
-        <span className="text-muted/70">{open ? "Hide" : "Show"}</span>
+        <span className="text-muted">{open ? "Hide" : "Show"}</span>
       </button>
       {open && (
         <div className="mt-2 space-y-3 px-1">
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Solver tip (ADA)
-              <span className="block text-[10px] text-muted/70">
+              <span className="block text-[11px] text-muted">
                 the only solver reward — required; a 0-tip order won’t be picked up.
                 Higher tips settle sooner.
               </span>
@@ -506,15 +564,15 @@ function Advanced({
                 const v = e.target.value;
                 if (v === "" || /^\d*\.?\d*$/.test(v)) onTip(v);
               }}
-              className={`w-24 rounded-xl border bg-surface-sunk px-2 py-1.5 text-right tabular-nums text-ink outline-none ${
-                tipValid ? "border-border" : "border-danger"
+              className={`k-input-box w-24 px-2 py-1.5 text-right tabular-nums ${
+                tipValid ? "" : "border-danger"
               }`}
             />
           </label>
           <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Allow partial fills
-              <span className="block text-[10px] text-muted/70">
+              <span className="block text-[11px] text-muted">
                 a solver may fill part now and leave a reclaimable remainder
               </span>
             </span>
@@ -528,14 +586,14 @@ function Advanced({
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Expiry
-              <span className="block text-[10px] text-muted/70">
+              <span className="block text-[11px] text-muted">
                 a solver can only settle before this deadline (reclaim anytime)
               </span>
             </span>
             <select
               value={expiry}
               onChange={(e) => onExpiry(e.target.value)}
-              className="rounded-xl border border-border bg-surface-sunk px-2 py-1.5 text-xs text-ink outline-none"
+              className="k-input-box px-2 py-1.5 text-xs"
             >
               <option value="none">No expiry</option>
               <option value="1h">1 hour</option>
@@ -614,14 +672,14 @@ function TokenField({
             <button
               type="button"
               onClick={balance.onHalf}
-              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
             >
               Half
             </button>
             <button
               type="button"
               onClick={balance.onMax}
-              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
             >
               Max
             </button>
@@ -656,18 +714,25 @@ function RateLine({
   feeBps: number | undefined;
   tip: string;
 }) {
-  // `price` is the pool MID price (reserveOut/reserveIn) — it ignores the fee and
-  // price impact, so the rate shown is the mid price and the "To" amount / Minimum
-  // received reflect the actual (post-fee) execution. Collapsed by default: the rate
-  // is the at-a-glance summary; the full breakdown (incl. Minimum received) expands.
+  // `price` is the pool MID price in HUMAN units (tokenOut per tokenIn, decimal-adjusted)
+  // — it ignores the fee and price impact, so the rate shown is the mid price while the
+  // "To" amount / Minimum received reflect the actual (post-fee) execution. Collapsed by
+  // default: the rate is the at-a-glance summary; the full breakdown expands.
   const [open, setOpen] = useState(false);
-  const showRate = price && fromToken && toToken && Number(price) > 0;
+  const priceNum = price ? Number(price) : 0;
+  const showRate = !!price && !!fromToken && !!toToken && priceNum > 0;
   const tipNum = Number(tip);
+  // Big rates want grouped thousands; a sub-1 rate (e.g. selling a low-decimal token for
+  // ADA) wants significant digits so a tiny-but-real price doesn't round to "0".
+  const priceText =
+    priceNum >= 1
+      ? priceNum.toLocaleString(undefined, { maximumFractionDigits: 6 })
+      : priceNum.toLocaleString(undefined, { maximumSignificantDigits: 4 });
   const rateText =
     loading && !showRate
       ? "Fetching rate…"
       : showRate
-        ? `1 ${fromToken.ticker} ≈ ${Number(price).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${toToken.ticker}`
+        ? `1 ${fromToken.ticker} ≈ ${priceText} ${toToken.ticker}`
         : "Rate appears once you enter an amount";
 
   return (
