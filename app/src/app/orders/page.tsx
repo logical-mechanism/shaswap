@@ -254,6 +254,7 @@ export default function OrdersPage() {
               key={row.ref}
               row={row}
               busy={reclaim.kind === "busy" && reclaim.ref === row.ref}
+              anyBusy={reclaim.kind === "busy"}
               error={
                 reclaim.kind === "error" && reclaim.ref === row.ref
                   ? reclaim.message
@@ -275,6 +276,7 @@ export default function OrdersPage() {
 function OrderRowItem({
   row,
   busy,
+  anyBusy,
   error,
   wrongNetwork,
   networkReady,
@@ -284,6 +286,7 @@ function OrderRowItem({
 }: {
   row: OrderRow;
   busy: boolean;
+  anyBusy: boolean;
   error?: string;
   wrongNetwork: boolean;
   networkReady: boolean;
@@ -300,7 +303,9 @@ function OrderRowItem({
       : needsCollateral
         ? "Needs collateral"
         : null;
-  const reclaimDisabled = busy || !networkReady || !collateralReady;
+  // Reclaims are serialized (one global in-flight latch), so disable EVERY row's button
+  // while any reclaim is running — otherwise other rows look clickable but silently no-op.
+  const reclaimDisabled = busy || anyBusy || !networkReady || !collateralReady;
   return (
     <li className="k-card p-4">
       <div className="flex items-center justify-between gap-3">

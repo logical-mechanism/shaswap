@@ -2,8 +2,9 @@ import type { ReactNode } from "react";
 
 /**
  * "Needs collateral" warning with an in-app re-check, shared by every script-spend flow
- * (LP add/remove, create pool). `useWalletCollateral` also auto-rechecks on tab focus, so
- * the button is a manual nudge. Pass `children` to tailor the explanation per flow.
+ * (LP add/remove, create pool, reclaim order). `useWalletCollateral` also auto-rechecks
+ * when the user returns to the app, so the button is a manual nudge. Pass `children` to
+ * tailor the explanation per flow.
  */
 export function CollateralNote({
   onRecheck,

@@ -719,13 +719,20 @@ function RateLine({
   // "To" amount / Minimum received reflect the actual (post-fee) execution. Collapsed by
   // default: the rate is the at-a-glance summary; the full breakdown expands.
   const [open, setOpen] = useState(false);
-  const showRate = price && fromToken && toToken && Number(price) > 0;
+  const priceNum = price ? Number(price) : 0;
+  const showRate = !!price && !!fromToken && !!toToken && priceNum > 0;
   const tipNum = Number(tip);
+  // Big rates want grouped thousands; a sub-1 rate (e.g. selling a low-decimal token for
+  // ADA) wants significant digits so a tiny-but-real price doesn't round to "0".
+  const priceText =
+    priceNum >= 1
+      ? priceNum.toLocaleString(undefined, { maximumFractionDigits: 6 })
+      : priceNum.toLocaleString(undefined, { maximumSignificantDigits: 4 });
   const rateText =
     loading && !showRate
       ? "Fetching rate…"
       : showRate
-        ? `1 ${fromToken.ticker} ≈ ${Number(price).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${toToken.ticker}`
+        ? `1 ${fromToken.ticker} ≈ ${priceText} ${toToken.ticker}`
         : "Rate appears once you enter an amount";
 
   return (
