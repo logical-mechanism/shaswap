@@ -24,7 +24,13 @@ export async function providerJson<T>(
     if (ms > SLOW_MS) log.warn("slow provider read", { label, ms });
     return NextResponse.json(data);
   } catch (e) {
-    log.error("provider error", { label, ms: Date.now() - started, err: errText(e) });
+    log.error("provider error", {
+      label,
+      ms: Date.now() - started,
+      err: errText(e),
+      // Keep the stack for server-side debugging (the old console.error(…, e) had it).
+      stack: e instanceof Error ? e.stack : undefined,
+    });
     return NextResponse.json({ error: "provider unavailable" }, { status: 502 });
   }
 }

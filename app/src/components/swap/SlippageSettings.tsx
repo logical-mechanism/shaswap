@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMenu } from "@/hooks/useMenu";
 
 const PRESETS = [0.1, 0.5, 1.0];
+const DEFAULT_SLIPPAGE = 0.5; // fallback when the custom field is cleared
 const MAX_SLIPPAGE = 50; // hard clamp — beyond this the floor is meaningless
 
 /**
@@ -39,10 +40,14 @@ export function SlippageSettings({
   function onCustom(v: string) {
     if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
     setCustom(v);
-    const n = Number(v);
-    if (v !== "" && Number.isFinite(n)) {
-      onChange(Math.min(MAX_SLIPPAGE, Math.max(0, n)));
+    if (v === "") {
+      // Cleared → revert to the default preset so the enforced slippage never silently
+      // disagrees with the (now empty) UI.
+      onChange(DEFAULT_SLIPPAGE);
+      return;
     }
+    const n = Number(v);
+    if (Number.isFinite(n)) onChange(Math.min(MAX_SLIPPAGE, Math.max(0, n)));
   }
 
   return (

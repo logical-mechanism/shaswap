@@ -60,6 +60,17 @@ test("production emits one JSON object per line with level/msg/fields/ts", () =>
   assert.equal(typeof obj.ts, "string");
 });
 
+test("caller fields cannot clobber the canonical level/msg/ts", () => {
+  const [line] = capture({ NODE_ENV: "production", LOG_LEVEL: "info" }, () => {
+    log.info("real", { level: "debug", msg: "fake", ts: "nope", keep: 1 });
+  });
+  const obj = JSON.parse(line) as Record<string, unknown>;
+  assert.equal(obj.level, "info");
+  assert.equal(obj.msg, "real");
+  assert.notEqual(obj.ts, "nope");
+  assert.equal(obj.keep, 1);
+});
+
 test("errText summarises Error/string/object and truncates", () => {
   assert.equal(errText(new Error("boom")), "boom");
   assert.equal(errText("plain"), "plain");

@@ -31,7 +31,9 @@ function emit(level: LogLevel, msg: string, fields?: Record<string, unknown>): v
         ? console.warn
         : console.log;
   if (process.env.NODE_ENV === "production") {
-    sink(JSON.stringify({ level, msg, ...fields, ts: new Date().toISOString() }));
+    // Spread caller fields FIRST so the canonical level/msg/ts can't be clobbered by a
+    // field that happens to be named "level"/"msg"/"ts".
+    sink(JSON.stringify({ ...fields, level, msg, ts: new Date().toISOString() }));
   } else {
     sink(`[${level}] ${msg}`, fields && Object.keys(fields).length ? fields : "");
   }

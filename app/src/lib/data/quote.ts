@@ -47,22 +47,21 @@ export function quoteConstantProduct(
       ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
       : 0;
 
-  // DISPLAY price = tokenOut per tokenIn in HUMAN units. The base-unit ratio
-  // reserveOut/reserveIn only equals the human ratio when both tokens share decimals;
-  // otherwise it's off by 10^(decIn − decOut). Fold that factor into the BigInt scaling
-  // (so precision is kept) before the single final Number() divide for display.
-  const dDiff = tokenIn.decimals - tokenOut.decimals;
-  const pow = (n: number): bigint => 10n ** BigInt(Math.abs(n));
-  const priceNumer = dDiff >= 0 ? reserveOut * SCALE * pow(dDiff) : reserveOut * SCALE;
-  const priceDenom = dDiff >= 0 ? reserveIn : reserveIn * pow(-dDiff);
-  const priceScaled = priceNumer / priceDenom; // = display price × SCALE
+  // DISPLAY price = tokenOut per tokenIn in HUMAN units = (reserveOut/reserveIn) ×
+  // 10^(decIn − decOut). Take the base-unit ratio with high-precision BigInt scaling, then
+  // apply the decimals factor in FLOAT. Using a final float (not BigInt floor division)
+  // keeps a genuinely small human price from flooring to 0 — e.g. selling a 0-decimal token
+  // for ADA, where one token is worth far less than 1e-6 ADA.
+  const RATIO_SCALE = 1_000_000_000_000n; // 1e12 — sub-1e-6 prices survive the divide
+  const baseRatio = Number((reserveOut * RATIO_SCALE) / reserveIn) / 1e12;
+  const price = baseRatio * 10 ** (tokenIn.decimals - tokenOut.decimals);
 
   return {
     tokenIn,
     tokenOut,
     amountIn,
     amountOut: amountOut.toString(),
-    price: (Number(priceScaled) / Number(SCALE)).toString(),
+    price: price.toString(),
     priceImpact,
     poolId: pool.id,
   };

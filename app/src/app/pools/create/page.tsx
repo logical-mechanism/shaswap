@@ -86,10 +86,10 @@ export default function CreatePoolPage() {
   // Pool creation spends a script (the mint), so it needs collateral like every write flow.
   const {
     networkReady,
-    wrongNetwork,
     collateralReady,
     needsCollateral,
     recheckCollateral,
+    baseReason,
   } = useWriteGate({ requireCollateral: true });
 
   const [tokenA, setTokenA] = useState<TokenInfo | undefined>(undefined);
@@ -166,25 +166,21 @@ export default function CreatePoolPage() {
     }
   }
 
-  const label = !connected
-    ? "Connect wallet"
-    : wrongNetwork
-      ? "Wrong network"
-      : !networkReady
-        ? "Checking network…"
-        : needsCollateral
-          ? "Set a collateral UTXO"
-        : !tokenA || !tokenB
-          ? "Select both tokens"
-          : samePair
-            ? "Tokens must differ"
-            : !validBps
-              ? "Enter a fee (0–9999 bps)"
-              : state.kind === "busy"
-                ? "Creating pool…"
-                : state.kind === "success"
-                  ? "Pool created ✓"
-                  : "Create pool";
+  // Common gate label (connect → wrong-network → checking → collateral) comes from the
+  // shared hook; this flow appends only its own reasons.
+  const label =
+    baseReason ??
+    (!tokenA || !tokenB
+      ? "Select both tokens"
+      : samePair
+        ? "Tokens must differ"
+        : !validBps
+          ? "Enter a fee (0–9999 bps)"
+          : state.kind === "busy"
+            ? "Creating pool…"
+            : state.kind === "success"
+              ? "Pool created ✓"
+              : "Create pool");
 
   return (
     <div className="mx-auto w-full max-w-md px-4 py-10 sm:px-6 sm:py-14">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@meshsdk/react";
 import { useOrders } from "@/hooks/useOrders";
 import { useWriteGate } from "@/hooks/useWriteGate";
@@ -23,6 +23,7 @@ import { explorerTxUrl, networkLabel } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { CollateralNote } from "@/components/CollateralNote";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
   pending: "k-chip-warn",
@@ -56,8 +57,13 @@ export default function OrdersPage() {
   const { connected, wallet } = useWallet();
   // Reclaim spends a script UTXO — the same gating as every write flow (network +
   // collateral); shared via useWriteGate.
-  const { networkReady, wrongNetwork, collateralReady, needsCollateral } =
-    useWriteGate({ requireCollateral: true });
+  const {
+    networkReady,
+    wrongNetwork,
+    collateralReady,
+    needsCollateral,
+    recheckCollateral,
+  } = useWriteGate({ requireCollateral: true });
   // Query by the wallet's CHANGE address — the payment key hash orders are posted
   // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
   // still see their own orders, and the local activity log keys match.
@@ -90,6 +96,9 @@ export default function OrdersPage() {
   const [recent, setRecent] = useState<RecentOrder[]>([]);
   const [now, setNow] = useState(0);
   const [reclaim, setReclaim] = useState<ReclaimState>({ kind: "idle" });
+  // Synchronous re-entry latch (matches the other write flows) — a double-click would
+  // otherwise fire two reclaims of the same order (the second dies BadInputsUTxO).
+  const reclaiming = useRef(false);
 
   // Re-read the local activity log + refetch the live set. Only ever sets state from
   // here (a callback), never synchronously in an effect body. Also clears any stale
@@ -136,6 +145,8 @@ export default function OrdersPage() {
   }, [pending, refresh]);
 
   async function onReclaim(row: OrderRow) {
+    if (reclaiming.current) return;
+    reclaiming.current = true;
     setReclaim({ kind: "busy", ref: row.ref });
     try {
       const hash = await reclaimOrder(wallet, row.ref);
@@ -163,6 +174,8 @@ export default function OrdersPage() {
       refresh();
     } catch (e) {
       setReclaim({ kind: "error", ref: row.ref, message: toUserMessage(e) });
+    } finally {
+      reclaiming.current = false;
     }
   }
 
@@ -197,6 +210,13 @@ export default function OrdersPage() {
           </button>
         )}
       </header>
+
+      {connected && needsCollateral && (
+        <CollateralNote onRecheck={recheckCollateral}>
+          Reclaiming an order spends a script, so your wallet needs a collateral UTXO. Set
+          one in your wallet, then re-check.
+        </CollateralNote>
+      )}
 
       {!connected && <Empty>Connect a wallet and Pip will round up your orders.</Empty>}
 

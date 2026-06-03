@@ -65,19 +65,17 @@ export function useWalletCollateral() {
     };
   }, [connected, wallet, nonce]);
 
-  // Auto-recheck when the tab regains focus while collateral is still absent — the user
-  // usually sets it in their wallet (another window) and tabs back.
+  // Auto-recheck when the tab becomes visible again while collateral is still absent — the
+  // user usually sets it in their wallet (another tab/window) and switches back. One
+  // listener (visibilitychange) covers the tab-return case without the double-fire that
+  // pairing it with window 'focus' caused.
   useEffect(() => {
     if (!connected || hasCollateral) return;
-    const onFocus = () => {
+    const onVisible = () => {
       if (document.visibilityState === "visible") recheck();
     };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [connected, hasCollateral, recheck]);
 
   return { hasCollateral, loading, recheck };

@@ -64,6 +64,22 @@ test("displayed price is decimal-adjusted (regression for the rate-line bug)", (
   assert.ok(BigInt(q.amountOut) > 100_000_000n);
 });
 
+test("tiny human price (sell low-decimal token for ADA) does NOT floor to 0", () => {
+  // TOK(0 decimals) → ADA(6): 1 TOK is worth ~5e-7 ADA. The displayed price must stay
+  // positive (a BigInt floor-divide would round it to "0" and suppress the rate line).
+  const pool: Pool = {
+    id: "p3",
+    tokenA: ADA,
+    tokenB: TOK0,
+    reserveA: "1000000000", // 1000 ADA
+    reserveB: "2000000000", // 2,000,000,000 TOK
+    feeBps: 30,
+  };
+  const q = quoteConstantProduct(pool, TOK0.unit, ADA.unit, "1000000"); // sell 1,000,000 TOK
+  assert.ok(BigInt(q.amountOut) > 0n, "amountOut should be a valid non-zero swap");
+  assert.ok(Number(q.price) > 0, `price should be > 0, got ${q.price}`);
+});
+
 test("price unaffected when both tokens share decimals", () => {
   const pool: Pool = {
     id: "p2",

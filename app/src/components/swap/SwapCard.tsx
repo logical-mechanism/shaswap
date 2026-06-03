@@ -10,6 +10,7 @@ import {
 } from "@meshsdk/react";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
+import { ORDER_MIN_ADA } from "@/lib/chain/deployment";
 import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
@@ -89,23 +90,37 @@ export function SwapCard() {
     reload: reloadQuote,
   } = useQuote(fromToken?.unit, toToken?.unit, baseAmountIn);
 
-  // useQuote debounces (~250ms), so after switching tokens the PREVIOUS pair's quote
-  // can still be in hand. Treat a quote as usable only when it matches the CURRENT
-  // pair — otherwise the order could bind to the wrong pool with a stale floor.
+  // useQuote debounces (~250ms), so after changing the AMOUNT or pair the PREVIOUS
+  // quote can still be in hand. Treat a quote as usable only when it matches the CURRENT
+  // pair AND the current input amount — otherwise the order could bind to the wrong pool,
+  // or (worse) to a floor computed for a different amount, during the debounce/fetch gap.
   const quoteFresh =
     !!quote &&
     quote.tokenIn.unit === fromToken?.unit &&
-    quote.tokenOut.unit === toToken?.unit;
+    quote.tokenOut.unit === toToken?.unit &&
+    quote.amountIn === baseAmountIn;
 
   const toAmount =
     quoteFresh && quote && toToken
       ? formatUnits(quote.amountOut, toToken.decimals)
       : "";
 
+  // The pools that trade this pair (single scan — `pool` and `poolCount` both derive
+  // from it). The quote auto-picks the best-priced one.
+  const pairPools = useMemo(() => {
+    if (!fromToken || !toToken) return [];
+    return pools.filter(
+      (p) =>
+        (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
+        (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
+    );
+  }, [pools, fromToken, toToken]);
+  const poolCount = pairPools.length;
+
   // The pool that trades this pair (also identifies the order's pool_nft binding).
   // Bind to the SAME pool the FRESH quote was priced against (quote.poolId) so the
   // floor and the order's pool_nft can never reference two different same-pair pools;
-  // fall back to a pair match before/until a matching quote has loaded.
+  // fall back to the first pair match before/until a matching quote has loaded.
   const pool: Pool | undefined = useMemo(() => {
     if (!fromToken || !toToken) return undefined;
     const byQuote =
@@ -113,27 +128,10 @@ export function SwapCard() {
       quote.tokenIn.unit === fromToken.unit &&
       quote.tokenOut.unit === toToken.unit &&
       quote.poolId
-        ? pools.find((p) => p.id === quote.poolId)
+        ? pairPools.find((p) => p.id === quote.poolId)
         : undefined;
-    return (
-      byQuote ??
-      pools.find(
-        (p) =>
-          (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
-          (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
-      )
-    );
-  }, [pools, fromToken, toToken, quote]);
-
-  // How many pools trade this pair (the quote auto-picks the best-priced one).
-  const poolCount = useMemo(() => {
-    if (!fromToken || !toToken) return 0;
-    return pools.filter(
-      (p) =>
-        (p.tokenA.unit === fromToken.unit && p.tokenB.unit === toToken.unit) ||
-        (p.tokenA.unit === toToken.unit && p.tokenB.unit === fromToken.unit),
-    ).length;
-  }, [pools, fromToken, toToken]);
+    return byQuote ?? pairPools[0];
+  }, [pairPools, fromToken, toToken, quote]);
 
   // Per-order floor (limit): the worst output the user will accept = the estimated
   // output minus slippage. The solver may NEVER settle below this (§5.2.5).
@@ -166,7 +164,12 @@ export function SwapCard() {
       ? toBig(lovelace ?? "0")
       : toBig(assets?.find((a) => a.unit === fromToken?.unit)?.quantity ?? "0");
   const fromIsAda = fromToken?.unit === "lovelace";
-  const adaReserve = ADA_RESERVE + (fromIsAda ? BigInt(tipLovelace || "0") : 0n);
+  // ADA the order itself locks: its min-ADA — DOUBLED when partial fills are allowed, since
+  // a partial leaves a second reclaimable output (mirrors order.ts: minAda = (partial?2:1) ×
+  // ORDER_MIN_ADA) — plus headroom for the network fee. The solver tip is separate ADA on top.
+  const orderMinAda = (partial ? 2n : 1n) * ORDER_MIN_ADA;
+  const adaNeeded = orderMinAda + FEE_BUFFER;
+  const adaReserve = adaNeeded + (fromIsAda ? BigInt(tipLovelace || "0") : 0n);
   const spendable = fromIsAda
     ? fromBalance > adaReserve
       ? fromBalance - adaReserve
@@ -181,7 +184,7 @@ export function SwapCard() {
   // A non-ADA sell still funds the order's min-ADA + tip + network fee from the wallet's
   // lovelace. Verify the wallet holds that ADA up front (the ADA-sell path already
   // reserves it inside `spendable`) instead of failing opaquely at coin selection.
-  const adaForOrder = BigInt(tipLovelace || "0") + ADA_RESERVE;
+  const adaForOrder = adaNeeded + BigInt(tipLovelace || "0");
   const insufficientAda =
     connected && !fromIsAda && hasAmount && toBig(lovelace ?? "0") < adaForOrder;
 
@@ -453,9 +456,9 @@ export function SwapCard() {
   );
 }
 
-// ADA held back when the FROM token is ADA, so a MAX swap still leaves room for the
-// network fee + the order's min-ADA (the tip is added on top of this). ~3 ₳.
-const ADA_RESERVE = 3_000_000n;
+// Headroom for the network fee, on top of the order's min-ADA (which the component sizes
+// from the partial flag) and the separate tip. ~1 ₳.
+const FEE_BUFFER = 1_000_000n;
 
 const EXPIRY_MS: Record<string, number> = {
   "1h": 3_600_000,
@@ -711,10 +714,10 @@ function RateLine({
   feeBps: number | undefined;
   tip: string;
 }) {
-  // `price` is the pool MID price (reserveOut/reserveIn) — it ignores the fee and
-  // price impact, so the rate shown is the mid price and the "To" amount / Minimum
-  // received reflect the actual (post-fee) execution. Collapsed by default: the rate
-  // is the at-a-glance summary; the full breakdown (incl. Minimum received) expands.
+  // `price` is the pool MID price in HUMAN units (tokenOut per tokenIn, decimal-adjusted)
+  // — it ignores the fee and price impact, so the rate shown is the mid price while the
+  // "To" amount / Minimum received reflect the actual (post-fee) execution. Collapsed by
+  // default: the rate is the at-a-glance summary; the full breakdown expands.
   const [open, setOpen] = useState(false);
   const showRate = price && fromToken && toToken && Number(price) > 0;
   const tipNum = Number(tip);
