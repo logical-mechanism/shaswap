@@ -17,7 +17,13 @@ import { postOrder } from "@/lib/client/tx";
 import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
-import { formatPercent, formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import {
+  formatPercent,
+  formatUnits,
+  formatUnitsPlain,
+  toBaseUnits,
+  truncate,
+} from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
@@ -33,10 +39,14 @@ export function SwapCard() {
   const { connected, wallet } = useWallet();
   const networkId = useNetwork();
   const address = useAddress();
-  const { tokens, loading: tokensLoading } = useTokens();
+  const { tokens, loading: tokensLoading, error: tokensError } = useTokens();
   const { pools } = usePools();
   const lovelace = useLovelace();
   const assets = useAssets();
+  // Synchronous re-entry latch: two same-tick clicks both pass `canPost` (the disabled
+  // state updates async), which would build two orders from overlapping UTXOs. Mirrors
+  // the guard createPool/closePool already use.
+  const submitting = useRef(false);
 
   const [fromUnit, setFromUnit] = useState<string>("lovelace");
   const [toUnit, setToUnit] = useState<string>("");
@@ -71,11 +81,12 @@ export function SwapCard() {
   const baseAmountIn =
     fromToken && amount ? toBaseUnits(amount, fromToken.decimals) : "";
 
-  const { quote, loading: quoteLoading } = useQuote(
-    fromToken?.unit,
-    toToken?.unit,
-    baseAmountIn,
-  );
+  const {
+    quote,
+    loading: quoteLoading,
+    error: quoteError,
+    reload: reloadQuote,
+  } = useQuote(fromToken?.unit, toToken?.unit, baseAmountIn);
 
   // useQuote debounces (~250ms), so after switching tokens the PREVIOUS pair's quote
   // can still be in hand. Treat a quote as usable only when it matches the CURRENT
@@ -166,12 +177,24 @@ export function SwapCard() {
     connected && hasAmount && !overBalance && amountBig > spendable;
   const balanceOk = !overBalance && !overSpendable;
 
+  // A non-ADA sell still funds the order's min-ADA + tip + network fee from the wallet's
+  // lovelace. Verify the wallet holds that ADA up front (the ADA-sell path already
+  // reserves it inside `spendable`) instead of failing opaquely at coin selection.
+  const adaForOrder = BigInt(tipLovelace || "0") + ADA_RESERVE;
+  const insufficientAda =
+    connected && !fromIsAda && hasAmount && toBig(lovelace ?? "0") < adaForOrder;
+
+  // The quote read failed (provider blip) and we have no usable fresh quote to post.
+  const quoteFailed = !!quoteError && hasAmount && !!pool && !quoteFresh;
+
   const canPost =
     networkReady &&
     hasAmount &&
     balanceOk &&
+    !insufficientAda &&
     !!pool &&
     quoteFresh &&
+    !quoteLoading &&
     floor > 0n &&
     tipValid &&
     post.kind !== "posting";
@@ -187,12 +210,15 @@ export function SwapCard() {
 
   function setFromAmount(base: bigint) {
     if (!fromToken || base <= 0n) return;
-    setAmount(formatUnits(base.toString(), fromToken.decimals));
+    // Plain (non-grouped) so the value round-trips back through toBaseUnits and stays
+    // editable — a comma-grouped "1,000" would be rejected and dead-end the button.
+    setAmount(formatUnitsPlain(base.toString(), fromToken.decimals));
     if (post.kind !== "idle") setPost({ kind: "idle" });
   }
 
   async function handlePost() {
-    if (!canPost || !pool || !fromToken || !toToken) return;
+    if (!canPost || submitting.current || !pool || !fromToken || !toToken) return;
+    submitting.current = true;
     setPost({ kind: "posting" });
     try {
       const res = await postOrder(wallet, {
@@ -223,6 +249,8 @@ export function SwapCard() {
       setAmount("");
     } catch (e) {
       setPost({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -238,8 +266,12 @@ export function SwapCard() {
             ? { label: `Insufficient ${fromToken?.ticker ?? "balance"}`, disabled: true }
             : overSpendable
               ? { label: "Leave ADA for tip + fees", disabled: true }
+              : insufficientAda
+                ? { label: "Not enough ADA for fees", disabled: true }
               : !pool
                 ? { label: "No pool for this pair", disabled: true }
+            : quoteFailed
+              ? { label: "Quote unavailable", disabled: true }
             : !quoteFresh || quoteLoading
               ? { label: "Fetching quote…", disabled: true }
               : floor <= 0n
@@ -265,6 +297,12 @@ export function SwapCard() {
         </div>
         <SlippageSettings value={slippage} onChange={setSlippage} context="swap" />
       </div>
+
+      {tokensError && (
+        <div className="k-note k-note-danger mb-3 text-xs">
+          Pip couldn’t load the token list — check your connection and refresh the page.
+        </div>
+      )}
 
       {/* FROM */}
       <TokenField
@@ -376,6 +414,22 @@ export function SwapCard() {
           </div>
         )}
 
+      {quoteFailed && (
+        <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
+          <span className="flex items-center gap-2">
+            <Pip size={22} mood="worried" />
+            Couldn’t fetch a quote just now.
+          </span>
+          <button
+            type="button"
+            onClick={reloadQuote}
+            className="k-btn-danger-soft shrink-0 px-3 py-1 text-xs"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
       <button
         type="button"
         disabled={button.disabled}
@@ -384,6 +438,14 @@ export function SwapCard() {
       >
         {button.label}
       </button>
+
+      {/* Announce the live estimate / minimum received to screen readers (the To field
+          is read-only, so its updates are otherwise silent). */}
+      <p aria-live="polite" className="sr-only">
+        {quoteFresh && toToken && toAmount
+          ? `Estimated ${toAmount} ${toToken.ticker}; minimum received ${floorDisplay} ${toToken.ticker}.`
+          : ""}
+      </p>
 
       <PostResult state={post} />
     </div>
@@ -487,14 +549,14 @@ function Advanced({
         className="flex w-full items-center justify-between px-1 text-xs font-semibold text-muted transition-colors hover:text-accent"
       >
         <span>Advanced</span>
-        <span className="text-muted/70">{open ? "Hide" : "Show"}</span>
+        <span className="text-muted">{open ? "Hide" : "Show"}</span>
       </button>
       {open && (
         <div className="mt-2 space-y-3 px-1">
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Solver tip (ADA)
-              <span className="block text-[10px] text-muted/70">
+              <span className="block text-[11px] text-muted">
                 the only solver reward — required; a 0-tip order won’t be picked up.
                 Higher tips settle sooner.
               </span>
@@ -506,15 +568,15 @@ function Advanced({
                 const v = e.target.value;
                 if (v === "" || /^\d*\.?\d*$/.test(v)) onTip(v);
               }}
-              className={`w-24 rounded-xl border bg-surface-sunk px-2 py-1.5 text-right tabular-nums text-ink outline-none ${
-                tipValid ? "border-border" : "border-danger"
+              className={`k-input-box w-24 px-2 py-1.5 text-right tabular-nums ${
+                tipValid ? "" : "border-danger"
               }`}
             />
           </label>
           <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Allow partial fills
-              <span className="block text-[10px] text-muted/70">
+              <span className="block text-[11px] text-muted">
                 a solver may fill part now and leave a reclaimable remainder
               </span>
             </span>
@@ -528,14 +590,14 @@ function Advanced({
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Expiry
-              <span className="block text-[10px] text-muted/70">
+              <span className="block text-[11px] text-muted">
                 a solver can only settle before this deadline (reclaim anytime)
               </span>
             </span>
             <select
               value={expiry}
               onChange={(e) => onExpiry(e.target.value)}
-              className="rounded-xl border border-border bg-surface-sunk px-2 py-1.5 text-xs text-ink outline-none"
+              className="k-input-box px-2 py-1.5 text-xs"
             >
               <option value="none">No expiry</option>
               <option value="1h">1 hour</option>
@@ -614,14 +676,14 @@ function TokenField({
             <button
               type="button"
               onClick={balance.onHalf}
-              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
             >
               Half
             </button>
             <button
               type="button"
               onClick={balance.onMax}
-              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
             >
               Max
             </button>

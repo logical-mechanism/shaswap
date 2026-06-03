@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Quote } from "@/lib/data";
 import { fetchQuote } from "@/lib/client/api";
 
@@ -22,6 +22,10 @@ export function useQuote(
   const [quote, setQuote] = useState<Quote | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+
+  // Re-run the fetch on demand (e.g. a "Try again" after a provider blip).
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   const hasAmount = !!amount && /^[0-9]+$/.test(amount) && BigInt(amount) > 0n;
   const ready = !!inUnit && !!outUnit && inUnit !== outUnit && hasAmount;
@@ -56,7 +60,7 @@ export function useQuote(
       clearTimeout(t);
       ac.abort();
     };
-  }, [ready, inUnit, outUnit, amount]);
+  }, [ready, inUnit, outUnit, amount, nonce]);
 
-  return { quote, loading, error };
+  return { quote, loading, error, reload };
 }

@@ -37,6 +37,8 @@ export function quoteConstantProduct(
   const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
 
   const SCALE = 1_000_000n;
+  // Price impact is computed on the raw BASE-unit ratios; it's dimensionless, so token
+  // decimals cancel and it needs no adjustment.
   const midScaled = (reserveOut * SCALE) / reserveIn;
   const execScaled = (amountOut * SCALE) / amtIn;
   const priceImpact =
@@ -44,12 +46,22 @@ export function quoteConstantProduct(
       ? Math.max(0, Number(midScaled - execScaled) / Number(midScaled))
       : 0;
 
+  // DISPLAY price = tokenOut per tokenIn in HUMAN units. The base-unit ratio
+  // reserveOut/reserveIn only equals the human ratio when both tokens share decimals;
+  // otherwise it's off by 10^(decIn − decOut). Fold that factor into the BigInt scaling
+  // (so precision is kept) before the single final Number() divide for display.
+  const dDiff = tokenIn.decimals - tokenOut.decimals;
+  const pow = (n: number): bigint => 10n ** BigInt(Math.abs(n));
+  const priceNumer = dDiff >= 0 ? reserveOut * SCALE * pow(dDiff) : reserveOut * SCALE;
+  const priceDenom = dDiff >= 0 ? reserveIn : reserveIn * pow(-dDiff);
+  const priceScaled = priceNumer / priceDenom; // = display price × SCALE
+
   return {
     tokenIn,
     tokenOut,
     amountIn,
     amountOut: amountOut.toString(),
-    price: (Number(midScaled) / Number(SCALE)).toString(),
+    price: (Number(priceScaled) / Number(SCALE)).toString(),
     priceImpact,
     poolId: pool.id,
   };

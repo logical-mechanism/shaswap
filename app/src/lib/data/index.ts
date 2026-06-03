@@ -29,6 +29,26 @@ export function getDataProvider(): DataProvider {
 function createDataProvider(): DataProvider {
   const projectId = process.env.BLOCKFROST_PROJECT_ID;
   const which = process.env.DATA_PROVIDER ?? (projectId ? "blockfrost" : "mock");
+
+  // Refuse to serve FAKE pools/quotes in production by accident. The mock is fine for
+  // local dev and explicit opt-in, but a prod deploy that simply forgot the Blockfrost
+  // key would otherwise render a fully-functional-looking UI over fabricated data that
+  // only breaks at tx-build time — the worst kind of silent failure for a DEX. Require
+  // an explicit DATA_PROVIDER=mock to allow it in production.
+  if (
+    which === "mock" &&
+    process.env.NODE_ENV === "production" &&
+    process.env.DATA_PROVIDER !== "mock"
+  ) {
+    throw new Error(
+      "Refusing to start with the MockProvider in production. Set BLOCKFROST_PROJECT_ID " +
+        "(or another real DATA_PROVIDER), or set DATA_PROVIDER=mock to opt in explicitly.",
+    );
+  }
+
+  // One-time startup signal of the active backend (helps catch a mock-in-prod misconfig).
+  console.info(`[data] provider = ${which}`);
+
   switch (which) {
     case "blockfrost":
       if (!projectId) {

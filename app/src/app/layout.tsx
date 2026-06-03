@@ -28,6 +28,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  // Resolves the OG/Twitter image to an absolute URL (silences the build warning and
+  // makes share cards work in production). Set NEXT_PUBLIC_SITE_URL on deploy.
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+  ),
   title: "ShaSwap — swap with Pip",
   description:
     "A cozy, fair batch-auction house on Cardano. Non-custodial — your keys, your coins.",
@@ -70,10 +75,19 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} />
+        {/* First focusable element: lets keyboard users skip the nav straight to content. */}
+        <a
+          href="#main"
+          className="sr-only rounded-full bg-surface px-4 py-2 text-sm font-bold text-accent shadow-lg outline-2 outline-accent focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-[70] focus:outline"
+        >
+          Skip to content
+        </a>
         <BackdropDecor />
         <Providers>
           <Nav />
-          <main className="flex flex-1 flex-col">{children}</main>
+          <main id="main" tabIndex={-1} className="flex flex-1 flex-col">
+            {children}
+          </main>
           <Footer />
           <MobileNav />
         </Providers>

@@ -143,7 +143,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
   return (
     <div
       role="status"
-      className="pointer-events-auto w-full max-w-sm animate-toast-in rounded-2xl border border-border bg-surface p-3 shadow-[0_24px_50px_-22px_rgba(150,110,190,0.55)]"
+      className="k-pop pointer-events-auto w-full max-w-sm animate-toast-in p-3"
       style={{ borderLeft: `5px solid ${ACCENT[variant]}` }}
     >
       <div className="flex items-start gap-2.5">
@@ -164,7 +164,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss notification"
-          className="-mr-0.5 -mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-sunk hover:text-ink"
+          className="-mr-0.5 -mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-sunk hover:text-ink"
         >
           <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden>
             <path

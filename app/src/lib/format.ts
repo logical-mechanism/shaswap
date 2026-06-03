@@ -18,6 +18,7 @@ function formatBaseUnitString(
   value: string,
   decimals: number,
   maxFractionDigits: number,
+  group = true,
 ): string {
   let s = value.trim();
   if (!s) return "0";
@@ -45,7 +46,7 @@ function formatBaseUnitString(
     frac = padded.slice(padded.length - decimals);
   }
 
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const grouped = group ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : whole;
   const shownFrac = frac
     .slice(0, Math.max(0, maxFractionDigits))
     .replace(/0+$/, "");
@@ -70,6 +71,20 @@ export function formatUnits(
 }
 
 /**
+ * Like `formatUnits` but WITHOUT thousands separators — for values that flow back into
+ * an amount `<input>` (e.g. the MAX/Half buttons). Grouped strings ("1,000") are
+ * rejected by `toBaseUnits` and by the input mask, so a grouped MAX left the field
+ * populated but un-parseable; a plain "1000" round-trips and stays editable.
+ */
+export function formatUnitsPlain(
+  amount: string | undefined,
+  decimals: number,
+): string {
+  if (!amount) return "0";
+  return formatBaseUnitString(amount, decimals, Math.min(decimals, 6), false);
+}
+
+/**
  * Parse a human-typed amount into base units (decimal string) for a token.
  *
  * Returns "" for malformed input (empty, or a bare "." with no digits) so the
@@ -78,8 +93,10 @@ export function formatUnits(
  * 0-decimal token typed as "1.9" becomes "2", not "1".
  */
 export function toBaseUnits(input: string, decimals: number): string {
-  const trimmed = input.trim();
-  // Must match the numeric shape AND contain at least one digit (rejects ".").
+  // Tolerate grouping/whitespace/underscores (a MAX-populated field carries commas, and
+  // users paste grouped amounts) before validating. Strip them, then require the plain
+  // numeric shape AND at least one digit (rejects ".").
+  const trimmed = input.trim().replace(/[,\s_]/g, "");
   if (!/^\d*\.?\d*$/.test(trimmed) || !/\d/.test(trimmed)) return "";
 
   const [whole = "", frac = ""] = trimmed.split(".");

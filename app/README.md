@@ -18,6 +18,15 @@ authoritative design in [`documentation/BLUEPRINT.md`](../documentation/BLUEPRIN
   `BlockfrostProvider`, `mConStr`/`deserializeDatum`, `@meshsdk/core-cst`)
 - Bundler: **Turbopack** (Next 16 default; resolves MeshJS's WASM libs natively)
 
+> **`@meshsdk/react` is pinned to `1.9.0-beta.98` on purpose.** There is no stable
+> `1.9.0` of `@meshsdk/react` published (npm returns 404), and the app relies on
+> 1.9.x React-hook behavior that matches `@meshsdk/core@^1.9.0` (notably the
+> `scriptSize`/`txIn` handling the client tx builder depends on — see
+> [`src/lib/client/tx.ts`](src/lib/client/tx.ts)). **Do not bump this blindly:** any
+> change must be re-verified end-to-end on preprod (post order, reclaim, LP
+> deposit/withdraw, create/close pool), since these paths can't be exercised by the
+> unit tests. Pin to a stable `@meshsdk/react` as soon as one ships.
+
 ## Run
 
 ```bash

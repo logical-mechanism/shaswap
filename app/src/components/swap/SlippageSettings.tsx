@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useMenu } from "@/hooks/useMenu";
 
 const PRESETS = [0.1, 0.5, 1.0];
+const MAX_SLIPPAGE = 50; // hard clamp — beyond this the floor is meaningless
 
 /**
  * Slippage settings affordance. The value is NOT cosmetic — it sets an enforced minimum:
@@ -11,6 +13,9 @@ const PRESETS = [0.1, 0.5, 1.0];
  *  - liquidity: the **minimum amounts out** (min-LP-received on deposit, min token amounts
  *    on withdraw) the tx will accept if the pool moves before it confirms.
  * `context` makes the helper copy match the flow it's used in.
+ *
+ * Presets cover the common cases; a custom field lets the user widen tolerance when the
+ * pool is shallow (the swap card warns about high price impact), with a caution above 5%.
  */
 export function SlippageSettings({
   value,
@@ -21,27 +26,35 @@ export function SlippageSettings({
   onChange: (v: number) => void;
   context?: "swap" | "liquidity";
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const { open, setOpen, containerRef, triggerRef } = useMenu();
+  const [custom, setCustom] = useState(() =>
+    PRESETS.includes(value) ? "" : String(value),
+  );
+  const customActive = custom !== "";
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  function pickPreset(p: number) {
+    setCustom("");
+    onChange(p);
+  }
+  function onCustom(v: string) {
+    if (v !== "" && !/^\d*\.?\d*$/.test(v)) return;
+    setCustom(v);
+    const n = Number(v);
+    if (v !== "" && Number.isFinite(n)) {
+      onChange(Math.min(MAX_SLIPPAGE, Math.max(0, n)));
+    }
+  }
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={containerRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Slippage settings"
-        className="grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-surface-sunk hover:text-accent"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="grid h-9 w-9 place-items-center rounded-full text-muted transition-colors hover:bg-surface-sunk hover:text-accent"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
           <path
@@ -60,7 +73,11 @@ export function SlippageSettings({
       </button>
 
       {open && (
-        <div className="absolute right-0 z-30 mt-2 w-60 rounded-2xl border border-border bg-surface p-3 shadow-[0_24px_50px_-28px_rgba(150,110,190,0.5)]">
+        <div
+          role="dialog"
+          aria-label="Max slippage"
+          className="k-pop absolute right-0 z-30 mt-2 w-64 p-3"
+        >
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-medium">Max slippage</span>
             <span className="k-chip k-chip-muted text-[10px]">
@@ -68,21 +85,50 @@ export function SlippageSettings({
             </span>
           </div>
           <div className="flex gap-1.5">
-            {PRESETS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => onChange(p)}
-                className={`flex-1 rounded-full border px-2 py-1.5 text-xs transition-colors ${
-                  value === p
-                    ? "border-accent/40 bg-accent/15 font-bold text-accent"
-                    : "border-border text-muted hover:bg-surface-sunk"
-                }`}
-              >
-                {p.toFixed(1)}%
-              </button>
-            ))}
+            {PRESETS.map((p) => {
+              const active = !customActive && value === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => pickPreset(p)}
+                  className={`flex-1 rounded-full border px-2 py-1.5 text-xs transition-colors ${
+                    active
+                      ? "k-toggle-active border-accent/40 font-bold"
+                      : "border-border text-muted hover:bg-surface-sunk"
+                  }`}
+                >
+                  {p.toFixed(1)}%
+                </button>
+              );
+            })}
           </div>
+
+          <label className="mt-2 flex items-center gap-2">
+            <span className="text-[11px] text-muted">Custom</span>
+            <span
+              className={`k-input-box flex flex-1 items-center gap-1 px-2 py-1 ${
+                customActive ? "border-accent/50" : ""
+              }`}
+            >
+              <input
+                inputMode="decimal"
+                value={custom}
+                placeholder="e.g. 2.5"
+                onChange={(e) => onCustom(e.target.value)}
+                aria-label="Custom max slippage percent"
+                className="k-input text-right text-xs tabular-nums"
+              />
+              <span className="text-xs text-muted">%</span>
+            </span>
+          </label>
+
+          {value > 5 && (
+            <p className="mt-2 text-[11px] font-semibold text-warning">
+              High tolerance — you could accept a noticeably worse fill.
+            </p>
+          )}
         </div>
       )}
     </div>
