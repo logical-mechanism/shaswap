@@ -101,6 +101,46 @@ test("ADA-seller: lovelace carries sell + min + tip (triple role); sell_a=false"
   assert.equal(d.sellAmount, 50_000_000n);
 });
 
+test("lovelace sizing table: (partial?2:1)×min + tip (+ sellAmount when selling ADA)", () => {
+  const cases: {
+    partial: boolean;
+    sellAda: boolean;
+    tip: bigint;
+    sellAmount: bigint;
+  }[] = [
+    { partial: false, sellAda: false, tip: 2_000_000n, sellAmount: 100n },
+    { partial: true, sellAda: false, tip: 2_000_000n, sellAmount: 100n },
+    { partial: false, sellAda: true, tip: 5_000_000n, sellAmount: 50_000_000n },
+    { partial: true, sellAda: true, tip: 1_000_000n, sellAmount: 7_000_000n },
+    { partial: false, sellAda: false, tip: 1n, sellAmount: 1n }, // 1-lovelace tip floor
+  ];
+  for (const c of cases) {
+    const built = buildOrder({
+      ...base,
+      sellUnit: c.sellAda ? "lovelace" : TEST_UNIT, // assetB is ADA, assetA is TEST
+      sellAmount: c.sellAmount,
+      tip: c.tip,
+      partial: c.partial,
+      limit: 1n,
+    });
+    const expectedLovelace =
+      (c.partial ? 2n : 1n) * ORDER_MIN_ADA + c.tip + (c.sellAda ? c.sellAmount : 0n);
+    const lovelaceEntry = built.value.find((a) => a.unit === "lovelace");
+    assert.ok(lovelaceEntry, "every order value carries lovelace");
+    assert.equal(lovelaceEntry.quantity, expectedLovelace.toString());
+
+    // A token sale rides the sold token as its own asset entry; an ADA sale does not.
+    const tokenEntry = built.value.find((a) => a.unit === TEST_UNIT);
+    if (c.sellAda) {
+      assert.equal(tokenEntry, undefined);
+      assert.equal(built.value.length, 1);
+    } else {
+      assert.equal(tokenEntry?.quantity, c.sellAmount.toString());
+      assert.equal(built.value.length, 2);
+    }
+  }
+});
+
 test("malformed intents are rejected (never silently posted)", () => {
   assert.throws(() => buildOrder({ ...base, sellAmount: 0n }));
   assert.throws(() => buildOrder({ ...base, limit: 0n }));
