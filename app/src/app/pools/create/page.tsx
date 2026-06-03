@@ -299,8 +299,9 @@ export default function CreatePoolPage() {
               <div className="font-bold text-success">Pool created ✓</div>
             </div>
             <p className="mt-1 text-muted">
-              Confirming on-chain (~20–40s). Add the first liquidity to start trading —
-              the pool may take a moment to appear in the list.
+              Confirming on-chain (~20–40s). Add the first liquidity to start trading — on
+              the next screen, hit ↻ Refresh once it’s confirmed (it won’t show in the
+              pools list until then).
             </p>
             <div className="mt-2 flex items-center justify-between gap-3">
               <a

@@ -32,6 +32,8 @@ const h = vi.hoisted(() => ({
     quoteError: null as string | null,
   },
   postOrder: vi.fn(),
+  reloadPools: vi.fn(),
+  reloadQuote: vi.fn(),
 }));
 
 vi.mock("@meshsdk/react", () => ({
@@ -49,14 +51,19 @@ vi.mock("@/hooks/useTokens", () => ({
   }),
 }));
 vi.mock("@/hooks/usePools", () => ({
-  usePools: () => ({ pools: h.data.pools, loading: false, error: null, reload: () => {} }),
+  usePools: () => ({
+    pools: h.data.pools,
+    loading: false,
+    error: null,
+    reload: h.reloadPools,
+  }),
 }));
 vi.mock("@/hooks/useQuote", () => ({
   useQuote: () => ({
     quote: h.data.quote,
     loading: h.data.quoteLoading,
     error: h.data.quoteError,
-    reload: () => {},
+    reload: h.reloadQuote,
   }),
 }));
 vi.mock("@/lib/client/tx", () => ({ postOrder: (...a: unknown[]) => h.postOrder(...a) }));
@@ -101,6 +108,8 @@ function reset() {
     quoteError: null,
   };
   h.postOrder = vi.fn();
+  h.reloadPools = vi.fn();
+  h.reloadQuote = vi.fn();
 }
 beforeEach(reset);
 
@@ -312,6 +321,20 @@ describe("SwapCard — quoteFresh rejects a stale-amount quote", () => {
     // and the order is not postable — the button reflects "still fetching", not Post order
     expect(screen.queryByRole("button", { name: "Post order" })).toBeNull();
     expect(screen.getByRole("button", { name: "Fetching quote…" })).toBeDisabled();
+  });
+});
+
+describe("SwapCard — on-demand price refresh", () => {
+  it("the rate-line ↻ re-scans pools and re-quotes (no background polling)", () => {
+    h.state.connected = true;
+    h.state.networkId = 0;
+    h.state.lovelace = BIG_ADA;
+    h.data.quote = freshQuote("10");
+    render(<SwapCard />);
+    typeFrom("10");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh price" }));
+    expect(h.reloadPools).toHaveBeenCalledTimes(1);
+    expect(h.reloadQuote).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -75,8 +75,8 @@ export function recordPost(owner: string, order: RecentOrder): void {
 
 /**
  * Stamp the first on-chain observation for any logged `refs` not yet marked. Lets the
- * Orders view keep a just-posted order "pending" (and auto-refreshing) until it's
- * positively seen on-chain at least once, so a slow indexer can't reclassify a live
+ * Orders view keep a just-posted order "pending" until it's positively seen on-chain at
+ * least once (on the next manual Refresh), so a slow indexer can't reclassify a live
  * order as terminal. Persists only when something actually changed.
  */
 export function markSeen(owner: string, refs: string[], now: number): void {

@@ -42,7 +42,7 @@ export function SwapCard() {
   const networkId = useNetwork();
   const address = useAddress();
   const { tokens, loading: tokensLoading, error: tokensError } = useTokens();
-  const { pools } = usePools();
+  const { pools, reload: reloadPools } = usePools();
   const lovelace = useLovelace();
   const assets = useAssets();
   // Synchronous re-entry latch: two same-tick clicks both pass `canPost` (the disabled
@@ -201,6 +201,14 @@ export function SwapCard() {
     setToUnit(f);
     setAmount("");
     setPost({ kind: "idle" });
+  }
+
+  // Re-scan pool reserves + re-quote on demand. The price is a live estimate as you type
+  // (computed from cached reserves), and this pulls the freshest reserves on request —
+  // there is NO background polling (see documentation/app-data-caching.md).
+  function refreshPrice() {
+    reloadPools();
+    reloadQuote();
   }
 
   function setFromAmount(base: bigint) {
@@ -376,6 +384,7 @@ export function SwapCard() {
         poolCount={poolCount}
         feeBps={pool?.feeBps}
         tip={tip}
+        onRefresh={refreshPrice}
       />
 
       {/* advanced: tip + partial fills + expiry */}
@@ -703,6 +712,7 @@ function RateLine({
   poolCount,
   feeBps,
   tip,
+  onRefresh,
 }: {
   fromToken: TokenInfo | undefined;
   toToken: TokenInfo | undefined;
@@ -714,6 +724,8 @@ function RateLine({
   poolCount: number;
   feeBps: number | undefined;
   tip: string;
+  /** Re-scan reserves + re-quote on demand (no background polling). */
+  onRefresh: () => void;
 }) {
   // `price` is the pool MID price in HUMAN units (tokenOut per tokenIn, decimal-adjusted)
   // — it ignores the fee and price impact, so the rate shown is the mid price while the
@@ -738,35 +750,63 @@ function RateLine({
 
   return (
     <div className="k-field mt-3 text-xs text-muted">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
-      >
-        <span className="truncate font-semibold tabular-nums text-foreground">
-          {rateText}
-        </span>
-        <span className="flex shrink-0 items-center gap-1 font-semibold text-muted">
-          <span>Details</span>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex flex-1 items-center justify-between gap-2 px-3 py-2.5 text-left"
+        >
+          <span className="truncate font-semibold tabular-nums text-foreground">
+            {rateText}
+          </span>
+          <span className="flex shrink-0 items-center gap-1 font-semibold text-muted">
+            <span>Details</span>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+              aria-hidden
+            >
+              <path
+                d="M2.5 4.5L6 8l3.5-3.5"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        </button>
+        {/* On-demand price refresh — re-scans reserves + re-quotes (no background poll). */}
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          aria-label="Refresh price"
+          title="Refresh price"
+          className="mr-1 grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:text-accent disabled:opacity-50"
+        >
           <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            className={loading ? "animate-spin" : ""}
             aria-hidden
           >
             <path
-              d="M2.5 4.5L6 8l3.5-3.5"
+              d="M13.5 8a5.5 5.5 0 10-1.6 3.9M13.5 12.5V9h-3.5"
               stroke="currentColor"
-              strokeWidth="1.6"
+              strokeWidth="1.5"
               fill="none"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           </svg>
-        </span>
-      </button>
+        </button>
+      </div>
 
       {open && (
         <div className="animate-pop space-y-1.5 border-t border-border px-3 pb-3 pt-2.5">

@@ -96,8 +96,8 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
 
   // The wallet's LP balance for this pool, read from the CIP-30 wallet (a wallet call,
   // NOT a chain-data provider call — the data seam stays intact). Keyed on `stats`, which
-  // usePoolUtxo refreshes on its 15s poll and on every reload(), so the position re-reads
-  // and updates within a poll of a deposit/withdraw landing — rather than going stale (as
+  // usePoolUtxo refreshes on every reload() (the ↻ Refresh, and onDone after a tx), so
+  // the position re-reads whenever the pool view does — rather than going stale (as
   // MeshJS's useAssets did, with no refresh hook). State is only set in the deferred /
   // async callback (the project's effect convention).
   const [lpBalance, setLpBalance] = useState(0n);
@@ -218,7 +218,6 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
               onRecheckCollateral={recheckCollateral}
-              onDone={reload}
             />
           ) : (
             <RemoveForm
@@ -233,7 +232,6 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
               onRecheckCollateral={recheckCollateral}
-              onDone={reload}
             />
           )}
 
@@ -275,7 +273,6 @@ function AddForm({
   collateralReady,
   needsCollateral,
   onRecheckCollateral,
-  onDone,
 }: {
   pool: Pool;
   view: PoolView;
@@ -287,7 +284,6 @@ function AddForm({
   collateralReady: boolean;
   needsCollateral: boolean;
   onRecheckCollateral: () => void;
-  onDone: () => void;
 }) {
   const [amountA, setAmountA] = useState("");
   const [amountB, setAmountB] = useState(""); // only editable on the first deposit
@@ -353,10 +349,12 @@ function AddForm({
         deltaB,
         minLpOut,
       });
+      // No auto-reload: during the ~20–40s indexing gap a reload would just re-cache the
+      // pre-deposit reserves (and there's no poll to self-heal it). The success banner
+      // points the user at ↻ to pull the updated view once it lands.
       setState({ kind: "success", hash: res.txHash });
       setAmountA("");
       setAmountB("");
-      onDone();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -479,7 +477,6 @@ function RemoveForm({
   collateralReady,
   needsCollateral,
   onRecheckCollateral,
-  onDone,
 }: {
   pool: Pool;
   view: PoolView;
@@ -492,7 +489,6 @@ function RemoveForm({
   collateralReady: boolean;
   needsCollateral: boolean;
   onRecheckCollateral: () => void;
-  onDone: () => void;
 }) {
   const [lpInput, setLpInput] = useState("");
   const [state, setState] = useState<TxState>({ kind: "idle" });
@@ -547,9 +543,10 @@ function RemoveForm({
         minAOut,
         minBOut,
       });
+      // No auto-reload (see AddForm): a reload here would re-cache the pre-withdraw
+      // reserves during the indexing gap. The banner points the user at ↻.
       setState({ kind: "success", hash: res.txHash });
       setLpInput("");
-      onDone();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -758,10 +755,10 @@ function depositErrorMessage(err: string): string {
     return "That amount is too small to mint any LP. Increase it.";
   }
   if (/LP slippage|below minimum/i.test(err)) {
-    return "The pool moved since this quote. It refreshes automatically — or hit ↻ — then try again, or raise your slippage.";
+    return "The pool moved since this quote. Hit ↻ to refresh, then try again, or raise your slippage.";
   }
   if (/zero asset_a reserve|drop below min_liq/i.test(err)) {
-    return "The pool data shown may be a step behind a recent change. It refreshes automatically every few seconds — or hit ↻ — then try again.";
+    return "The pool data shown may be a step behind a recent change. Hit ↻ to refresh, then try again.";
   }
   return err;
 }
@@ -769,7 +766,7 @@ function depositErrorMessage(err: string): string {
 /** Map a `buildWithdraw` throw into a user-facing explanation. */
 function withdrawErrorMessage(err: string): string {
   if (/no circulating LP|more than circulating/i.test(err)) {
-    return "The pool data shown may be a step behind a recent deposit. It refreshes automatically every few seconds — or hit ↻ — then try again.";
+    return "The pool data shown may be a step behind a recent deposit. Hit ↻ to refresh, then try again.";
   }
   if (/below min_liq/i.test(err)) {
     return "That would leave less than the pool's permanently-locked minimum liquidity. Withdraw a little less (use Max for the largest allowed).";
@@ -935,7 +932,7 @@ function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
           <div className="font-bold text-success">{verb} ✓</div>
         </div>
         <p className="mt-0.5 text-muted">
-          Settling in (~20–40s). Your position updates the moment it lands.
+          Settling in (~20–40s). Hit ↻ above to refresh your position once it lands.
         </p>
         <a
           href={explorerTxUrl(state.hash)}

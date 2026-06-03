@@ -106,9 +106,20 @@ export default function PoolsPage() {
             </p>
           )}
         </div>
-        <Link href="/pools/create" className="k-btn shrink-0 px-4 py-2.5 text-sm">
-          + Create pool
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={reload}
+            title="Refresh pools"
+            aria-label="Refresh pools"
+            className="k-pill px-3 py-2.5 text-sm text-muted hover:text-accent"
+          >
+            ↻
+          </button>
+          <Link href="/pools/create" className="k-btn px-4 py-2.5 text-sm">
+            + Create pool
+          </Link>
+        </div>
       </header>
 
       {error && (
