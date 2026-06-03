@@ -2,6 +2,7 @@ import type { DataProvider } from "./provider";
 import { MockProvider } from "./mock";
 import { BlockfrostDataProvider } from "./blockfrost";
 import { log } from "../log";
+import { APP_CONFIG, type Network } from "../config";
 
 export type { DataProvider } from "./provider";
 export type * from "./types";
@@ -20,6 +21,19 @@ export type * from "./types";
  * `/api/*`. Defaults to `blockfrost` when a key is present, else the offline mock.
  */
 let cached: DataProvider | undefined;
+
+/**
+ * The Cardano network a Blockfrost project id targets, inferred from its prefix
+ * (`mainnet…` / `preprod…` / `preview…`). MeshJS's `BlockfrostProvider` keys off the same
+ * prefix internally, so this is exactly what decides which chain the reads hit. Returns
+ * `null` for a custom/self-hosted prefix we can't classify (don't block those).
+ */
+function keyNetwork(projectId: string): Network | null {
+  for (const net of ["mainnet", "preprod", "preview"] as const) {
+    if (projectId.startsWith(net)) return net;
+  }
+  return null;
+}
 
 export function getDataProvider(): DataProvider {
   if (cached) return cached;
@@ -52,14 +66,31 @@ function createDataProvider(): DataProvider {
   log.info("data provider selected", { provider: which });
 
   switch (which) {
-    case "blockfrost":
+    case "blockfrost": {
       if (!projectId) {
         throw new Error(
           "DATA_PROVIDER=blockfrost but BLOCKFROST_PROJECT_ID is not set " +
             "(add it to .env.local for local dev, or the server env in prod).",
         );
       }
+      // The key's network MUST match NEXT_PUBLIC_NETWORK. Blockfrost infers the chain from
+      // the key prefix, so a mainnet app left on a preprod key (or vice-versa) would
+      // silently read the WRONG chain. Compare network NAMES, not ids: preprod and preview
+      // both map to networkId 0, so an id check would miss a preprod↔preview swap. An
+      // unclassifiable prefix (self-hosted / future Dolos) is allowed through.
+      const keyNet = keyNetwork(projectId);
+      if (keyNet && keyNet !== APP_CONFIG.network) {
+        log.error("Blockfrost key/network mismatch", {
+          appNetwork: APP_CONFIG.network,
+          keyNetwork: keyNet,
+        });
+        throw new Error(
+          `BLOCKFROST_PROJECT_ID is a ${keyNet} key but NEXT_PUBLIC_NETWORK=${APP_CONFIG.network}. ` +
+            "These must match — refusing to start to avoid reading the wrong chain.",
+        );
+      }
       return new BlockfrostDataProvider(projectId);
+    }
     // Next provider on the roadmap — our own Dolos node (no mortal dependency).
     // Implement DolosProvider (implements DataProvider) and add:
     //   case "dolos": return new DolosProvider(process.env.DOLOS_URL!);

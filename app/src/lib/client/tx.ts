@@ -36,14 +36,13 @@ import {
   LP_NAME_HEX,
   lpUnitForPool,
   NFT_NAME_HEX,
-  ORDER_REF,
   ORDER_SCRIPT_HASH,
   ORDER_SCRIPT_SIZE,
   POOL_ADDR,
   POOL_MIN_ADA,
-  POOL_REF,
   POOL_SCRIPT_HASH,
   POOL_SCRIPT_SIZE,
+  requireDeployed,
   TOTAL_LP,
 } from "@/lib/chain/deployment";
 
@@ -220,6 +219,8 @@ export async function reclaimOrder(
   if (!txHash || !Number.isInteger(index)) {
     throw new Error(`malformed order ref: ${ref}`);
   }
+  // Refuse on a network whose reference scripts aren't live yet (also narrows ORDER_REF).
+  const { orderRef } = requireDeployed();
 
   const [order, protocol, changeAddress, collateral, utxos] = await Promise.all([
     fetchUtxo(txHash, index),
@@ -253,8 +254,8 @@ export async function reclaimOrder(
       0, // scriptSize: the order UTXO carries no attached reference script. Required so MeshTxBuilder.complete() doesn't demand a fetcher (this MeshJS version flags an input with scriptSize===undefined as incomplete).
     )
     .spendingTxInReference(
-      ORDER_REF.txHash,
-      ORDER_REF.outputIndex,
+      orderRef.txHash,
+      orderRef.outputIndex,
       ORDER_SCRIPT_SIZE.toString(),
       ORDER_SCRIPT_HASH,
     )
@@ -330,6 +331,7 @@ export async function depositLiquidity(
   wallet: IWallet,
   args: DepositLiquidityArgs,
 ): Promise<LiquidityResult> {
+  const { poolRef } = requireDeployed();
   const poolUtxo = await fetchPoolUtxo(args.pool.id);
   const datumCbor = poolUtxo.output.plutusData;
   if (!datumCbor) throw new Error("pool UTXO has no inline datum");
@@ -358,8 +360,8 @@ export async function depositLiquidity(
       0, // scriptSize: the pool UTXO carries no attached reference script (out.reference_script == None). Required so MeshTxBuilder.complete() doesn't demand a fetcher to resolve it.
     )
     .spendingTxInReference(
-      POOL_REF.txHash,
-      POOL_REF.outputIndex,
+      poolRef.txHash,
+      poolRef.outputIndex,
       POOL_SCRIPT_SIZE.toString(),
       POOL_SCRIPT_HASH,
     )
@@ -532,6 +534,7 @@ export async function closePool(
   wallet: IWallet,
   pool: Pool,
 ): Promise<LiquidityResult> {
+  const { poolRef } = requireDeployed();
   const poolUtxo = await fetchPoolUtxo(pool.id);
   const datumCbor = poolUtxo.output.plutusData;
   if (!datumCbor) throw new Error("pool UTXO has no inline datum");
@@ -578,8 +581,8 @@ export async function closePool(
       0, // scriptSize: the pool UTXO carries no attached reference script.
     )
     .spendingTxInReference(
-      POOL_REF.txHash,
-      POOL_REF.outputIndex,
+      poolRef.txHash,
+      poolRef.outputIndex,
       POOL_SCRIPT_SIZE.toString(),
       POOL_SCRIPT_HASH,
     )
@@ -633,6 +636,7 @@ export async function withdrawLiquidity(
   wallet: IWallet,
   args: WithdrawLiquidityArgs,
 ): Promise<LiquidityResult> {
+  const { poolRef } = requireDeployed();
   const poolUtxo = await fetchPoolUtxo(args.pool.id);
   const datumCbor = poolUtxo.output.plutusData;
   if (!datumCbor) throw new Error("pool UTXO has no inline datum");
@@ -675,8 +679,8 @@ export async function withdrawLiquidity(
       0, // scriptSize: the pool UTXO carries no attached reference script (out.reference_script == None). Required so MeshTxBuilder.complete() doesn't demand a fetcher to resolve it.
     )
     .spendingTxInReference(
-      POOL_REF.txHash,
-      POOL_REF.outputIndex,
+      poolRef.txHash,
+      poolRef.outputIndex,
       POOL_SCRIPT_SIZE.toString(),
       POOL_SCRIPT_HASH,
     )

@@ -42,22 +42,69 @@ npm run test     # Node test runner — Plutus encoding + order + address pins
 
 ### Environment (`.env.local`, gitignored)
 
-- **`BLOCKFROST_PROJECT_ID`** — your Blockfrost **preprod** project id (starts with
-  `preprod…`). **Server-only:** it is read solely in `getDataProvider()` / route
-  handlers and never reaches the browser, so it's safe as a plain server env var in
-  deployment (e.g. DigitalOcean). When set, the data seam uses the real Blockfrost
-  provider; when unset it falls back to the offline `MockProvider`.
+- **`BLOCKFROST_PROJECT_ID`** — your Blockfrost project id. **Server-only:** it is read
+  solely in `getDataProvider()` / route handlers and never reaches the browser, so it's
+  safe as a plain server env var in deployment (e.g. DigitalOcean). When set, the data
+  seam uses the real Blockfrost provider; when unset it falls back to the offline
+  `MockProvider`. **Its prefix must match `NEXT_PUBLIC_NETWORK`** (`preprod…` ↔ preprod,
+  `mainnet…` ↔ mainnet, …) — the app refuses to start on a mismatch.
 - Optional: `DATA_PROVIDER` (`blockfrost` | `mock`), `NEXT_PUBLIC_NETWORK`
-  (`preprod` default).
+  (`preprod` | `preview` | `mainnet`, default `preprod`), `LOG_LEVEL`
+  (`debug` | `info` | `warn` | `error`, default `info`).
 
 See [`.env.example`](.env.example) for the template.
 
 ## Network
 
 Network is **one config value** — [`src/lib/config.ts`](src/lib/config.ts)
-`APP_CONFIG.network`, default **preprod** (matching the deployed contracts). The
-CIP-30 `networkId` is derived from it, the header flags a wallet on the wrong
-network, and the swap card refuses to post when the wallet network mismatches.
+`APP_CONFIG.network` (from `NEXT_PUBLIC_NETWORK`), default **preprod**. The CIP-30
+`networkId` is derived from it, the header flags a wallet on the wrong network, and the
+swap card refuses to post when the wallet network mismatches.
+
+The same codebase serves **preprod / preview / mainnet** — pick the network per deploy.
+The per-network deployment identities (order/pool addresses, reference-script UTXOs, the
+`deployed` flag) live in [`src/lib/chain/deployment.ts`](src/lib/chain/deployment.ts),
+keyed off `APP_CONFIG.network`; everything network-independent (script hashes, compiled
+code, on-chain constants) is shared. Addresses are committed literals **pinned to the
+canonical derivation for both networks** by
+[`address.test.ts`](src/lib/chain/address.test.ts).
+
+> **Mainnet is scaffolded but not yet live.** ShaSwap's contracts aren't deployed on
+> mainnet, so `mainnet` has `deployed: false` (no reference-script UTXOs). On such a
+> network the app still **reads** (pool/order scans just come back empty); tx-building
+> goes through `requireDeployed()`, which throws a clear error instead of a null crash.
+> To go live: deploy the reference scripts, fill `orderRef`/`poolRef` + set
+> `deployed: true` in `deployment.ts`, and set `NEXT_PUBLIC_NETWORK=mainnet`.
+
+## Deploy (DigitalOcean App Platform)
+
+Two apps off the same repo/branch, one per network — committed specs in
+[`.do/`](../.do):
+
+| Spec | DO app | Domain | `NEXT_PUBLIC_NETWORK` |
+|---|---|---|---|
+| [`.do/app.preprod.yaml`](../.do/app.preprod.yaml) | `shaswap-preprod` | `preprod.shaswap.org` | `preprod` |
+| [`.do/app.mainnet.yaml`](../.do/app.mainnet.yaml) | `shaswap` | `app.shaswap.org` | `preprod` → `mainnet` later |
+
+The production app (`app.shaswap.org`) **shows preprod for now** and flips to mainnet
+once the contracts are live (see the header of `app.mainnet.yaml` — flip the env, swap to
+a `mainnet…` Blockfrost key, fill the refs in `deployment.ts`).
+
+```bash
+doctl apps create --spec .do/app.preprod.yaml     # once per app
+# then set the BLOCKFROST_PROJECT_ID secret in the DO console
+```
+
+- **Build:** DO's **Node.js buildpack** (no Dockerfile). `npm ci && npm run build` then
+  `npm run start`; Node comes from [`.nvmrc`](.nvmrc) / `engines`. `next start` honors the
+  `$PORT` DO injects. `deploy_on_push: true` → every push to `main` redeploys both apps.
+- **Env-var scopes are the crux** (a wrong scope ships a broken bundle):
+
+  | Var | Scope | Why |
+  |---|---|---|
+  | `NEXT_PUBLIC_NETWORK`, `NEXT_PUBLIC_SITE_URL` | `RUN_AND_BUILD_TIME` | inlined into the client bundle **at build** — a run-time-only scope bakes the defaults |
+  | `BLOCKFROST_PROJECT_ID` | `RUN_TIME` + `SECRET` | server-only; never needed (or wanted) at build |
+  | `DATA_PROVIDER`, `LOG_LEVEL` | `RUN_TIME` | optional, explicit |
 
 ## The data-access rule (INVIOLABLE — see CLAUDE.md)
 

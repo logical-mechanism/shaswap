@@ -53,6 +53,13 @@ The components are decoupled. Keep them that way.
 - **Hard rule:** all chain data goes through a **data-access abstraction** — no module
   calls a specific provider (Koios/Blockfrost/Maestro) directly, so providers are
   swappable and we can move to our own node (e.g. Dolos) later.
+- **Network is one knob** (`NEXT_PUBLIC_NETWORK` → `APP_CONFIG.network`): the same build
+  serves preprod/preview/mainnet. Per-network identities live in
+  `src/lib/chain/deployment.ts`; everything network-independent (script hashes, compiled
+  code, constants) is shared. Mainnet is scaffolded (`deployed: false`) until contracts ship.
+- **Deploy:** DigitalOcean App Platform (Node buildpack, auto-deploy on push); one app per
+  network — specs in `.do/`. `NEXT_PUBLIC_*` must be `RUN_AND_BUILD_TIME` (build-inlined);
+  the Blockfrost key is a `RUN_TIME` secret whose prefix must match the network.
 
 ## Inviolable invariants (do not break these without changing the blueprint)
 
