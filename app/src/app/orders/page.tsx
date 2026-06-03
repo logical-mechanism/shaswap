@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNetwork, useWallet } from "@meshsdk/react";
+import { useWallet } from "@meshsdk/react";
 import { useOrders } from "@/hooks/useOrders";
-import { useWalletCollateral } from "@/hooks/useWalletCollateral";
+import { useWriteGate } from "@/hooks/useWriteGate";
 import { reclaimOrder } from "@/lib/client/tx";
 import {
   getRecent,
@@ -19,7 +19,7 @@ import {
   type RowStatus,
 } from "@/lib/client/orderRows";
 import { toUserMessage } from "@/lib/client/errors";
-import { APP_CONFIG, explorerTxUrl, networkLabel } from "@/lib/config";
+import { explorerTxUrl, networkLabel } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
@@ -54,15 +54,10 @@ type ReclaimState =
 
 export default function OrdersPage() {
   const { connected, wallet } = useWallet();
-  const networkId = useNetwork();
-  const { hasCollateral, loading: collateralLoading } = useWalletCollateral();
-  // Reclaim spends a script UTXO, so it carries the same gates as every other write
-  // flow: correct network + a collateral UTXO. (It was the only flow missing them.)
-  const wrongNetwork =
-    connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
-  const networkReady = connected && networkId === APP_CONFIG.networkId;
-  const collateralReady = hasCollateral || collateralLoading;
-  const needsCollateral = connected && !hasCollateral && !collateralLoading;
+  // Reclaim spends a script UTXO — the same gating as every write flow (network +
+  // collateral); shared via useWriteGate.
+  const { networkReady, wrongNetwork, collateralReady, needsCollateral } =
+    useWriteGate({ requireCollateral: true });
   // Query by the wallet's CHANGE address — the payment key hash orders are posted
   // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
   // still see their own orders, and the local activity log keys match.

@@ -23,7 +23,10 @@ import {
 } from "@/lib/chain/deployment";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
+import { feeToBps, isRetriable } from "./providerUtil";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
+import { toBigInt as toBig } from "../bigint";
+import { errText, log } from "../log";
 
 /**
  * Real preprod `DataProvider` backed by Blockfrost (the user's chosen hosted
@@ -88,40 +91,8 @@ function reserveOf(amount: Asset[], asset: AssetId): bigint {
   return r < 0n ? 0n : r;
 }
 
-/** Static fee `fee_num/fee_den` → integer basis points (3/1000 → 30). */
-function feeToBps(feeNum: bigint, feeDen: bigint): number {
-  if (feeDen <= 0n) return 0;
-  return Number((feeNum * 10_000n) / feeDen);
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-/** Transient HTTP/network errors worth retrying (rate-limit, 5xx, dropped conn). */
-function isRetriable(e: unknown): boolean {
-  const o = e as { status?: unknown; status_code?: unknown; message?: unknown };
-  // MeshJS's BlockfrostProvider throws a JSON STRING (parseHttpError), so the real
-  // HTTP status lives inside it — parse it out rather than digit-matching the text
-  // (which would over-retry messages that merely contain "503" or "network").
-  let status = numOr(o?.status) ?? numOr(o?.status_code);
-  const text = typeof e === "string" ? e : String(o?.message ?? e ?? "");
-  if (status === undefined) {
-    try {
-      const parsed = JSON.parse(text) as { status?: unknown; status_code?: unknown };
-      status = numOr(parsed?.status) ?? numOr(parsed?.status_code);
-    } catch {
-      // not JSON — fall through to keyword matching
-    }
-  }
-  if (status !== undefined && (status === 429 || status >= 500)) return true;
-  return /\b429\b|rate.?limit|too many requests|timeout|econnreset|etimedout|fetch failed/i.test(
-    text,
-  );
-}
-
-function numOr(v: unknown): number | undefined {
-  return typeof v === "number" ? v : undefined;
 }
 
 /**
@@ -137,6 +108,7 @@ async function retry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
     } catch (e) {
       lastErr = e;
       if (i === attempts - 1 || !isRetriable(e)) throw e;
+      log.warn("provider retry", { attempt: i + 1, of: attempts, err: errText(e, 120) });
       await sleep(250 * 2 ** i); // 250ms, 500ms
     }
   }
@@ -430,12 +402,4 @@ function toPosition(u: UTxO, d: OrderDatum, pool: Pool | undefined): WalletPosit
     status: "open",
     partial: d.partial,
   };
-}
-
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s.split(".")[0] || "0");
-  } catch {
-    return 0n;
-  }
 }

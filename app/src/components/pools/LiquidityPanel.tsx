@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { deserializeAddress } from "@meshsdk/core";
-import { useAddress, useNetwork, useWallet } from "@meshsdk/react";
+import { useAddress, useWallet } from "@meshsdk/react";
 import type { Pool } from "@/lib/data";
-import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
+import { explorerTxUrl } from "@/lib/config";
 import { usePoolUtxo } from "@/hooks/usePoolUtxo";
-import { useWalletCollateral } from "@/hooks/useWalletCollateral";
+import { useWriteGate } from "@/hooks/useWriteGate";
 import {
   buildDeposit,
   buildWithdraw,
@@ -24,8 +24,10 @@ import {
 import { toUserMessage } from "@/lib/client/errors";
 import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
+import { CollateralNote } from "@/components/CollateralNote";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
 
 type Tab = "add" | "remove";
@@ -36,14 +38,6 @@ type TxState =
   | { kind: "success"; hash: string }
   | { kind: "error"; message: string };
 
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s);
-  } catch {
-    return 0n;
-  }
-}
-
 /** Apply a slippage haircut (bps) to a computed amount, flooring. Clamped to [0,100%]. */
 function withSlippage(amount: bigint, slippagePct: number): bigint {
   const bps = BigInt(Math.min(10_000, Math.max(0, Math.round(slippagePct * 100))));
@@ -52,13 +46,15 @@ function withSlippage(amount: bigint, slippagePct: number): bigint {
 
 export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { connected, wallet } = useWallet();
-  const networkId = useNetwork();
   const address = useAddress();
+  // Shared write gating (network + collateral); deposit/withdraw/close are script spends.
   const {
-    hasCollateral,
-    loading: collateralLoading,
-    recheck: recheckCollateral,
-  } = useWalletCollateral();
+    networkReady,
+    wrongNetwork,
+    collateralReady,
+    needsCollateral,
+    recheckCollateral,
+  } = useWriteGate({ requireCollateral: true });
   const { view, stats, loading, error, reload } = usePoolUtxo(pool.id);
 
   const [tab, setTab] = useState<Tab>("add");
@@ -67,15 +63,6 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   // persists: closing burns the pool UTXO, so onDone()→reload() then resolves to null and
   // would otherwise replace the success panel with a "Pool UTXO not found" error.
   const [closedTxHash, setClosedTxHash] = useState<string | null>(null);
-
-  const wrongNetwork =
-    connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
-  const networkReady = connected && networkId === APP_CONFIG.networkId;
-  // Gate script-spend writes on a detected collateral UTXO (deposit/withdraw/close all
-  // need one). While the check is in flight, don't block — some wallets set collateral on
-  // demand; only hard-disable once we positively know it's absent.
-  const collateralReady = hasCollateral || collateralLoading;
-  const needsCollateral = connected && !hasCollateral && !collateralLoading;
 
   // The connected wallet's payment key hash — gates the creator-only "Close empty pool"
   // affordance against the pool's `creator`. A never-seeded pool can be torn down by its
@@ -972,25 +959,6 @@ function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
     );
   }
   return null;
-}
-
-/** Shared "needs collateral" note with an in-app re-check (auto-rechecks on tab focus). */
-function CollateralNote({ onRecheck }: { onRecheck: () => void }) {
-  return (
-    <div className="k-note k-note-warn mt-3 flex items-start justify-between gap-2 text-xs">
-      <span>
-        This action spends a script UTXO, so your wallet needs a collateral UTXO. Set one
-        in your wallet, then re-check.
-      </span>
-      <button
-        type="button"
-        onClick={onRecheck}
-        className="k-btn-ghost shrink-0 px-2.5 py-1 text-[11px]"
-      >
-        Re-check
-      </button>
-    </div>
-  );
 }
 
 function Skeleton() {

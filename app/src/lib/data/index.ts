@@ -1,6 +1,7 @@
 import type { DataProvider } from "./provider";
 import { MockProvider } from "./mock";
 import { BlockfrostDataProvider } from "./blockfrost";
+import { log } from "../log";
 
 export type { DataProvider } from "./provider";
 export type * from "./types";
@@ -40,6 +41,7 @@ function createDataProvider(): DataProvider {
     process.env.NODE_ENV === "production" &&
     process.env.DATA_PROVIDER !== "mock"
   ) {
+    log.error("refusing MockProvider in production", { hint: "set BLOCKFROST_PROJECT_ID" });
     throw new Error(
       "Refusing to start with the MockProvider in production. Set BLOCKFROST_PROJECT_ID " +
         "(or another real DATA_PROVIDER), or set DATA_PROVIDER=mock to opt in explicitly.",
@@ -47,7 +49,7 @@ function createDataProvider(): DataProvider {
   }
 
   // One-time startup signal of the active backend (helps catch a mock-in-prod misconfig).
-  console.info(`[data] provider = ${which}`);
+  log.info("data provider selected", { provider: which });
 
   switch (which) {
     case "blockfrost":

@@ -17,17 +17,18 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useAssets, useNetwork, useWallet } from "@meshsdk/react";
+import { useAssets, useWallet } from "@meshsdk/react";
 import type { TokenInfo } from "@/lib/data";
-import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
+import { explorerTxUrl } from "@/lib/config";
 import { usePools } from "@/hooks/usePools";
-import { useWalletCollateral } from "@/hooks/useWalletCollateral";
+import { useWriteGate } from "@/hooks/useWriteGate";
 import { createPool } from "@/lib/client/tx";
 import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
 import { truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
+import { CollateralNote } from "@/components/CollateralNote";
 
 type TxState =
   | { kind: "idle" }
@@ -80,18 +81,16 @@ function bpsToFee(bps: number): { num: bigint; den: bigint } {
 
 export default function CreatePoolPage() {
   const { connected, wallet } = useWallet();
-  const networkId = useNetwork();
   const assets = useAssets();
   const { pools } = usePools();
-  // Pool creation spends a script (the mint), so it needs a collateral UTXO like every
-  // other write flow — gate it up front instead of failing at signing.
+  // Pool creation spends a script (the mint), so it needs collateral like every write flow.
   const {
-    hasCollateral,
-    loading: collateralLoading,
-    recheck: recheckCollateral,
-  } = useWalletCollateral();
-  const collateralReady = hasCollateral || collateralLoading;
-  const needsCollateral = connected && !hasCollateral && !collateralLoading;
+    networkReady,
+    wrongNetwork,
+    collateralReady,
+    needsCollateral,
+    recheckCollateral,
+  } = useWriteGate({ requireCollateral: true });
 
   const [tokenA, setTokenA] = useState<TokenInfo | undefined>(undefined);
   const [tokenB, setTokenB] = useState<TokenInfo | undefined>(ADA_TOKEN);
@@ -101,10 +100,6 @@ export default function CreatePoolPage() {
   // re-renders to "busy", which would build + submit two txs spending the SAME seed
   // (the second double-spends → node rejects). The ref blocks the second call instantly.
   const submitting = useRef(false);
-
-  const wrongNetwork =
-    connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
-  const networkReady = connected && networkId === APP_CONFIG.networkId;
 
   // Token universe: ADA + the wallet's own assets (deduped by unit).
   const tokens = useMemo(() => {
@@ -292,19 +287,10 @@ export default function CreatePoolPage() {
         )}
 
         {needsCollateral && (
-          <div className="k-note k-note-warn mt-3 flex items-start justify-between gap-2 text-xs">
-            <span>
-              Creating a pool spends a script, so your wallet needs a collateral UTXO.
-              Set one in your wallet, then re-check.
-            </span>
-            <button
-              type="button"
-              onClick={recheckCollateral}
-              className="k-btn-ghost shrink-0 px-2.5 py-1 text-[11px]"
-            >
-              Re-check
-            </button>
-          </div>
+          <CollateralNote onRecheck={recheckCollateral}>
+            Creating a pool spends a script, so your wallet needs a collateral UTXO. Set
+            one in your wallet, then re-check.
+          </CollateralNote>
         )}
 
         <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />

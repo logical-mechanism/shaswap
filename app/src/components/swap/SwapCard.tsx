@@ -24,6 +24,7 @@ import {
   toBaseUnits,
   truncate,
 } from "@/lib/format";
+import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
@@ -450,14 +451,6 @@ export function SwapCard() {
       <PostResult state={post} />
     </div>
   );
-}
-
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s.split(".")[0] || "0");
-  } catch {
-    return 0n;
-  }
 }
 
 // ADA held back when the FROM token is ADA, so a MAX swap still leaves room for the

@@ -6,6 +6,7 @@ import type { Pool, TokenInfo } from "@/lib/data";
 import { usePools } from "@/hooks/usePools";
 import { networkLabel } from "@/lib/config";
 import { formatUnits } from "@/lib/format";
+import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
 
@@ -23,14 +24,6 @@ interface PairGroup {
   liveCount: number;
   totalY: bigint; // summed reserve of Y over seeded pools — a liquidity proxy for sorting
   fees: number[]; // sorted unique fee bps
-}
-
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s);
-  } catch {
-    return 0n;
-  }
 }
 
 /** Canonical pair orientation: ADA sits second; otherwise order by unit. */

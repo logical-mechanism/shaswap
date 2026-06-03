@@ -25,6 +25,7 @@ import {
   orderReclaimRedeemer,
 } from "@/lib/chain/datums";
 import { deriveEnterpriseScriptAddress } from "@/lib/chain/address";
+import { excludeCollateral } from "@/lib/chain/coinSelect";
 import {
   buildDeposit,
   buildWithdraw,
@@ -234,15 +235,10 @@ export async function reclaimOrder(
     throw new Error("no collateral in wallet — set a collateral UTXO and retry");
   }
 
-  // The collateral input must be DISJOINT from regular spend inputs (the ledger
-  // rejects a tx that uses one UTXO as both), so exclude every collateral UTXO from
-  // the funding-selection set — otherwise coin selection can pick it to cover the fee.
-  const collateralRefs = new Set(
-    collateral.map((c) => `${c.input.txHash}#${c.input.outputIndex}`),
-  );
-  const fundingUtxos = utxos.filter(
-    (u) => !collateralRefs.has(`${u.input.txHash}#${u.input.outputIndex}`),
-  );
+  // The collateral input must be DISJOINT from regular spend inputs (the ledger rejects
+  // a tx that uses one UTXO as both), so exclude every collateral UTXO from the
+  // funding-selection set — otherwise coin selection can pick it to cover the fee.
+  const fundingUtxos = excludeCollateral(utxos, collateral);
 
   const txBuilder = new MeshTxBuilder({ params, evaluator });
   // Inject the network's real cost models so the script-integrity hash matches the node.
@@ -297,12 +293,7 @@ async function spendContext(wallet: IWallet) {
   if (!col) {
     throw new Error("no collateral in wallet — set a collateral UTXO and retry");
   }
-  const collateralRefs = new Set(
-    collateral.map((c) => `${c.input.txHash}#${c.input.outputIndex}`),
-  );
-  const fundingUtxos = utxos.filter(
-    (u) => !collateralRefs.has(`${u.input.txHash}#${u.input.outputIndex}`),
-  );
+  const fundingUtxos = excludeCollateral(utxos, collateral);
   return { params, costModels, changeAddress, col, fundingUtxos };
 }
 

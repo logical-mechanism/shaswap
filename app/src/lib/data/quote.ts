@@ -1,4 +1,5 @@
 import type { Pool, Quote } from "./types";
+import { toBigInt as toBig } from "../bigint.ts";
 
 /**
  * Constant-product (x·y=k) quote with fee for ONE pool — a DISPLAY estimate over the
@@ -65,12 +66,4 @@ export function quoteConstantProduct(
     priceImpact,
     poolId: pool.id,
   };
-}
-
-function toBig(s: string): bigint {
-  try {
-    return BigInt(s.split(".")[0] || "0");
-  } catch {
-    return 0n;
-  }
 }
