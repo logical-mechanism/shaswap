@@ -24,6 +24,7 @@ import {
 import { toUserMessage } from "@/lib/client/errors";
 import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import { Pip } from "@/components/Pip";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
 
 type Tab = "add" | "remove";
@@ -133,9 +134,12 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   // Terminal: the pool was closed. Persist the success above everything else.
   if (closedTxHash) {
     return (
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
-        <div className="rounded-xl border border-accent/20 bg-accent/10 p-3 text-sm">
-          <div className="font-medium text-accent">Pool closed ✓</div>
+      <div className="k-card w-full max-w-md p-5 sm:p-6">
+        <div className="k-note k-note-success text-sm">
+          <div className="flex items-center gap-2">
+            <Pip size={26} mood="sparkle" />
+            <div className="font-bold text-success">Pool closed ✓</div>
+          </div>
           <p className="mt-0.5 text-xs text-muted">
             The pool was permanently burned and the ~2 ₳ seed is on its way back to your
             wallet (~20–40s).
@@ -159,9 +163,9 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   }
 
   return (
-    <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
+    <div className="k-card w-full max-w-md p-5 sm:p-6">
       <div className="mb-3 flex items-center justify-between px-1">
-        <div className="flex rounded-xl border border-white/10 bg-black/20 p-0.5 text-sm">
+        <div className="flex rounded-full border border-border bg-surface-sunk p-1 text-sm">
           <TabButton active={tab === "add"} onClick={() => setTab("add")}>
             Add
           </TabButton>
@@ -175,7 +179,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
             onClick={reload}
             title="Refresh pool data"
             aria-label="Refresh pool data"
-            className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-muted transition-colors hover:text-foreground"
+            className="k-pill px-2.5 py-1 text-xs text-muted hover:text-accent"
           >
             ↻
           </button>
@@ -190,7 +194,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
       {loading && !stats && <Skeleton />}
 
       {error && !stats && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+        <div className="k-note k-note-danger text-sm">
           {error}
         </div>
       )}
@@ -252,7 +256,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
           )}
 
           {stats.firstDeposit && connected && !isCreator && (
-            <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-3 text-xs text-muted">
+            <div className="k-note k-note-info mt-4 text-xs">
               This pool is empty (no liquidity yet). Only its creator can close an empty
               pool to reclaim the ~2 ₳ seed — anyone can seed it with the first deposit.
             </div>
@@ -380,7 +384,7 @@ function AddForm({
   return (
     <div className="mt-3">
       {first && (
-        <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+        <div className="k-note k-note-warn mb-3 text-xs">
           This pool has no circulating LP yet — you’re the first depositor. Your deposit
           ratio sets the pool’s opening price. LP minted = √(reserveA · reserveB); 1000 LP
           is permanently locked to seed the pool.
@@ -443,13 +447,13 @@ function AddForm({
       </div>
 
       {deltaA > 0n && (!first || deltaB > 0n) && preview?.error && (
-        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+        <div className="k-note k-note-warn mt-3 text-xs">
           {depositErrorMessage(preview.error)}
         </div>
       )}
 
       {needsCollateral && (
-        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+        <div className="k-note k-note-warn mt-3 text-xs">
           This action spends a script UTXO, so your wallet needs a collateral UTXO. Set
           one in your wallet, then retry.
         </div>
@@ -568,7 +572,7 @@ function RemoveForm({
 
   return (
     <div className="mt-3">
-      <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+      <div className="k-field p-3.5">
         <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted">
           <span>LP to burn</span>
           <button
@@ -590,7 +594,7 @@ function RemoveForm({
               if (state.kind !== "idle") setState({ kind: "idle" });
             }
           }}
-          className="w-full bg-transparent text-2xl font-medium outline-none placeholder:text-muted/50"
+          className="k-input text-3xl font-extrabold tabular-nums text-ink"
         />
       </div>
 
@@ -622,13 +626,13 @@ function RemoveForm({
       </div>
 
       {lpToBurn > 0n && !overBalance && preview?.error && (
-        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+        <div className="k-note k-note-warn mt-3 text-xs">
           {withdrawErrorMessage(preview.error)}
         </div>
       )}
 
       {needsCollateral && (
-        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+        <div className="k-note k-note-warn mt-3 text-xs">
           This action spends a script UTXO, so your wallet needs a collateral UTXO. Set
           one in your wallet, then retry.
         </div>
@@ -693,7 +697,7 @@ function CloseEmptyPool({
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-red-500/15 bg-red-500/[0.03] p-3">
+    <div className="k-note k-note-danger mt-4">
       <div className="px-0.5 text-xs text-muted">
         You created this empty pool. Closing permanently burns it and returns the
         ~2 ₳ seed to your wallet. (Once it has liquidity it can never be closed.)
@@ -707,7 +711,7 @@ function CloseEmptyPool({
             setConfirming(true);
             if (state.kind !== "idle") setState({ kind: "idle" });
           }}
-          className="mt-2 w-full rounded-xl border border-red-500/30 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-muted"
+          className="k-btn-danger-soft mt-2 w-full text-sm"
         >
           {gateReason ?? "Close empty pool"}
         </button>
@@ -717,7 +721,7 @@ function CloseEmptyPool({
             type="button"
             onClick={() => setConfirming(false)}
             disabled={state.kind === "busy"}
-            className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-medium text-muted transition-colors hover:text-foreground disabled:opacity-50"
+            className="k-btn-ghost flex-1 text-sm"
           >
             Cancel
           </button>
@@ -725,7 +729,7 @@ function CloseEmptyPool({
             type="button"
             disabled={gated || state.kind === "busy"}
             onClick={submit}
-            className="flex-1 rounded-xl bg-red-500/80 py-2.5 text-sm font-semibold text-black transition-opacity hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-muted"
+            className="k-btn-danger flex-1 text-sm"
           >
             {gateReason ?? (state.kind === "busy" ? "Closing…" : "Confirm — burn pool")}
           </button>
@@ -733,7 +737,7 @@ function CloseEmptyPool({
       )}
 
       {state.kind === "error" && (
-        <div className="mt-2 break-words rounded-xl border border-red-500/20 bg-red-500/10 p-2.5 text-xs text-red-300">
+        <div className="k-note k-note-danger mt-2 break-words text-xs">
           {state.message}
         </div>
       )}
@@ -796,7 +800,7 @@ function PositionLine({
   const shareLabel =
     sharePct === 0 ? "" : sharePct < 0.01 ? "<0.01% of the pool" : `${sharePct.toFixed(2)}% of the pool`;
   return (
-    <div className="rounded-xl border border-white/5 bg-black/10 p-3 text-xs">
+    <div className="k-field p-3 text-xs">
       <div className="flex items-center justify-between">
         <span className="text-muted">
           Your position
@@ -840,7 +844,7 @@ function AmountField({
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
+    <div className="k-field p-3.5">
       <div className="mb-2 px-1 text-xs text-muted">{label}</div>
       <div className="flex items-center gap-3">
         <input
@@ -852,11 +856,11 @@ function AmountField({
             const v = e.target.value;
             if (v === "" || /^\d*\.?\d*$/.test(v)) onChange(v);
           }}
-          className={`w-full bg-transparent text-2xl font-medium outline-none placeholder:text-muted/50 ${
-            editable ? "" : "text-muted"
+          className={`k-input text-3xl font-extrabold tabular-nums ${
+            editable ? "text-ink" : "text-muted"
           }`}
         />
-        <span className="shrink-0 rounded-lg bg-white/5 px-2.5 py-1 text-sm font-medium">
+        <span className="k-pill shrink-0 text-sm">
           {ticker}
         </span>
       </div>
@@ -877,8 +881,8 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
-        active ? "bg-white/10 text-foreground" : "text-muted hover:text-foreground"
+      className={`rounded-full px-3 py-1.5 transition-colors ${
+        active ? "bg-accent/12 font-bold text-accent" : "text-muted hover:text-accent"
       }`}
     >
       {children}
@@ -909,7 +913,7 @@ function SubmitButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="mt-3 w-full rounded-xl bg-gradient-to-r from-accent to-accent-2 py-3.5 text-sm font-semibold text-black transition-opacity disabled:cursor-not-allowed disabled:from-white/10 disabled:to-white/10 disabled:text-muted"
+      className="k-btn mt-3 w-full py-3.5 text-sm"
     >
       {label}
     </button>
@@ -919,10 +923,13 @@ function SubmitButton({
 function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
   if (state.kind === "success") {
     return (
-      <div className="mt-3 rounded-xl border border-accent/20 bg-accent/10 p-3 text-xs">
-        <div className="font-medium text-accent">{verb} ✓</div>
+      <div className="k-note k-note-success mt-3 text-xs">
+        <div className="flex items-center gap-2">
+          <Pip size={26} mood="sparkle" />
+          <div className="font-bold text-success">{verb} ✓</div>
+        </div>
         <p className="mt-0.5 text-muted">
-          Confirming on-chain (~20–40s). Your position updates once it lands.
+          Settling in (~20–40s). Your position updates the moment it lands.
         </p>
         <a
           href={explorerTxUrl(state.hash)}
@@ -937,9 +944,9 @@ function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
   }
   if (state.kind === "error") {
     return (
-      <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">
-        <div className="font-medium">Transaction failed</div>
-        <div className="mt-1 break-words text-red-300/80">{state.message}</div>
+      <div className="k-note k-note-danger mt-3 text-xs">
+        <div className="font-bold">Transaction failed</div>
+        <div className="mt-1 break-words opacity-90">{state.message}</div>
       </div>
     );
   }
@@ -952,7 +959,7 @@ function Skeleton() {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className="h-14 animate-pulse rounded-xl border border-white/5 bg-white/5"
+          className="h-14 animate-pulse rounded-2xl border border-border bg-surface-sunk"
         />
       ))}
     </div>

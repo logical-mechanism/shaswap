@@ -1,51 +1,217 @@
 "use client";
 
-import { CardanoWallet, useAddress, useLovelace, useNetwork, useWallet } from "@meshsdk/react";
+import { useEffect, useRef, useState } from "react";
+import {
+  useAddress,
+  useLovelace,
+  useNetwork,
+  useWallet,
+  useWalletList,
+} from "@meshsdk/react";
 import { APP_CONFIG, networkLabel } from "@/lib/config";
 import { formatAda, truncate } from "@/lib/format";
+import { Pip } from "./Pip";
 
 /**
- * Header wallet area: a status pill (network · ADA balance · address) shown when
- * connected, plus MeshJS's `CardanoWallet` connect button. No login — connect
- * and go. All wallet state comes from MeshProvider via the hooks.
+ * Header wallet area — fully branded (no default Mesh modal). Disconnected: a
+ * "Connect wallet" pill opens a kawaii wallet picker built from `useWalletList()`.
+ * Connected: a status pill (network · balance · address) opens a small menu with
+ * the wallet name and a Disconnect action. All wallet state comes from MeshProvider.
  */
 export function WalletBar() {
   const { connected } = useWallet();
+  return (
+    <div className="flex items-center gap-2 sm:gap-3">
+      {connected ? <ConnectedMenu /> : <ConnectMenu />}
+    </div>
+  );
+}
+
+/** Close `open` when a pointer-down lands outside `ref`. */
+function useOutsideClose(
+  ref: React.RefObject<HTMLElement | null>,
+  open: boolean,
+  onClose: () => void,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [ref, open, onClose]);
+}
+
+function ConnectMenu() {
+  const { connect, connecting } = useWallet();
+  const wallets = useWalletList();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutsideClose(ref, open, () => setOpen(false));
+
+  async function pick(walletName: string) {
+    setOpen(false);
+    try {
+      await connect(walletName, true);
+    } catch {
+      // user declined / wallet errored — Mesh keeps us disconnected; nothing to do.
+    }
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        disabled={connecting}
+        className="k-btn px-4 py-2 text-sm"
+      >
+        {connecting ? "Connecting…" : "Connect wallet"}
+      </button>
+
+      {open && (
+        <div className="animate-pop absolute right-0 z-40 mt-2 w-64 rounded-2xl border border-border bg-surface p-2 shadow-[0_24px_50px_-22px_rgba(150,110,190,0.55)]">
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <Pip size={28} mood="wave" />
+            <span className="font-display text-sm font-extrabold text-ink">
+              Pick your wallet
+            </span>
+          </div>
+          {wallets.length === 0 ? (
+            <p className="px-2 py-2 text-xs leading-relaxed text-muted">
+              Pip can’t find a Cardano wallet. Install one — like Eternl, Lace, or
+              Nami — then refresh the page.
+            </p>
+          ) : (
+            <div className="mt-1 space-y-1">
+              {wallets.map((w) => (
+                <button
+                  key={w.name}
+                  type="button"
+                  onClick={() => pick(w.name)}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition-colors hover:bg-surface-sunk"
+                >
+                  <WalletIcon icon={w.icon} name={w.name} />
+                  <span className="text-sm font-semibold capitalize text-ink">
+                    {w.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConnectedMenu() {
+  const { disconnect, name } = useWallet();
   const address = useAddress();
   const lovelace = useLovelace();
   const networkId = useNetwork();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutsideClose(ref, open, () => setOpen(false));
 
-  // Flag if the connected wallet's network doesn't match the app's target.
   const mismatch =
-    connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
+    networkId !== undefined && networkId !== APP_CONFIG.networkId;
+
+  if (!address) {
+    // Connected but address not resolved yet — show a calm placeholder pill.
+    return (
+      <span className="k-pill text-xs text-muted">
+        <Pip size={18} mood="thinking" />
+        Loading…
+      </span>
+    );
+  }
 
   return (
-    <div className="flex items-center gap-2 sm:gap-3">
-      {connected && address && (
-        <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 py-1.5 pl-3 pr-1.5 text-sm sm:flex">
-          <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-              mismatch
-                ? "bg-red-500/15 text-red-300"
-                : "bg-accent/15 text-accent"
-            }`}
-            title={mismatch ? "Wallet network differs from app network" : undefined}
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={mismatch ? "Wallet network differs from app network" : undefined}
+        className="flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-2.5 pr-2 text-sm transition-colors hover:border-accent/40"
+      >
+        <span className={`k-chip ${mismatch ? "k-chip-danger" : "k-chip-accent"}`}>
+          {mismatch ? "Wrong network" : networkLabel()}
+        </span>
+        <span className="hidden tabular-nums text-muted sm:inline">
+          {formatAda(lovelace)} ₳
+        </span>
+        <span className="rounded-full bg-surface-sunk px-2.5 py-1 font-mono text-xs text-muted">
+          {truncate(address)}
+        </span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 12 12"
+          className={`text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        >
+          <path
+            d="M2.5 4.5L6 8l3.5-3.5"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="sr-only">network {APP_CONFIG.network}</span>
+      </button>
+
+      {open && (
+        <div className="animate-pop absolute right-0 z-40 mt-2 w-60 rounded-2xl border border-border bg-surface p-2 shadow-[0_24px_50px_-22px_rgba(150,110,190,0.55)]">
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <Pip size={26} mood="cool" />
+            <span className="font-display text-sm font-extrabold capitalize text-ink">
+              {name ?? "Wallet"}
+            </span>
+          </div>
+          <div className="break-all px-2 pb-1.5 font-mono text-[11px] text-muted">
+            {address}
+          </div>
+          <div className="flex items-center justify-between px-2 pb-2 text-xs text-muted">
+            <span>Balance</span>
+            <span className="tabular-nums">{formatAda(lovelace)} ₳</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              disconnect();
+            }}
+            className="k-btn-ghost w-full justify-center py-2 text-sm"
           >
-            {mismatch ? "Wrong network" : networkLabel()}
-          </span>
-          <span className="tabular-nums text-muted">
-            {formatAda(lovelace)} ₳
-          </span>
-          <span className="rounded-full bg-black/30 px-2.5 py-1 font-mono text-xs text-muted">
-            {truncate(address)}
-          </span>
+            Disconnect
+          </button>
         </div>
       )}
-      <CardanoWallet
-        label="Connect wallet"
-        isDark
-        persist
-      />
     </div>
+  );
+}
+
+function WalletIcon({ icon, name }: { icon?: string; name: string }) {
+  if (icon) {
+    return (
+      <span
+        className="h-6 w-6 shrink-0 rounded-full bg-surface-sunk bg-contain bg-center bg-no-repeat"
+        style={{ backgroundImage: `url("${icon}")` }}
+        aria-hidden
+      />
+    );
+  }
+  return (
+    <span
+      className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-gradient-to-br from-pink to-lavender text-[10px] font-bold text-white"
+      aria-hidden
+    >
+      {name.slice(0, 2).toUpperCase()}
+    </span>
   );
 }

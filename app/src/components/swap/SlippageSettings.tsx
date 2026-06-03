@@ -41,7 +41,7 @@ export function SlippageSettings({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Slippage settings"
-        className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-white/5 hover:text-foreground"
+        className="grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-surface-sunk hover:text-accent"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
           <path
@@ -60,10 +60,10 @@ export function SlippageSettings({
       </button>
 
       {open && (
-        <div className="absolute right-0 z-30 mt-2 w-60 rounded-xl border border-white/10 bg-surface p-3 shadow-xl">
+        <div className="absolute right-0 z-30 mt-2 w-60 rounded-2xl border border-border bg-surface p-3 shadow-[0_24px_50px_-28px_rgba(150,110,190,0.5)]">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-medium">Max slippage</span>
-            <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-muted">
+            <span className="k-chip k-chip-muted text-[10px]">
               {context === "liquidity" ? "sets your minimum out" : "sets your floor"}
             </span>
           </div>
@@ -73,10 +73,10 @@ export function SlippageSettings({
                 key={p}
                 type="button"
                 onClick={() => onChange(p)}
-                className={`flex-1 rounded-lg border px-2 py-1.5 text-xs transition-colors ${
+                className={`flex-1 rounded-full border px-2 py-1.5 text-xs transition-colors ${
                   value === p
-                    ? "border-accent/40 bg-accent/15 text-accent"
-                    : "border-white/10 text-muted hover:bg-white/5"
+                    ? "border-accent/40 bg-accent/15 font-bold text-accent"
+                    : "border-border text-muted hover:bg-surface-sunk"
                 }`}
               >
                 {p.toFixed(1)}%

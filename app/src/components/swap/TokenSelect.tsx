@@ -36,7 +36,7 @@ export function TokenSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/5 py-1.5 pl-1.5 pr-3 text-sm font-semibold transition-colors hover:bg-white/10"
+        className="k-pill shrink-0 py-1.5 pl-1.5 pr-3 text-sm font-semibold"
       >
         <TokenIcon token={token} />
         <span>{token?.ticker ?? "Select"}</span>
@@ -59,7 +59,7 @@ export function TokenSelect({
       </button>
 
       {open && (
-        <div className="absolute right-0 z-30 mt-2 w-52 overflow-hidden rounded-xl border border-white/10 bg-surface shadow-xl">
+        <div className="absolute right-0 z-30 mt-2 w-52 overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_24px_50px_-28px_rgba(150,110,190,0.5)]">
           {options.map((t) => (
             <button
               key={t.unit}
@@ -68,7 +68,7 @@ export function TokenSelect({
                 onSelect(t);
                 setOpen(false);
               }}
-              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-white/5"
+              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-sunk"
             >
               <TokenIcon token={t} />
               <span className="flex flex-col">
@@ -89,7 +89,7 @@ function TokenIcon({ token }: { token: TokenInfo | undefined }) {
   if (token?.icon) {
     return (
       <span
-        className="h-6 w-6 shrink-0 rounded-full bg-white/10 bg-cover bg-center"
+        className="h-6 w-6 shrink-0 rounded-full bg-surface-sunk bg-cover bg-center"
         style={{ backgroundImage: `url("${token.icon}")` }}
         aria-hidden
       />
@@ -97,7 +97,7 @@ function TokenIcon({ token }: { token: TokenInfo | undefined }) {
   }
   return (
     <span
-      className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-accent/80 to-accent-2/80 text-[10px] font-bold text-black"
+      className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-pink to-lavender text-[10px] font-bold text-white"
       aria-hidden
     >
       {token?.ticker?.slice(0, 2) ?? "?"}
