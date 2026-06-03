@@ -51,13 +51,25 @@ export default function PoolManagePage({
       {pool && (
         <>
           <header className="mb-4">
-            <h1 className="text-2xl font-semibold tracking-tight">
+            <h1 className="flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight">
               {pool.tokenA.ticker} / {pool.tokenB.ticker}
+              {pool.firstDeposit && (
+                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-normal text-amber-300">
+                  Empty — needs first deposit
+                </span>
+              )}
             </h1>
             <p className="mt-1 text-sm tabular-nums text-muted">
-              {formatUnits(pool.reserveA, pool.tokenA.decimals)} {pool.tokenA.ticker}{" "}
-              · {formatUnits(pool.reserveB, pool.tokenB.decimals)}{" "}
-              {pool.tokenB.ticker} · fee {(pool.feeBps / 100).toFixed(2)}%
+              {pool.firstDeposit ? (
+                <>No liquidity yet · fee {(pool.feeBps / 100).toFixed(2)}%</>
+              ) : (
+                <>
+                  {formatUnits(pool.reserveA, pool.tokenA.decimals)}{" "}
+                  {pool.tokenA.ticker} ·{" "}
+                  {formatUnits(pool.reserveB, pool.tokenB.decimals)}{" "}
+                  {pool.tokenB.ticker} · fee {(pool.feeBps / 100).toFixed(2)}%
+                </>
+              )}
             </p>
           </header>
 

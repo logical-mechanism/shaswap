@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { deserializeAddress } from "@meshsdk/core";
-import { useAddress, useAssets, useNetwork, useWallet } from "@meshsdk/react";
+import { useAddress, useNetwork, useWallet } from "@meshsdk/react";
 import type { Pool } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
 import { usePoolUtxo } from "@/hooks/usePoolUtxo";
@@ -52,7 +52,6 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { connected, wallet } = useWallet();
   const networkId = useNetwork();
   const address = useAddress();
-  const assets = useAssets();
   const { hasCollateral, loading: collateralLoading } = useWalletCollateral();
   const { view, stats, loading, error, reload } = usePoolUtxo(pool.id);
 
@@ -99,12 +98,36 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
     view?.datum.creator.kind === "key" &&
     view.datum.creator.hash === walletPkh;
 
-  // The wallet's LP balance for this pool, and its value in reserves.
-  const lpBalance = useMemo(() => {
-    if (!stats || !assets) return 0n;
-    const a = assets.find((x) => x.unit === stats.lpUnit);
-    return a ? toBig(a.quantity) : 0n;
-  }, [assets, stats]);
+  // The wallet's LP balance for this pool, read from the CIP-30 wallet (a wallet call,
+  // NOT a chain-data provider call — the data seam stays intact). Keyed on `stats`, which
+  // usePoolUtxo refreshes on its 15s poll and on every reload(), so the position re-reads
+  // and updates within a poll of a deposit/withdraw landing — rather than going stale (as
+  // MeshJS's useAssets did, with no refresh hook). State is only set in the deferred /
+  // async callback (the project's effect convention).
+  const [lpBalance, setLpBalance] = useState(0n);
+  useEffect(() => {
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      if (!connected || !stats) {
+        setLpBalance(0n);
+        return;
+      }
+      const lpUnit = stats.lpUnit;
+      wallet
+        .getAssets()
+        .then((walletAssets) => {
+          if (cancelled) return;
+          const a = walletAssets.find((x) => x.unit === lpUnit);
+          setLpBalance(a ? toBig(a.quantity) : 0n);
+        })
+        .catch(() => {});
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [connected, wallet, stats]);
   const position = stats ? lpPositionValue(stats, lpBalance) : { a: 0n, b: 0n };
 
   // Terminal: the pool was closed. Persist the success above everything else.
