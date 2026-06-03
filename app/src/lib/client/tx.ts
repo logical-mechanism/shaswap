@@ -15,9 +15,12 @@ import type { Action, IEvaluator, IWallet, Protocol, UTxO } from "@meshsdk/core"
 import type { Pool } from "@/lib/data";
 import { buildOrder } from "@/lib/chain/order";
 import { buildCreatePool } from "@/lib/chain/createPool";
+import { buildClosePool, recoverSeed } from "@/lib/chain/closePool";
 import {
+  closePoolRedeemer,
   decodePoolDatum,
   lpActionRedeemer,
+  mintCloseRedeemer,
   mintCreateRedeemer,
   orderReclaimRedeemer,
 } from "@/lib/chain/datums";
@@ -80,6 +83,18 @@ async function fetchPoolUtxo(nftUnit: string): Promise<UTxO> {
   const { utxo } = (await res.json()) as { utxo: UTxO | null };
   if (!utxo) throw new Error("pool UTXO not found — it may have just moved; refresh and retry");
   return utxo;
+}
+
+/** Resolve the input refs of a pool's mint tx (for one-shot seed recovery), via the seam. */
+async function fetchPoolMintInputs(
+  nftUnit: string,
+): Promise<{ txHash: string; index: number }[]> {
+  const res = await fetch(`/api/pool/mint-inputs?nft=${nftUnit}`);
+  if (!res.ok) throw new Error(`pool mint-inputs request failed (${res.status})`);
+  const { inputs } = (await res.json()) as {
+    inputs: { txHash: string; index: number }[];
+  };
+  return inputs;
 }
 
 /** Script ex-units via the seam (Blockfrost evaluateTransaction, server-side). */
@@ -509,6 +524,100 @@ export async function createPool(
   const signedTx = await wallet.signTx(unsignedTx);
   const txHash = await wallet.submitTx(signedTx);
   return { txHash, poolId: built.nftUnit };
+}
+
+/**
+ * Build → sign → submit a teardown of an EMPTY (never-seeded) pool (BLUEPRINT §5.1
+ * path c). Only the creator may close, and only while the pool still holds the entire
+ * LP supply (`held == total_lp` ⟺ `circ == 0`) — after a first deposit the locked
+ * `min_liq` is unreachable and the pool is immortal. Spends the pool UTXO with the
+ * `ClosePool` redeemer (via the pool reference script, creator signature required) and
+ * burns `{NFT:-1, LP:-total_lp}` under the pool's one-shot policy with the `Close`
+ * redeemer; no pool output (it's destroyed) — the ~2 ADA seed returns to the creator as
+ * change. The one-shot seed isn't in the datum, so it's recovered from the pool's
+ * mint-tx inputs (`recoverSeed`, pure). Returns the tx hash.
+ */
+export async function closePool(
+  wallet: IWallet,
+  pool: Pool,
+): Promise<LiquidityResult> {
+  const poolUtxo = await fetchPoolUtxo(pool.id);
+  const datumCbor = poolUtxo.output.plutusData;
+  if (!datumCbor) throw new Error("pool UTXO has no inline datum");
+  const datum = decodePoolDatum(datumCbor);
+
+  // Only an EMPTY pool can be closed: it must still hold the entire LP supply
+  // (held == total_lp ⟺ circ == 0). Surface a clear message rather than a validator fail.
+  const lpUnit = lpUnitForPool(pool.id);
+  const heldLp = poolUtxo.output.amount.find((a) => a.unit === lpUnit);
+  if (!heldLp || BigInt(heldLp.quantity) !== TOTAL_LP) {
+    throw new Error(
+      "pool is not empty — only a never-seeded pool (no liquidity) can be closed",
+    );
+  }
+  if (datum.creator.kind !== "key") {
+    throw new Error("pool creator is not a key credential — cannot close");
+  }
+
+  const { params, costModels, changeAddress, col, fundingUtxos } =
+    await spendContext(wallet);
+  const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
+  if (ownerPkh !== datum.creator.hash) {
+    throw new Error("only the pool creator can close this pool");
+  }
+
+  // The one-shot seed isn't on-chain in the datum — recover it from the pool's mint-tx
+  // inputs (the input that reproduces this pool's policy id), then build the burn policy.
+  const candidates = await fetchPoolMintInputs(pool.id);
+  const seed = recoverSeed(pool.id, candidates);
+  const built = buildClosePool({ nftUnit: pool.id, seed, creatorPkh: ownerPkh });
+
+  const txBuilder = new MeshTxBuilder({ params, evaluator });
+  // Inject the network's real cost models so the script-integrity hash matches the node.
+  txBuilder.setCostModels(costModels);
+  const unsignedTx = await txBuilder
+    // Spend the pool UTXO with ClosePool via the pool reference script. No pool output —
+    // the pool is destroyed; its ~2 ADA (+ the freed NFT/LP burned below) → creator change.
+    .spendingPlutusScriptV3()
+    .txIn(
+      poolUtxo.input.txHash,
+      poolUtxo.input.outputIndex,
+      poolUtxo.output.amount,
+      poolUtxo.output.address,
+      0, // scriptSize: the pool UTXO carries no attached reference script.
+    )
+    .spendingTxInReference(
+      POOL_REF.txHash,
+      POOL_REF.outputIndex,
+      POOL_SCRIPT_SIZE.toString(),
+      POOL_SCRIPT_HASH,
+    )
+    .spendingReferenceTxInInlineDatumPresent()
+    .spendingReferenceTxInRedeemerValue(closePoolRedeemer)
+    // Burn the NFT + full LP supply under the seed-applied policy (Close redeemer). Both
+    // burns share one policy + redeemer (MeshJS auto-groups same-policy mints).
+    .mintPlutusScriptV3()
+    .mint("-1", built.policyId, NFT_NAME_HEX)
+    .mintingScript(built.script)
+    .mintRedeemerValue(mintCloseRedeemer)
+    .mintPlutusScriptV3()
+    .mint((-TOTAL_LP).toString(), built.policyId, LP_NAME_HEX)
+    .mintingScript(built.script)
+    .mintRedeemerValue(mintCloseRedeemer)
+    .txInCollateral(
+      col.input.txHash,
+      col.input.outputIndex,
+      col.output.amount,
+      col.output.address,
+    )
+    .requiredSignerHash(ownerPkh)
+    .changeAddress(changeAddress)
+    .selectUtxosFrom(fundingUtxos)
+    .complete();
+
+  const signedTx = await wallet.signTx(unsignedTx);
+  const txHash = await wallet.submitTx(signedTx);
+  return { txHash };
 }
 
 export interface WithdrawLiquidityArgs {

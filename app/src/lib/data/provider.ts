@@ -87,4 +87,14 @@ export interface DataProvider {
    * null if no live UTXO at the pool address holds that NFT (1) with a decodable datum.
    */
   resolvePoolUtxo(poolNftUnit: string): Promise<UTxO | null>;
+
+  /**
+   * The input `OutputReference`s of the transaction that minted a pool (by its NFT
+   * unit). The pool's one-shot `pool_mint(seed)` seed is one of these inputs; the
+   * client recovers it by testing which input reproduces the pool's policy id (pure
+   * `applyParamsToScript`/`resolveScriptHash`, off the seam). Needed to close a
+   * never-seeded pool (burn NFT + LP under the seed-applied policy). Served via
+   * `/api/pool/mint-inputs`. Empty array if the mint tx can't be resolved.
+   */
+  poolMintInputs(poolNftUnit: string): Promise<{ txHash: string; index: number }[]>;
 }

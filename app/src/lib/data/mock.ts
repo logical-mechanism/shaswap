@@ -142,4 +142,8 @@ export class MockProvider implements DataProvider {
   async resolvePoolUtxo(): Promise<UTxO | null> {
     throw new Error("MockProvider cannot resolve UTXOs");
   }
+
+  async poolMintInputs(): Promise<{ txHash: string; index: number }[]> {
+    throw new Error("MockProvider cannot access transaction inputs");
+  }
 }

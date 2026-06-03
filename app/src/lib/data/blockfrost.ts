@@ -376,6 +376,27 @@ export class BlockfrostDataProvider implements DataProvider {
     }
     return null;
   }
+
+  async poolMintInputs(
+    poolNftUnit: string,
+  ): Promise<{ txHash: string; index: number }[]> {
+    // The pool NFT was minted in the pool's creation tx, whose inputs include the
+    // one-shot seed. `assets/{unit}.initial_mint_tx_hash` → that tx; `txs/{hash}/utxos`
+    // → its `inputs[]` (kept even after they're spent). The client tests each input
+    // against the pool's policy id to recover the seed (pure — see closePool.ts).
+    const asset = (await retry(() =>
+      this.bf.get(`assets/${poolNftUnit}`),
+    )) as { initial_mint_tx_hash?: string };
+    const mintTx = asset?.initial_mint_tx_hash;
+    if (!mintTx) return [];
+    const tx = (await retry(() => this.bf.get(`txs/${mintTx}/utxos`))) as {
+      inputs?: { tx_hash: string; output_index: number }[];
+    };
+    return (tx?.inputs ?? []).map((i) => ({
+      txHash: i.tx_hash,
+      index: i.output_index,
+    }));
+  }
 }
 
 /** Map an order UTXO + datum (+ its pool, if on-chain) to a UI `WalletPosition`. */

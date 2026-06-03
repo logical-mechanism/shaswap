@@ -78,6 +78,31 @@ High-signal pointers only:
 
 ## Log
 
+- **2026-06-02** — **App close-empty-pool — reclaim a never-seeded pool (branch `app/create-pool`).**
+  Follow-up to create-pool: a creator can now **tear down an EMPTY pool** (no liquidity, `circ==0`)
+  from the app and reclaim the ~2 ADA seed. Seeded pools stay **immortal** (`spend.pool_close`
+  requires `held==total_lp`; after the first deposit the locked `min_liq` is unreachable). The
+  close tx spends the pool UTXO via the pool ref script with **`ClosePool`** (Constr 2 []), the
+  **creator signs** (`requiredSignerHash`), and burns **`{NFT:-1, LP:-total_lp}`** under the pool's
+  one-shot policy with **`Close`** (mint Constr 1 []); **no pool output** — the seed returns as
+  change. App-only on the contract side (`mint.close`/`spend.pool_close` already existed + tested).
+  **New technique — SEED RECOVERY:** the one-shot seed isn't in the datum, so to rebuild the
+  seed-applied burn policy the app recovers it from chain — new data-seam read `poolMintInputs(nft)`
+  (`assets/{nft}.initial_mint_tx_hash` → `txs/{hash}/utxos.inputs`, via the existing raw `bf.get`)
+  + a pure client match: the seed is the input whose
+  `resolveScriptHash(applyParamsToScript(...))` == the pool's policy id (`closePool.ts` `recoverSeed`,
+  throws if unrecoverable — never guesses). **Layers:** `data/{provider,blockfrost,mock}.ts`
+  (`poolMintInputs`) + route `api/pool/mint-inputs`; pure `chain/closePool.ts` (`recoverSeed` +
+  `buildClosePool`); `tx.ts` `closePool` (preconditions: pool LP `== total_lp`, creator is the
+  connected VK wallet); a **creator-gated "Close empty pool"** two-step-confirm danger section in
+  `LiquidityPanel` (shown only when `firstDeposit && isCreator`). **Ground truth:**
+  `happy_path/09-close-pool.sh` (self-contained — mints a bare empty pool with its own seed, waits
+  for confirmation, then closes it; doesn't disturb the 04 pool used by 07/08). **52 app tests,
+  build + lint green** (Node 22; `closePool.test.ts` cross-checks seed recovery against the same
+  `(77×32)#3 → 68cd7477…c408d` ground truth, + `closePoolRedeemer` = `d87b80`); `aiken check`
+  untouched/green. **Owed (maintainer):** run `09-close-pool.sh` on preprod (it consolidates solver
+  UTXOs — re-split after if 04/07/08 need ≥2–3 pure-ADA UTXOs); live in-browser close of an empty pool.
+
 - **2026-06-02** — **App create-pool — mint a new pool (branch `app/create-pool`).**
   Added the last missing app write path: `/pools` could read + LP, but couldn't **create** a
   pool. Pool creation is **permissionless** (a hyperstructure requirement — anyone may create

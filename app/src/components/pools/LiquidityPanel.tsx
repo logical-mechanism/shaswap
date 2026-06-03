@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { deserializeAddress } from "@meshsdk/core";
 import { useAssets, useNetwork, useWallet } from "@meshsdk/react";
 import type { Pool } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
@@ -14,6 +16,7 @@ import {
   type PoolView,
 } from "@/lib/chain/lp";
 import {
+  closePool,
   depositLiquidity,
   withdrawLiquidity,
 } from "@/lib/client/tx";
@@ -56,6 +59,33 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   const wrongNetwork =
     connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
   const networkReady = connected && networkId === APP_CONFIG.networkId;
+
+  // The connected wallet's payment key hash — gates the creator-only "Close empty pool"
+  // affordance against the pool's `creator`. A never-seeded pool can be torn down by its
+  // creator to reclaim the ~2 ₳ seed; once seeded it's immortal (BLUEPRINT §5.1 path c).
+  // Resolved only in the async callback (never synchronously in the effect body — the
+  // project's effect convention); `connected` gates `isCreator` so a stale value from a
+  // previous wallet can't leak through after disconnect.
+  const [walletPkh, setWalletPkh] = useState<string | null>(null);
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    wallet
+      .getChangeAddress()
+      .then((addr) => {
+        if (!cancelled) setWalletPkh(deserializeAddress(addr).pubKeyHash);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, wallet]);
+
+  const isCreator =
+    connected &&
+    !!walletPkh &&
+    view?.datum.creator.kind === "key" &&
+    view.datum.creator.hash === walletPkh;
 
   // The wallet's LP balance for this pool, and its value in reserves.
   const lpBalance = useMemo(() => {
@@ -130,6 +160,17 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               networkReady={networkReady}
               wrongNetwork={!!wrongNetwork}
               connected={connected}
+              onDone={reload}
+            />
+          )}
+
+          {stats.firstDeposit && isCreator && (
+            <CloseEmptyPool
+              pool={pool}
+              wallet={wallet}
+              connected={connected}
+              networkReady={networkReady}
+              wrongNetwork={!!wrongNetwork}
               onDone={reload}
             />
           )}
@@ -442,6 +483,116 @@ function RemoveForm({
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Liquidity removed" />
+    </div>
+  );
+}
+
+// ---- Close empty pool (creator-only, never-seeded) ----
+
+function CloseEmptyPool({
+  pool,
+  wallet,
+  connected,
+  networkReady,
+  wrongNetwork,
+  onDone,
+}: {
+  pool: Pool;
+  wallet: ReturnType<typeof useWallet>["wallet"];
+  connected: boolean;
+  networkReady: boolean;
+  wrongNetwork: boolean;
+  onDone: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [state, setState] = useState<TxState>({ kind: "idle" });
+  const submitting = useRef(false);
+
+  async function submit() {
+    if (!networkReady || submitting.current) return;
+    submitting.current = true;
+    setState({ kind: "busy" });
+    try {
+      const res = await closePool(wallet, pool);
+      setState({ kind: "success", hash: res.txHash });
+      onDone();
+    } catch (e) {
+      setState({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-red-500/15 bg-red-500/[0.03] p-3">
+      <div className="px-0.5 text-xs text-muted">
+        You created this empty pool. Closing permanently burns it and returns the
+        ~2 ₳ seed to your wallet. (Once it has liquidity it can never be closed.)
+      </div>
+
+      {state.kind === "success" ? (
+        <div className="mt-2 text-xs">
+          <div className="font-medium text-accent">Pool closed ✓</div>
+          <p className="mt-0.5 text-muted">
+            The ~2 ₳ seed is on its way back to your wallet.
+          </p>
+          <div className="mt-1 flex items-center justify-between gap-3">
+            <a
+              href={explorerTxUrl(state.hash)}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
+            >
+              {truncate(state.hash, 10, 8)} ↗
+            </a>
+            <Link href="/pools" className="text-accent hover:underline">
+              ← Back to pools
+            </Link>
+          </div>
+        </div>
+      ) : !confirming ? (
+        <button
+          type="button"
+          onClick={() => {
+            setConfirming(true);
+            if (state.kind !== "idle") setState({ kind: "idle" });
+          }}
+          className="mt-2 w-full rounded-xl border border-red-500/30 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:bg-red-500/10"
+        >
+          Close empty pool
+        </button>
+      ) : (
+        <div className="mt-2 flex gap-2">
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            disabled={state.kind === "busy"}
+            className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-medium text-muted transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!networkReady || state.kind === "busy"}
+            onClick={submit}
+            className="flex-1 rounded-xl bg-red-500/80 py-2.5 text-sm font-semibold text-black transition-opacity hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-muted"
+          >
+            {!connected
+              ? "Connect wallet"
+              : wrongNetwork
+                ? "Wrong network"
+                : state.kind === "busy"
+                  ? "Closing…"
+                  : "Confirm — burn pool"}
+          </button>
+        </div>
+      )}
+
+      {state.kind === "error" && (
+        <div className="mt-2 break-words rounded-xl border border-red-500/20 bg-red-500/10 p-2.5 text-xs text-red-300">
+          {state.message}
+        </div>
+      )}
     </div>
   );
 }
