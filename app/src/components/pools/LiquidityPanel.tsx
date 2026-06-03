@@ -54,6 +54,9 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
     collateralReady,
     needsCollateral,
     recheckCollateral,
+    // Shared connect → wrong-network → checking → collateral prefix; the forms append
+    // their own flow-specific reasons after it (DRY with the swap/orders gating).
+    baseReason,
   } = useWriteGate({ requireCollateral: true });
   const { view, stats, loading, error, reload } = usePoolUtxo(pool.id);
 
@@ -211,8 +214,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               slippage={slippage}
               wallet={wallet}
               networkReady={networkReady}
-              wrongNetwork={!!wrongNetwork}
-              connected={connected}
+              baseReason={baseReason}
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
               onRecheckCollateral={recheckCollateral}
@@ -227,8 +229,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               lpBalance={lpBalance}
               wallet={wallet}
               networkReady={networkReady}
-              wrongNetwork={!!wrongNetwork}
-              connected={connected}
+              baseReason={baseReason}
               collateralReady={collateralReady}
               needsCollateral={needsCollateral}
               onRecheckCollateral={recheckCollateral}
@@ -270,8 +271,7 @@ function AddForm({
   slippage,
   wallet,
   networkReady,
-  wrongNetwork,
-  connected,
+  baseReason,
   collateralReady,
   needsCollateral,
   onRecheckCollateral,
@@ -283,8 +283,7 @@ function AddForm({
   slippage: number;
   wallet: ReturnType<typeof useWallet>["wallet"];
   networkReady: boolean;
-  wrongNetwork: boolean;
-  connected: boolean;
+  baseReason: string | null;
   collateralReady: boolean;
   needsCollateral: boolean;
   onRecheckCollateral: () => void;
@@ -365,23 +364,17 @@ function AddForm({
     }
   }
 
-  const label = !connected
-    ? "Connect wallet"
-    : wrongNetwork
-      ? "Wrong network"
-      : !networkReady
-        ? "Checking network…"
-        : needsCollateral
-          ? "Set a collateral UTXO"
-          : deltaA <= 0n || (first && deltaB <= 0n)
-            ? "Enter an amount"
-            : preview?.error
-              ? "Can’t add that amount"
-              : state.kind === "busy"
-                ? "Depositing…"
-                : first
-                  ? "Seed pool"
-                  : "Add liquidity";
+  const label =
+    baseReason ??
+    (deltaA <= 0n || (first && deltaB <= 0n)
+      ? "Enter an amount"
+      : preview?.error
+        ? "Can’t add that amount"
+        : state.kind === "busy"
+          ? "Depositing…"
+          : first
+            ? "Seed pool"
+            : "Add liquidity");
 
   return (
     <div className="mt-3">
@@ -448,6 +441,14 @@ function AddForm({
         </Row>
       </div>
 
+      {/* Announce the deposit preview to screen readers (the rows update silently as the
+          paired Δb / LP estimate recompute) — mirrors the swap card's sr-only live region. */}
+      <p aria-live="polite" className="sr-only">
+        {preview && preview.error === null && preview.lpToUser > 0n
+          ? `LP you receive ≈ ${preview.lpToUser.toLocaleString()}; at least ${minLpOut.toLocaleString()} LP after slippage.`
+          : ""}
+      </p>
+
       {deltaA > 0n && (!first || deltaB > 0n) && preview?.error && (
         <div className="k-note k-note-warn mt-3 text-xs">
           {depositErrorMessage(preview.error)}
@@ -474,8 +475,7 @@ function RemoveForm({
   lpBalance,
   wallet,
   networkReady,
-  wrongNetwork,
-  connected,
+  baseReason,
   collateralReady,
   needsCollateral,
   onRecheckCollateral,
@@ -488,8 +488,7 @@ function RemoveForm({
   lpBalance: bigint;
   wallet: ReturnType<typeof useWallet>["wallet"];
   networkReady: boolean;
-  wrongNetwork: boolean;
-  connected: boolean;
+  baseReason: string | null;
   collateralReady: boolean;
   needsCollateral: boolean;
   onRecheckCollateral: () => void;
@@ -558,23 +557,17 @@ function RemoveForm({
     }
   }
 
-  const label = !connected
-    ? "Connect wallet"
-    : wrongNetwork
-      ? "Wrong network"
-      : !networkReady
-        ? "Checking network…"
-        : needsCollateral
-          ? "Set a collateral UTXO"
-          : lpToBurn <= 0n
-            ? "Enter LP amount"
-            : overBalance
-              ? "More than your LP"
-              : preview?.error
-                ? "Can't withdraw that amount"
-                : state.kind === "busy"
-                  ? "Withdrawing…"
-                  : "Remove liquidity";
+  const label =
+    baseReason ??
+    (lpToBurn <= 0n
+      ? "Enter LP amount"
+      : overBalance
+        ? "More than your LP"
+        : preview?.error
+          ? "Can't withdraw that amount"
+          : state.kind === "busy"
+            ? "Withdrawing…"
+            : "Remove liquidity");
 
   return (
     <div className="mt-3">
@@ -630,6 +623,14 @@ function RemoveForm({
           <span className="tabular-nums">{slippage.toFixed(1)}%</span>
         </Row>
       </div>
+
+      {/* Announce the withdraw preview to screen readers — mirrors the swap card's
+          sr-only live region (the "you receive" / "at least" rows update silently). */}
+      <p aria-live="polite" className="sr-only">
+        {preview && preview.error === null
+          ? `You receive ≈ ${formatUnits(preview.recvA.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} plus ${formatUnits(preview.recvB.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker}; at least ${formatUnits(minAOut.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} and ${formatUnits(minBOut.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker} after slippage.`
+          : ""}
+      </p>
 
       {lpToBurn > 0n && !overBalance && preview?.error && (
         <div className="k-note k-note-warn mt-3 text-xs">

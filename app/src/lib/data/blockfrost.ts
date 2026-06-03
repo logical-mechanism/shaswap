@@ -1,6 +1,5 @@
 import {
   type Action,
-  type Asset,
   BlockfrostProvider,
   deserializeAddress,
   type Protocol,
@@ -18,12 +17,12 @@ import {
   lpUnitForPool,
   ORDER_ADDR,
   POOL_ADDR,
-  POOL_MIN_ADA,
   TOTAL_LP,
 } from "@/lib/chain/deployment";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
 import { feeToBps, isRetriable } from "./providerUtil";
+import { qtyOfUnit, reserveOf, toPosition } from "./providerMap";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
 import { toBigInt as toBig } from "../bigint";
 import { errText, log } from "../log";
@@ -77,19 +76,6 @@ type AssetMeta = {
 
 /** How long a decoded-pool snapshot is reused before re-scanning the pool address. */
 const POOLS_TTL_MS = 6_000;
-
-/** Quantity of `unit` in a Mesh value, as bigint. */
-function qtyOfUnit(amount: Asset[], unit: string): bigint {
-  const found = amount.find((a) => a.unit === unit);
-  return found ? BigInt(found.quantity) : 0n;
-}
-
-/** Reserve of `asset` in a pool value: its quantity, minus min-ADA if it is ADA. */
-function reserveOf(amount: Asset[], asset: AssetId): bigint {
-  const q = qtyOfUnit(amount, assetUnit(asset));
-  const r = isAda(asset) ? q - POOL_MIN_ADA : q;
-  return r < 0n ? 0n : r;
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -376,30 +362,4 @@ export class BlockfrostDataProvider implements DataProvider {
       index: i.output_index,
     }));
   }
-}
-
-/** Map an order UTXO + datum (+ its pool, if on-chain) to a UI `WalletPosition`. */
-function toPosition(u: UTxO, d: OrderDatum, pool: Pool | undefined): WalletPosition {
-  // Bought/sold assets follow from sell_a + the pool pair (the datum stores only the
-  // pool NFT). If the pool isn't on-chain (orphan order), show placeholders — the
-  // order is still owner-reclaimable, which is what matters here.
-  const unknown: TokenInfo = {
-    unit: assetUnit(d.poolNft),
-    ticker: "?",
-    name: "unknown pool",
-    decimals: 0,
-  };
-  const a = pool?.tokenA ?? unknown;
-  const b = pool?.tokenB ?? unknown;
-  const tokenIn = d.sellA ? a : b;
-  const tokenOut = d.sellA ? b : a;
-  return {
-    ref: `${u.input.txHash}#${u.input.outputIndex}`,
-    tokenIn,
-    tokenOut,
-    amountIn: d.sellAmount.toString(),
-    minOut: d.limit.toString(),
-    status: "open",
-    partial: d.partial,
-  };
 }

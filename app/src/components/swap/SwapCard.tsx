@@ -10,7 +10,7 @@ import {
 } from "@meshsdk/react";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
-import { ORDER_MIN_ADA } from "@/lib/chain/deployment";
+import { orderFunding } from "@/lib/chain/orderFunding";
 import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
@@ -154,39 +154,30 @@ export function SwapCard() {
   // a positive tip (mirrors the buildOrder guard) rather than post an un-settleable order.
   const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") > 0n;
 
-  // Wallet balance of the FROM token (ADA via useLovelace; other tokens via useAssets),
-  // and how much of it is actually spendable. For ADA we hold back a reserve for the
-  // network fee + the order's min-ADA + the (separate) tip, so MAX can't build an
-  // un-submittable tx; for other tokens the whole balance is spendable. Plain render
-  // computation (the React Compiler memoizes).
+  // Wallet balance of the FROM token (ADA via useLovelace; other tokens via useAssets).
+  // The spendable amount + the funding blockers (over-balance / over-spendable / not-enough
+  // -ADA) are derived by the pure `orderFunding` helper, which handles ADA's three roles
+  // (traded side, min-ADA, tip) and the partial 2× min-ADA. Plain render computation (the
+  // React Compiler memoizes); the helper is connectivity-agnostic, so AND each with `connected`.
   const fromBalance =
     fromToken?.unit === "lovelace"
       ? toBig(lovelace ?? "0")
       : toBig(assets?.find((a) => a.unit === fromToken?.unit)?.quantity ?? "0");
   const fromIsAda = fromToken?.unit === "lovelace";
-  // ADA the order itself locks: its min-ADA — DOUBLED when partial fills are allowed, since
-  // a partial leaves a second reclaimable output (mirrors order.ts: minAda = (partial?2:1) ×
-  // ORDER_MIN_ADA) — plus headroom for the network fee. The solver tip is separate ADA on top.
-  const orderMinAda = (partial ? 2n : 1n) * ORDER_MIN_ADA;
-  const adaNeeded = orderMinAda + FEE_BUFFER;
-  const adaReserve = adaNeeded + (fromIsAda ? BigInt(tipLovelace || "0") : 0n);
-  const spendable = fromIsAda
-    ? fromBalance > adaReserve
-      ? fromBalance - adaReserve
-      : 0n
-    : fromBalance;
   const amountBig = hasAmount ? BigInt(baseAmountIn) : 0n;
-  const overBalance = connected && hasAmount && amountBig > fromBalance;
-  const overSpendable =
-    connected && hasAmount && !overBalance && amountBig > spendable;
+  const funding = orderFunding({
+    fromIsAda,
+    fromBalance,
+    lovelace: toBig(lovelace ?? "0"),
+    partial,
+    tip: BigInt(tipLovelace || "0"),
+    amount: amountBig,
+  });
+  const spendable = funding.spendable;
+  const overBalance = connected && funding.overBalance;
+  const overSpendable = connected && funding.overSpendable;
+  const insufficientAda = connected && funding.insufficientAda;
   const balanceOk = !overBalance && !overSpendable;
-
-  // A non-ADA sell still funds the order's min-ADA + tip + network fee from the wallet's
-  // lovelace. Verify the wallet holds that ADA up front (the ADA-sell path already
-  // reserves it inside `spendable`) instead of failing opaquely at coin selection.
-  const adaForOrder = adaNeeded + BigInt(tipLovelace || "0");
-  const insufficientAda =
-    connected && !fromIsAda && hasAmount && toBig(lovelace ?? "0") < adaForOrder;
 
   // The quote read failed (provider blip) and we have no usable fresh quote to post.
   const quoteFailed = !!quoteError && hasAmount && !!pool && !quoteFresh;
@@ -366,8 +357,7 @@ export function SwapCard() {
         exclude={fromToken?.unit}
         amount={toAmount}
         editable={false}
-        loading={quoteLoading}
-        placeholder={quoteLoading ? "…" : "0"}
+        skeleton={quoteLoading}
         onSelect={(t) => {
           setToUnit(t.unit);
           if (post.kind !== "idle") setPost({ kind: "idle" });
@@ -455,10 +445,6 @@ export function SwapCard() {
     </div>
   );
 }
-
-// Headroom for the network fee, on top of the order's min-ADA (which the component sizes
-// from the partial flag) and the separate tip. ~1 ₳.
-const FEE_BUFFER = 1_000_000n;
 
 const EXPIRY_MS: Record<string, number> = {
   "1h": 3_600_000,
@@ -616,6 +602,7 @@ function TokenField({
   amount,
   editable,
   loading,
+  skeleton,
   placeholder = "0",
   onAmount,
   onSelect,
@@ -628,6 +615,8 @@ function TokenField({
   amount: string;
   editable: boolean;
   loading?: boolean;
+  /** Show an animate-pulse skeleton in place of the value (the To field, mid-quote). */
+  skeleton?: boolean;
   placeholder?: string;
   onAmount?: (v: string) => void;
   onSelect: (t: TokenInfo) => void;
@@ -642,19 +631,31 @@ function TokenField({
     <div className="k-field p-3.5">
       <div className="mb-2 px-1 text-xs font-semibold text-muted">{label}</div>
       <div className="flex items-center gap-3">
-        <input
-          inputMode="decimal"
-          value={amount}
-          readOnly={!editable}
-          placeholder={placeholder}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "" || /^\d*\.?\d*$/.test(v)) onAmount?.(v);
-          }}
-          className={`k-input text-3xl font-extrabold tabular-nums ${
-            editable ? "text-ink" : "text-muted"
-          }`}
-        />
+        {skeleton ? (
+          // Match LiquidityPanel's Skeleton (animate-pulse / bordered sunk well) so the
+          // estimated-output value pulses instead of sitting empty mid-quote.
+          <div className="flex-1">
+            <div
+              className="h-9 w-28 max-w-full animate-pulse rounded-xl border border-border bg-surface-sunk"
+              aria-hidden
+            />
+            <span className="sr-only">Fetching estimate…</span>
+          </div>
+        ) : (
+          <input
+            inputMode="decimal"
+            value={amount}
+            readOnly={!editable}
+            placeholder={placeholder}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "" || /^\d*\.?\d*$/.test(v)) onAmount?.(v);
+            }}
+            className={`k-input text-3xl font-extrabold tabular-nums ${
+              editable ? "text-ink" : "text-muted"
+            }`}
+          />
+        )}
         <TokenSelect
           token={token}
           tokens={tokens}
