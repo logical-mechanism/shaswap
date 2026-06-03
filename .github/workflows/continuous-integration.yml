@@ -42,4 +42,5 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm test
+      - run: npm run test:components
       - run: npm run build
