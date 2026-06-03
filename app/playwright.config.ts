@@ -17,10 +17,17 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  // A single `next start` serves all workers; cap concurrency so a cold-load stampede on
+  // the heavy MeshJS pages doesn't starve the assertion timeout.
+  workers: process.env.CI ? 2 : 4,
+  // First load of the swap / pool pages pulls in the MeshJS bundle — give assertions
+  // room beyond the 5s default so a slow cold render isn't a flaky failure.
+  expect: { timeout: 15_000 },
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://localhost:3000",
     trace: "on-first-retry",
+    navigationTimeout: 30_000,
   },
   projects: [
     {

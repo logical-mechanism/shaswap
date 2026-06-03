@@ -59,10 +59,12 @@ export default function OrdersPage() {
   // collateral); shared via useWriteGate.
   const {
     networkReady,
-    wrongNetwork,
     collateralReady,
     needsCollateral,
     recheckCollateral,
+    // Shared connect → wrong-network → checking → collateral prefix (DRY with the swap
+    // card + LP forms); the reclaim button shows it, else "Reclaim".
+    baseReason,
   } = useWriteGate({ requireCollateral: true });
   // Query by the wallet's CHANGE address — the payment key hash orders are posted
   // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
@@ -260,9 +262,8 @@ export default function OrdersPage() {
                   ? reclaim.message
                   : undefined
               }
-              wrongNetwork={!!wrongNetwork}
+              baseReason={baseReason}
               networkReady={networkReady}
-              needsCollateral={needsCollateral}
               collateralReady={collateralReady}
               onReclaim={() => onReclaim(row)}
             />
@@ -278,9 +279,8 @@ function OrderRowItem({
   busy,
   anyBusy,
   error,
-  wrongNetwork,
+  baseReason,
   networkReady,
-  needsCollateral,
   collateralReady,
   onReclaim,
 }: {
@@ -288,21 +288,15 @@ function OrderRowItem({
   busy: boolean;
   anyBusy: boolean;
   error?: string;
-  wrongNetwork: boolean;
+  baseReason: string | null;
   networkReady: boolean;
-  needsCollateral: boolean;
   collateralReady: boolean;
   onReclaim: () => void;
 }) {
-  // Reclaim is a script spend: gate it like every other write flow and say WHY on the
-  // button itself, rather than letting it fail at signing.
-  const reclaimReason = wrongNetwork
-    ? "Wrong network"
-    : !networkReady
-      ? "Checking network…"
-      : needsCollateral
-        ? "Needs collateral"
-        : null;
+  // Reclaim is a script spend: gate it like every other write flow (shared baseReason)
+  // and say WHY on the button itself, rather than letting it fail at signing. The row
+  // only renders while connected, so baseReason's "Connect wallet" branch never shows.
+  const reclaimReason = baseReason;
   // Reclaims are serialized (one global in-flight latch), so disable EVERY row's button
   // while any reclaim is running — otherwise other rows look clickable but silently no-op.
   const reclaimDisabled = busy || anyBusy || !networkReady || !collateralReady;

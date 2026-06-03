@@ -32,6 +32,11 @@ export function useQuote(
 
   useEffect(() => {
     const ac = new AbortController();
+    // Optimistically drop a stale error the instant inputs change, so editing after a
+    // failed quote doesn't keep flashing "Quote unavailable" through the debounce gap.
+    // (Deferred via a 0ms timer — no synchronous setState in the effect body, per the
+    // project's effect convention; the debounced fetch below still waits its full delay.)
+    const clearErr = setTimeout(() => setError(null), 0);
     const t = setTimeout(
       () => {
         if (!ready || !inUnit || !outUnit) {
@@ -57,6 +62,7 @@ export function useQuote(
     );
 
     return () => {
+      clearTimeout(clearErr);
       clearTimeout(t);
       ac.abort();
     };

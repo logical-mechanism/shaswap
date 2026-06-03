@@ -79,6 +79,20 @@ describe("useQuote", () => {
     );
   });
 
+  it("clears a prior error optimistically when inputs change", async () => {
+    h.fetchQuote = vi.fn().mockRejectedValueOnce("boom"); // first quote fails
+    const { rerender, result } = renderHook(
+      ({ amount }) => useQuote(ADA.unit, TEST.unit, amount),
+      { initialProps: { amount: "100" } },
+    );
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    // The next fetch hangs, isolating the optimistic clear: changing the amount must
+    // drop the stale error immediately rather than wait for the (pending) refetch.
+    h.fetchQuote.mockReturnValue(new Promise(() => {}));
+    rerender({ amount: "200" });
+    await waitFor(() => expect(result.current.error).toBeNull());
+  });
+
   it("reload() re-issues the request", async () => {
     const { result } = renderHook(() => useQuote(ADA.unit, TEST.unit, "1000000"));
     await waitFor(() => expect(result.current.quote).not.toBeNull());

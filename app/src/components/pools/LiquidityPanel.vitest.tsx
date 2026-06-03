@@ -58,6 +58,7 @@ vi.mock("@/hooks/useWriteGate", () => ({
     collateralReady: true,
     needsCollateral: false,
     recheckCollateral: () => {},
+    baseReason: null, // all-clear: forms fall through to their flow-specific labels
   }),
 }));
 vi.mock("@/lib/client/tx", () => ({
@@ -97,6 +98,8 @@ describe("LiquidityPanel — add", () => {
     expect(
       screen.getByText(`LP you receive ≈ ${lp}; at least ${minLp} LP after slippage.`),
     ).toBeInTheDocument();
+    // an all-clear gate (baseReason null) falls through to the flow-specific label
+    expect(screen.getByRole("button", { name: "Add liquidity" })).toBeEnabled();
   });
 });
 
