@@ -1,54 +1,511 @@
 @import "tailwindcss";
 
 /*
- * ShaSwap theme — dark, modern, restrained. One accent color (teal) used for
- * the gradient mark, primary button, and active states. Custom tokens below are
- * exposed to Tailwind v4 as utilities (bg-surface, text-muted, bg-accent, …).
+ * ShaSwap theme — "Pip's candy shop": a kawaii DeFi look. Soft pastel field,
+ * cream/white cards, bubblegum-rose → lavender accents, chunky pill buttons,
+ * rounded-everything, soft drop shadows, gentle outlines and a sprinkle of
+ * sparkle. Premium cute, not childish — trust-critical numbers stay crisp and
+ * readable.
+ *
+ * Raw values live in :root; `@theme inline` exposes them to Tailwind v4 as
+ * utilities (bg-surface, text-muted, bg-pink, text-accent, animate-float, …).
+ * A small kit of component classes (.k-card, .k-btn, .k-note, .k-chip, …) keeps
+ * every surface visually identical — reuse them instead of re-deriving shells.
  */
 
 :root {
-  --background: #0a0b0f;
-  --foreground: #e9edf2;
-  --surface: #14161d;
-  --muted: #8b93a7;
-  --accent: #5eead4;
-  --accent-2: #34d399;
-  --border: rgba(255, 255, 255, 0.08);
+  /* Surfaces & ink — light, soft, high-contrast where it matters */
+  --background: #fdf2fb; /* page base; the real bg is a pastel gradient (below) */
+  --foreground: #4a3a5a; /* primary ink — soft plum, ~8:1 on white */
+  --ink: #362946; /* strong ink for headings */
+  --surface: #ffffff; /* cards */
+  --surface-sunk: #f8effb; /* inner fields / wells */
+  --muted: #7a6796; /* secondary text — kept dark enough to read (~4.6:1) */
+  --border: #efe0f4; /* soft lilac outline */
+
+  /* What soft tints mix TOWARD — white in light mode, a deep plum in dark mode —
+     so .k-note / .k-chip / hover tints stay legible on either field. */
+  --tint-base: #ffffff;
+  --disabled-bg: #ece4f3; /* disabled pill fill */
+  --disabled-bg-soft: #f4eef8;
+
+  /* Candy palette — fills, gradients, blobs, badge tints (low opacity) */
+  --pink: #ff8fbf;
+  --lavender: #b79cf2;
+  --mint: #7fe0c0;
+  --sky: #8ccdf5;
+  --peach: #ffc49b;
+  --sun: #ffd97a;
+
+  /* Brand accent — readable as text AND rich as a gradient fill */
+  --accent: #e8458f; /* bubblegum rose */
+  --accent-2: #a98bf0; /* lavender */
+
+  /* Semantic status — text colors readable on their own soft tints */
+  --success: #109a6f;
+  --warning: #b9750c;
+  --danger: #d62f6d;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-ink: var(--ink);
   --color-surface: var(--surface);
+  --color-surface-sunk: var(--surface-sunk);
   --color-muted: var(--muted);
+  --color-border: var(--border);
+
+  --color-pink: var(--pink);
+  --color-lavender: var(--lavender);
+  --color-mint: var(--mint);
+  --color-sky: var(--sky);
+  --color-peach: var(--peach);
+  --color-sun: var(--sun);
+
   --color-accent: var(--accent);
   --color-accent-2: var(--accent-2);
 
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
 
-  --shadow-glow: 0 0 24px -6px rgba(94, 234, 212, 0.55);
+  --font-display: var(--font-baloo), "Baloo 2", system-ui, sans-serif;
+  --font-sans: var(--font-nunito), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --shadow-glow: 0 16px 40px -14px rgba(232, 69, 143, 0.45);
+
+  /* Decorative motion — gentle, opt-out under prefers-reduced-motion (below) */
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-float-slow: float 11s ease-in-out infinite;
+  --animate-wiggle: wiggle 3.5s ease-in-out infinite;
+  --animate-twinkle: twinkle 2.4s ease-in-out infinite;
+  --animate-pop: pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-bob: bob 3s ease-in-out infinite;
+  --animate-toast-in: toast-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes wiggle {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-in {
+  0% {
+    opacity: 0;
+    transform: translateX(24px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* One-shot celebratory burst — each piece flies out/up and fades. Direction comes
+   from per-piece --tx/--ty/--rot custom props. Base opacity 0 so reduced-motion
+   (animation disabled) simply shows nothing. */
+@keyframes confetti-burst {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.3) rotate(0deg);
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--tx), var(--ty)) scale(1) rotate(var(--rot));
+  }
+}
+.confetti-piece {
+  opacity: 0;
+  animation: confetti-burst 0.95s ease-out forwards;
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
-  /* Subtle radial accent glows on a dark field — not flashy. */
+  font-family: var(--font-sans);
+  /* Soft pastel field — overlapping radial washes of lavender, pink, mint, sky
+     and peach on cream. Fixed so it doesn't scroll away. */
   background-image:
-    radial-gradient(
-      60rem 40rem at 50% -10%,
-      rgba(52, 211, 153, 0.08),
-      transparent 60%
-    ),
-    radial-gradient(
-      40rem 30rem at 90% 10%,
-      rgba(94, 234, 212, 0.06),
-      transparent 55%
-    );
+    radial-gradient(48rem 34rem at 8% -8%, rgba(183, 156, 242, 0.4), transparent 60%),
+    radial-gradient(42rem 30rem at 98% 4%, rgba(255, 143, 191, 0.34), transparent 58%),
+    radial-gradient(40rem 32rem at 92% 92%, rgba(140, 205, 245, 0.3), transparent 60%),
+    radial-gradient(44rem 34rem at 4% 102%, rgba(127, 224, 192, 0.3), transparent 60%),
+    linear-gradient(180deg, #fff6fc 0%, #fdf2fb 40%, #f7f0fe 100%);
   background-attachment: fixed;
+}
+
+/* Whisper-quiet grain so the pastels read as "premium" rather than flat. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Headings wear the rounded display face. */
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+::selection {
+  background: rgba(232, 69, 143, 0.18);
+}
+
+/* ---- Cozy night: dark theme -----------------------------------------------
+   Same candy accents (brightened for contrast) on a deep-plum field. Toggled by
+   adding `.dark` to <html>; tints mix toward --tint-base (now a dark plum) so the
+   whole .k-* kit adapts without per-component changes. */
+.dark {
+  color-scheme: dark;
+
+  --background: #181027;
+  --foreground: #ece4fb;
+  --ink: #fbf7ff;
+  --surface: #241a3a;
+  --surface-sunk: #1d1431;
+  --muted: #a293c1;
+  --border: #38284f;
+
+  --tint-base: #2a1f43;
+  --disabled-bg: #2e2442;
+  --disabled-bg-soft: #261c3b;
+
+  /* Brightened accents/status so they pop and stay readable on the dark field. */
+  --accent: #ff85b8;
+  --accent-2: #bda4f8;
+  --success: #3fd9a4;
+  --warning: #f0b75a;
+  --danger: #ff6f9c;
+}
+
+.dark body {
+  /* Deep-plum field with the same pastel glows, dimmed. */
+  background-image:
+    radial-gradient(48rem 34rem at 8% -8%, rgba(183, 156, 242, 0.18), transparent 60%),
+    radial-gradient(42rem 30rem at 98% 4%, rgba(255, 143, 191, 0.16), transparent 58%),
+    radial-gradient(40rem 32rem at 92% 92%, rgba(140, 205, 245, 0.14), transparent 60%),
+    radial-gradient(44rem 34rem at 4% 102%, rgba(127, 224, 192, 0.14), transparent 60%),
+    linear-gradient(180deg, #1c1330 0%, #181027 45%, #1f1736 100%);
+}
+
+/* The ambient blobs glow brighter than we want on dark — dim them. */
+.dark .backdrop-decor {
+  opacity: 0.5;
+}
+
+/* The card's white inset sheen reads as a hard line on dark; soften it. */
+.dark .k-card {
+  box-shadow:
+    0 24px 50px -30px rgba(0, 0, 0, 0.55),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+/* ---- Component kit — reuse these so every surface matches ----------------- */
+
+@layer components {
+  /* Card shell: rounded, white, soft lilac shadow + a faint top sheen. */
+  .k-card {
+    border-radius: 1.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow:
+      0 24px 50px -28px rgba(150, 110, 190, 0.5),
+      0 2px 0 rgba(255, 255, 255, 0.9) inset;
+  }
+
+  /* Sunk inner field / well (amount inputs, sub-panels). */
+  .k-field {
+    border-radius: 1.25rem;
+    background: var(--surface-sunk);
+    border: 1px solid var(--border);
+  }
+
+  /* Chunky pill — the primary action. Width comes from a utility (w-full). */
+  .k-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0.85rem 1.25rem;
+    font-weight: 800;
+    color: #fff;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+    box-shadow: 0 14px 26px -12px rgba(232, 69, 143, 0.65);
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.15s ease,
+      filter 0.15s ease;
+  }
+  .k-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.04) saturate(1.05);
+    box-shadow: 0 18px 30px -12px rgba(232, 69, 143, 0.7);
+  }
+  .k-btn:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  .k-btn:disabled {
+    cursor: not-allowed;
+    color: var(--muted);
+    background: var(--disabled-bg);
+    box-shadow: none;
+  }
+
+  /* Soft secondary pill — outlined, ink text, accent on hover. */
+  .k-btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    padding: 0.7rem 1.1rem;
+    font-weight: 700;
+    color: var(--foreground);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    transition:
+      transform 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease,
+      background 0.15s ease;
+  }
+  .k-btn-ghost:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--tint-base));
+    background: color-mix(in srgb, var(--accent) 7%, var(--tint-base));
+    transform: translateY(-1px);
+  }
+  .k-btn-ghost:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  /* Danger pill (confirm-destructive) + its softer outline sibling. */
+  .k-btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    padding: 0.7rem 1.1rem;
+    font-weight: 800;
+    color: #fff;
+    background: linear-gradient(135deg, #ff7aa8 0%, var(--danger) 100%);
+    box-shadow: 0 12px 24px -12px rgba(214, 47, 109, 0.6);
+    transition:
+      transform 0.15s ease,
+      filter 0.15s ease;
+  }
+  .k-btn-danger:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.04);
+  }
+  .k-btn-danger:disabled {
+    cursor: not-allowed;
+    color: var(--muted);
+    background: var(--disabled-bg);
+    box-shadow: none;
+  }
+  .k-btn-danger-soft {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 0.7rem 1.1rem;
+    font-weight: 700;
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 6%, var(--tint-base));
+    border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--tint-base));
+    transition:
+      transform 0.15s ease,
+      background 0.15s ease;
+  }
+  .k-btn-danger-soft:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 12%, var(--tint-base));
+    transform: translateY(-1px);
+  }
+  .k-btn-danger-soft:disabled {
+    cursor: not-allowed;
+    color: var(--muted);
+    background: var(--disabled-bg-soft);
+    border-color: var(--border);
+  }
+
+  /* Small pill — token chips, nav links, wallet segments. */
+  .k-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0.4rem 0.85rem;
+    font-weight: 700;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.15s ease,
+      color 0.15s ease;
+  }
+  .k-pill:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--tint-base));
+    background: color-mix(in srgb, var(--accent) 6%, var(--tint-base));
+  }
+
+  /* Note / banner. Base is a neutral lilac well; tints carry meaning. */
+  .k-note {
+    border-radius: 1rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--border);
+    background: var(--surface-sunk);
+    color: var(--foreground);
+  }
+  .k-note-info {
+    border-color: color-mix(in srgb, var(--lavender) 45%, var(--tint-base));
+    background: color-mix(in srgb, var(--lavender) 16%, var(--tint-base));
+    color: var(--ink);
+  }
+  .k-note-success {
+    border-color: color-mix(in srgb, var(--mint) 55%, var(--tint-base));
+    background: color-mix(in srgb, var(--mint) 20%, var(--tint-base));
+    color: var(--success);
+  }
+  .k-note-warn {
+    border-color: color-mix(in srgb, var(--peach) 60%, var(--tint-base));
+    background: color-mix(in srgb, var(--peach) 24%, var(--tint-base));
+    color: var(--warning);
+  }
+  .k-note-danger {
+    border-color: color-mix(in srgb, var(--danger) 30%, var(--tint-base));
+    background: color-mix(in srgb, var(--danger) 9%, var(--tint-base));
+    color: var(--danger);
+  }
+
+  /* Status chip / badge. Base shape; color comes from a *-tint modifier. */
+  .k-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .k-chip-accent {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--tint-base));
+  }
+  .k-chip-success {
+    color: var(--success);
+    background: color-mix(in srgb, var(--mint) 26%, var(--tint-base));
+  }
+  .k-chip-warn {
+    color: var(--warning);
+    background: color-mix(in srgb, var(--peach) 30%, var(--tint-base));
+  }
+  .k-chip-danger {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 10%, var(--tint-base));
+  }
+  .k-chip-muted {
+    color: var(--muted);
+    background: color-mix(in srgb, var(--muted) 12%, var(--tint-base));
+  }
+
+  /* Accent link. */
+  .k-link {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1.5px;
+    transition: filter 0.15s ease;
+  }
+  .k-link:hover {
+    filter: brightness(1.1);
+  }
+
+  /* Big bare number input (amount fields). */
+  .k-input {
+    width: 100%;
+    background: transparent;
+    outline: none;
+    border: 0;
+  }
+  .k-input::placeholder {
+    color: color-mix(in srgb, var(--muted) 55%, var(--tint-base));
+  }
+}
+
+/* Respect reduced-motion: still pretty, just still. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+  }
 }

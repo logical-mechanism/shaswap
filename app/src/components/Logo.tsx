@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { Pip } from "./Pip";
 
-/** ShaSwap wordmark + mark. Links home. */
+/** ShaSwap wordmark + Pip mark. Links home. */
 export function Logo() {
   return (
     <Link
@@ -9,12 +10,12 @@ export function Logo() {
       aria-label="ShaSwap home"
     >
       <span
-        className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-accent to-accent-2 text-sm font-black text-black shadow-glow transition-transform group-hover:scale-105"
+        className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface shadow-[0_8px_18px_-10px_rgba(232,69,143,0.5)] transition-transform group-hover:-translate-y-0.5 group-hover:rotate-3"
         aria-hidden
       >
-        ∿
+        <Pip size={30} mood="happy" />
       </span>
-      <span className="text-lg font-semibold tracking-tight">
+      <span className="font-display text-xl font-extrabold tracking-tight text-ink">
         Sha<span className="text-accent">Swap</span>
       </span>
     </Link>

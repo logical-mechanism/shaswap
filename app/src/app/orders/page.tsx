@@ -21,12 +21,14 @@ import {
 import { toUserMessage } from "@/lib/client/errors";
 import { APP_CONFIG, explorerTxUrl, networkLabel } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
+import { Pip } from "@/components/Pip";
+import { PipLoading } from "@/components/PipLoading";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
-  pending: "bg-amber-500/15 text-amber-300",
-  open: "bg-accent/15 text-accent",
-  completed: "bg-white/10 text-muted",
-  reclaimed: "bg-emerald-500/15 text-emerald-300",
+  pending: "k-chip-warn",
+  open: "k-chip-accent",
+  completed: "k-chip-muted",
+  reclaimed: "k-chip-success",
 };
 
 /** Honest, plain-language explanation of each row state (badge tooltip + legend). */
@@ -176,43 +178,46 @@ export default function OrdersPage() {
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
       <header className="mb-6 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
+          <div className="flex items-center gap-2">
+            <Pip size={30} mood="happy" />
+            <h1 className="font-display text-2xl font-extrabold text-ink">Orders</h1>
+          </div>
           <p className="mt-1 text-sm text-muted">
-            Your live orders on {networkLabel()} plus recent activity. Every order is
-            owner-reclaimable while it’s live.
+            Everything you’ve dropped off on {networkLabel()}, plus recent activity. While
+            an order’s live, it’s always yours to grab back.
           </p>
-          <p className="mt-1 text-xs text-muted/70">
-            <span className="text-accent">Open</span> = live & reclaimable ·{" "}
-            <span className="text-muted">Completed</span> = no longer on-chain (settled or
-            reclaimed — confirm on the explorer).
+          <p className="mt-1 text-xs text-muted">
+            <span className="text-accent">Open</span> = live & yours to grab back ·{" "}
+            <span className="text-muted">Completed</span> = no longer live (settled or
+            reclaimed — check the explorer to be sure).
           </p>
         </div>
         {connected && (
           <button
             type="button"
             onClick={refresh}
-            className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground"
+            className="k-btn-ghost shrink-0 px-3 py-1.5 text-xs"
           >
             Refresh
           </button>
         )}
       </header>
 
-      {!connected && <Empty>Connect a wallet to view your orders.</Empty>}
+      {!connected && <Empty>Connect a wallet and Pip will round up your orders.</Empty>}
 
       {ownerError && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+        <div className="k-note k-note-danger p-4 text-sm">
           Couldn’t read your wallet address. Reconnect the wallet and try again.
         </div>
       )}
 
       {connected && error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+        <div className="k-note k-note-danger p-4 text-sm">
           <div>Couldn’t load your orders. {error}</div>
           <button
             type="button"
             onClick={refresh}
-            className="mt-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-200 transition-colors hover:bg-red-500/10"
+            className="k-btn-danger-soft mt-2 px-3 py-1.5 text-xs"
           >
             Retry
           </button>
@@ -220,18 +225,11 @@ export default function OrdersPage() {
       )}
 
       {connected && showLoading && rows.length === 0 && (
-        <div className="space-y-2">
-          {[0, 1].map((i) => (
-            <div
-              key={i}
-              className="h-16 animate-pulse rounded-xl border border-white/5 bg-white/5"
-            />
-          ))}
-        </div>
+        <PipLoading label="Pip’s gathering your orders…" />
       )}
 
       {connected && !showLoading && !error && rows.length === 0 && (
-        <Empty>No orders yet. Post one from the Swap page.</Empty>
+        <Empty>No orders yet — drop one off from the Swap page.</Empty>
       )}
 
       {connected && rows.length > 0 && (
@@ -289,15 +287,15 @@ function OrderRowItem({
         : null;
   const reclaimDisabled = busy || !networkReady || !collateralReady;
   return (
-    <li className="rounded-xl border border-white/10 bg-surface/60 px-4 py-3">
+    <li className="k-card p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 font-medium">
+          <div className="flex items-center gap-2 font-medium text-ink">
             {formatUnits(row.amountIn, row.inDecimals)} {row.inTicker} →{" "}
             {row.outTicker}
             {row.partial && (
               <span
-                className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-normal text-muted"
+                className="k-chip k-chip-muted"
                 title="Partial fills allowed — a partly-filled order leaves a separate, reclaimable remainder order with the unfilled amount."
               >
                 partial ok
@@ -311,7 +309,7 @@ function OrderRowItem({
         </div>
         <div className="flex items-center gap-2">
           <span
-            className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_STYLE[row.status]}`}
+            className={`k-chip ${STATUS_STYLE[row.status]}`}
             title={STATUS_HELP[row.status]}
           >
             {STATUS_LABEL[row.status]}
@@ -322,7 +320,7 @@ function OrderRowItem({
               onClick={onReclaim}
               disabled={reclaimDisabled}
               title={reclaimReason ?? undefined}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium transition-colors hover:border-accent/40 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+              className="k-btn-ghost px-3 py-1.5 text-xs"
             >
               {busy ? "Reclaiming…" : (reclaimReason ?? "Reclaim")}
             </button>
@@ -331,13 +329,13 @@ function OrderRowItem({
       </div>
 
       {row.canReclaim && (
-        <div className="mt-1.5 text-[11px] text-muted/70">
+        <div className="mt-1.5 text-[11px] text-muted">
           Reclaim returns your input plus the order’s min-ADA and tip to your wallet.
         </div>
       )}
 
       {row.reclaimTx && (
-        <div className="mt-2 text-xs text-emerald-300">
+        <div className="mt-2 text-xs text-success">
           Reclaimed ✓ — your input, min-ADA and tip are back in your wallet.{" "}
           <a
             href={explorerTxUrl(row.reclaimTx)}
@@ -350,7 +348,7 @@ function OrderRowItem({
         </div>
       )}
       {error && (
-        <div className="mt-2 break-words text-xs text-red-300">{error}</div>
+        <div className="mt-2 break-words text-xs text-danger">{error}</div>
       )}
     </li>
   );
@@ -358,8 +356,9 @@ function OrderRowItem({
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-surface/40 px-4 py-12 text-center text-sm text-muted">
-      {children}
+    <div className="k-card px-4 py-12 text-center text-sm text-muted">
+      <Pip size={56} mood="sleepy" className="mb-3" />
+      <div>{children}</div>
     </div>
   );
 }

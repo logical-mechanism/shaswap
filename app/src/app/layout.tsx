@@ -1,26 +1,52 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Baloo_2, Nunito, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import "@meshsdk/react/styles.css";
 import { Providers } from "@/components/Providers";
 import { Nav } from "@/components/Nav";
+import { MobileNav } from "@/components/MobileNav";
 import { Footer } from "@/components/Footer";
+import { BackdropDecor } from "@/components/decor";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Rounded, friendly display face for headings + the wordmark.
+const baloo = Baloo_2({
+  variable: "--font-baloo",
+  weight: ["500", "600", "700", "800"],
   subsets: ["latin"],
 });
 
+// Rounded, highly readable UI face for body + numbers.
+const nunito = Nunito({
+  variable: "--font-nunito",
+  weight: ["400", "500", "600", "700", "800"],
+  subsets: ["latin"],
+});
+
+// Mono only for tx hashes / addresses (kept legible and aligned).
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-  title: "ShaSwap — Cardano batch-auction DEX",
+  title: "ShaSwap — swap with Pip",
   description:
-    "Non-custodial, MEV-resistant batch-auction DEX on Cardano.",
+    "A cozy, fair batch-auction house on Cardano. Non-custodial — your keys, your coins.",
+  openGraph: {
+    title: "ShaSwap — swap with Pip",
+    description: "A cozy, fair batch-auction house on Cardano.",
+    siteName: "ShaSwap",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ShaSwap — swap with Pip",
+    description: "A cozy, fair batch-auction house on Cardano.",
+  },
 };
+
+// Applies the saved (or system) theme to <html> BEFORE first paint, so there's no
+// flash of the wrong theme. Runs as the first thing in <body>.
+const NO_FLASH_THEME = `(function(){try{var p=new URLSearchParams(location.search).get('theme');var t=p||localStorage.getItem('shaswap-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
 
 export default function RootLayout({
   children,
@@ -30,17 +56,26 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      // suppressHydrationWarning: the no-FOUC script below adds the `dark` class to
+      // <html> before React hydrates, so the server/client className differ by design.
+      suppressHydrationWarning
+      className={`${baloo.variable} ${nunito.variable} ${geistMono.variable} h-full antialiased`}
     >
       {/* suppressHydrationWarning: browser extensions (Grammarly, etc.) inject
           attributes like data-gr-ext-installed onto <body> before React hydrates,
           which is otherwise reported as a hydration mismatch. Suppresses only this
           element's attribute diff, one level deep — not our descendants. */}
-      <body className="flex min-h-full flex-col" suppressHydrationWarning>
+      <body
+        className="flex min-h-full flex-col pb-16 sm:pb-0"
+        suppressHydrationWarning
+      >
+        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} />
+        <BackdropDecor />
         <Providers>
           <Nav />
           <main className="flex flex-1 flex-col">{children}</main>
           <Footer />
+          <MobileNav />
         </Providers>
       </body>
     </html>

@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAddress, useNetwork, useWallet } from "@meshsdk/react";
+import {
+  useAddress,
+  useAssets,
+  useLovelace,
+  useNetwork,
+  useWallet,
+} from "@meshsdk/react";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
 import { useTokens } from "@/hooks/useTokens";
@@ -12,6 +18,8 @@ import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
 import { formatPercent, formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import { Pip } from "@/components/Pip";
+import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
 import { SlippageSettings } from "./SlippageSettings";
 
@@ -27,6 +35,8 @@ export function SwapCard() {
   const address = useAddress();
   const { tokens, loading: tokensLoading } = useTokens();
   const { pools } = usePools();
+  const lovelace = useLovelace();
+  const assets = useAssets();
 
   const [fromUnit, setFromUnit] = useState<string>("lovelace");
   const [toUnit, setToUnit] = useState<string>("");
@@ -134,9 +144,32 @@ export function SwapCard() {
   // a positive tip (mirrors the buildOrder guard) rather than post an un-settleable order.
   const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") > 0n;
 
+  // Wallet balance of the FROM token (ADA via useLovelace; other tokens via useAssets),
+  // and how much of it is actually spendable. For ADA we hold back a reserve for the
+  // network fee + the order's min-ADA + the (separate) tip, so MAX can't build an
+  // un-submittable tx; for other tokens the whole balance is spendable. Plain render
+  // computation (the React Compiler memoizes).
+  const fromBalance =
+    fromToken?.unit === "lovelace"
+      ? toBig(lovelace ?? "0")
+      : toBig(assets?.find((a) => a.unit === fromToken?.unit)?.quantity ?? "0");
+  const fromIsAda = fromToken?.unit === "lovelace";
+  const adaReserve = ADA_RESERVE + (fromIsAda ? BigInt(tipLovelace || "0") : 0n);
+  const spendable = fromIsAda
+    ? fromBalance > adaReserve
+      ? fromBalance - adaReserve
+      : 0n
+    : fromBalance;
+  const amountBig = hasAmount ? BigInt(baseAmountIn) : 0n;
+  const overBalance = connected && hasAmount && amountBig > fromBalance;
+  const overSpendable =
+    connected && hasAmount && !overBalance && amountBig > spendable;
+  const balanceOk = !overBalance && !overSpendable;
+
   const canPost =
     networkReady &&
     hasAmount &&
+    balanceOk &&
     !!pool &&
     quoteFresh &&
     floor > 0n &&
@@ -150,6 +183,12 @@ export function SwapCard() {
     setToUnit(f);
     setAmount("");
     setPost({ kind: "idle" });
+  }
+
+  function setFromAmount(base: bigint) {
+    if (!fromToken || base <= 0n) return;
+    setAmount(formatUnits(base.toString(), fromToken.decimals));
+    if (post.kind !== "idle") setPost({ kind: "idle" });
   }
 
   async function handlePost() {
@@ -195,8 +234,12 @@ export function SwapCard() {
         ? { label: "Checking network…", disabled: true }
         : !hasAmount
           ? { label: "Enter an amount", disabled: true }
-          : !pool
-            ? { label: "No pool for this pair", disabled: true }
+          : overBalance
+            ? { label: `Insufficient ${fromToken?.ticker ?? "balance"}`, disabled: true }
+            : overSpendable
+              ? { label: "Leave ADA for tip + fees", disabled: true }
+              : !pool
+                ? { label: "No pool for this pair", disabled: true }
             : !quoteFresh || quoteLoading
               ? { label: "Fetching quote…", disabled: true }
               : floor <= 0n
@@ -208,14 +251,16 @@ export function SwapCard() {
                     : { label: "Post order", disabled: false };
 
   return (
-    <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
-      <div className="mb-3 flex items-start justify-between gap-2 px-1">
+    <div className="k-card w-full max-w-md p-5 sm:p-6">
+      <div className="mb-4 flex items-start justify-between gap-2 px-1">
         <div>
-          <h1 className="text-base font-semibold">Swap</h1>
-          <p className="mt-0.5 text-[11px] leading-snug text-muted/80">
-            You post an order (an intent), not an instant swap. An untrusted solver
-            settles the batch later at a uniform price — never below your floor — or you
-            reclaim it.
+          <div className="flex items-center gap-2">
+            <Pip size={30} mood="happy" />
+            <h1 className="font-display text-xl font-extrabold text-ink">Swap</h1>
+          </div>
+          <p className="mt-1 text-[11px] leading-snug text-muted">
+            Drop off an order and the batch settles at one fair price — never below the
+            floor you set, or grab it back anytime.
           </p>
         </div>
         <SlippageSettings value={slippage} onChange={setSlippage} context="swap" />
@@ -238,21 +283,31 @@ export function SwapCard() {
           setFromUnit(t.unit);
           if (post.kind !== "idle") setPost({ kind: "idle" });
         }}
+        balance={
+          connected && fromToken
+            ? {
+                display: formatUnits(fromBalance.toString(), fromToken.decimals),
+                insufficient: overBalance || overSpendable,
+                onHalf: () => setFromAmount(spendable / 2n),
+                onMax: () => setFromAmount(spendable),
+              }
+            : undefined
+        }
       />
 
       {/* direction toggle */}
-      <div className="relative z-10 -my-2 flex justify-center">
+      <div className="relative z-10 -my-3 flex justify-center">
         <button
           type="button"
           onClick={flip}
           aria-label="Swap direction"
-          className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-surface text-muted transition-colors hover:text-accent"
+          className="grid h-11 w-11 place-items-center rounded-full border border-border bg-surface text-accent shadow-[0_8px_18px_-10px_rgba(232,69,143,0.55)] transition-transform duration-300 hover:rotate-180 hover:text-accent-2"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+          <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden>
             <path
               d="M4.5 2.5v9m0 0L2 9m2.5 2.5L7 9M11.5 13.5v-9m0 0L9 7m2.5-2.5L14 7"
               stroke="currentColor"
-              strokeWidth="1.4"
+              strokeWidth="1.6"
               fill="none"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -311,10 +366,8 @@ export function SwapCard() {
         quote.priceImpact >= 0.05 &&
         post.kind !== "posting" && (
           <div
-            className={`mt-3 rounded-xl border p-2.5 text-xs ${
-              quote.priceImpact >= 0.15
-                ? "border-red-500/25 bg-red-500/10 text-red-300"
-                : "border-amber-500/20 bg-amber-500/10 text-amber-300"
+            className={`mt-3 text-xs ${
+              quote.priceImpact >= 0.15 ? "k-note k-note-danger" : "k-note k-note-warn"
             }`}
           >
             {quote.priceImpact >= 0.15 ? "Very high" : "High"} price impact (
@@ -327,7 +380,7 @@ export function SwapCard() {
         type="button"
         disabled={button.disabled}
         onClick={handlePost}
-        className="mt-3 w-full rounded-xl bg-gradient-to-r from-accent to-accent-2 py-3.5 text-sm font-semibold text-black transition-opacity disabled:cursor-not-allowed disabled:from-white/10 disabled:to-white/10 disabled:text-muted"
+        className="k-btn mt-4 w-full py-3.5 text-sm"
       >
         {button.label}
       </button>
@@ -345,6 +398,10 @@ function toBig(s: string): bigint {
   }
 }
 
+// ADA held back when the FROM token is ADA, so a MAX swap still leaves room for the
+// network fee + the order's min-ADA (the tip is added on top of this). ~3 ₳.
+const ADA_RESERVE = 3_000_000n;
+
 const EXPIRY_MS: Record<string, number> = {
   "1h": 3_600_000,
   "6h": 21_600_000,
@@ -361,16 +418,20 @@ function expiryDeadline(key: string): bigint | null {
 function PostResult({ state }: { state: PostState }) {
   if (state.kind === "success") {
     return (
-      <div className="mt-3 rounded-xl border border-accent/20 bg-accent/10 p-3 text-xs">
-        <div className="font-medium text-accent">Order posted ✓</div>
-        <p className="mt-0.5 text-muted">
+      <div className="k-note k-note-success relative mt-3 text-xs">
+        <Confetti />
+        <div className="relative flex items-center gap-2">
+          <Pip size={26} mood="love" />
+          <div className="font-bold text-success">Order posted ✓</div>
+        </div>
+        <p className="mt-1 text-muted">
           It’ll appear under{" "}
-          <a href="/orders" className="underline underline-offset-2 hover:text-accent">
+          <a href="/orders" className="k-link">
             Orders
           </a>{" "}
-          once the network confirms (~20–40s). From there a solver settles the batch at a
-          uniform price (never below your floor) — or you can reclaim it anytime, which
-          returns your input plus the min-ADA and tip.
+          once the network confirms (~20–40s). From there the batch settles at one fair
+          price (never below your floor) — or you can grab it back anytime, which returns
+          your input plus the small ADA deposit and tip.
         </p>
         <a
           href={explorerTxUrl(state.hash)}
@@ -385,9 +446,12 @@ function PostResult({ state }: { state: PostState }) {
   }
   if (state.kind === "error") {
     return (
-      <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">
-        <div className="font-medium">Could not post order</div>
-        <div className="mt-1 break-words text-red-300/80">{state.message}</div>
+      <div className="k-note k-note-danger mt-3 text-xs">
+        <div className="flex items-center gap-2">
+          <Pip size={26} mood="worried" />
+          <div className="font-bold">Hmm, that didn’t go through</div>
+        </div>
+        <div className="mt-1 break-words opacity-90">{state.message}</div>
       </div>
     );
   }
@@ -416,11 +480,11 @@ function Advanced({
   onExpiry: (v: string) => void;
 }) {
   return (
-    <div className="mt-3 border-t border-white/5 pt-2">
+    <div className="mt-3 border-t border-border pt-2">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-1 text-xs text-muted hover:text-foreground"
+        className="flex w-full items-center justify-between px-1 text-xs font-semibold text-muted transition-colors hover:text-accent"
       >
         <span>Advanced</span>
         <span className="text-muted/70">{open ? "Hide" : "Show"}</span>
@@ -430,7 +494,7 @@ function Advanced({
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Solver tip (ADA)
-              <span className="block text-[10px] text-muted/60">
+              <span className="block text-[10px] text-muted/70">
                 the only solver reward — required; a 0-tip order won’t be picked up.
                 Higher tips settle sooner.
               </span>
@@ -442,15 +506,15 @@ function Advanced({
                 const v = e.target.value;
                 if (v === "" || /^\d*\.?\d*$/.test(v)) onTip(v);
               }}
-              className={`w-24 rounded-lg border bg-black/20 px-2 py-1.5 text-right tabular-nums outline-none ${
-                tipValid ? "border-white/10" : "border-red-500/40"
+              className={`w-24 rounded-xl border bg-surface-sunk px-2 py-1.5 text-right tabular-nums text-ink outline-none ${
+                tipValid ? "border-border" : "border-danger"
               }`}
             />
           </label>
           <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Allow partial fills
-              <span className="block text-[10px] text-muted/60">
+              <span className="block text-[10px] text-muted/70">
                 a solver may fill part now and leave a reclaimable remainder
               </span>
             </span>
@@ -464,14 +528,14 @@ function Advanced({
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Expiry
-              <span className="block text-[10px] text-muted/60">
+              <span className="block text-[10px] text-muted/70">
                 a solver can only settle before this deadline (reclaim anytime)
               </span>
             </span>
             <select
               value={expiry}
               onChange={(e) => onExpiry(e.target.value)}
-              className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 text-xs outline-none"
+              className="rounded-xl border border-border bg-surface-sunk px-2 py-1.5 text-xs text-ink outline-none"
             >
               <option value="none">No expiry</option>
               <option value="1h">1 hour</option>
@@ -497,6 +561,7 @@ function TokenField({
   placeholder = "0",
   onAmount,
   onSelect,
+  balance,
 }: {
   label: string;
   token: TokenInfo | undefined;
@@ -508,10 +573,16 @@ function TokenField({
   placeholder?: string;
   onAmount?: (v: string) => void;
   onSelect: (t: TokenInfo) => void;
+  balance?: {
+    display: string;
+    insufficient?: boolean;
+    onMax: () => void;
+    onHalf: () => void;
+  };
 }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-black/20 p-3">
-      <div className="mb-2 px-1 text-xs text-muted">{label}</div>
+    <div className="k-field p-3.5">
+      <div className="mb-2 px-1 text-xs font-semibold text-muted">{label}</div>
       <div className="flex items-center gap-3">
         <input
           inputMode="decimal"
@@ -522,8 +593,8 @@ function TokenField({
             const v = e.target.value;
             if (v === "" || /^\d*\.?\d*$/.test(v)) onAmount?.(v);
           }}
-          className={`w-full bg-transparent text-2xl font-medium outline-none placeholder:text-muted/50 ${
-            editable ? "" : "text-muted"
+          className={`k-input text-3xl font-extrabold tabular-nums ${
+            editable ? "text-ink" : "text-muted"
           }`}
         />
         <TokenSelect
@@ -533,6 +604,30 @@ function TokenField({
           onSelect={onSelect}
         />
       </div>
+      {balance && (
+        <div className="mt-2 flex items-center justify-between px-1 text-[11px]">
+          <span className={balance.insufficient ? "font-semibold text-danger" : "text-muted"}>
+            Balance:{" "}
+            <span className="tabular-nums">{balance.display}</span> {token?.ticker}
+          </span>
+          <span className="flex gap-1">
+            <button
+              type="button"
+              onClick={balance.onHalf}
+              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+            >
+              Half
+            </button>
+            <button
+              type="button"
+              onClick={balance.onMax}
+              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+            >
+              Max
+            </button>
+          </span>
+        </div>
+      )}
       {loading && <div className="mt-1 px-1 text-xs text-muted">updating…</div>}
     </div>
   );
@@ -562,58 +657,89 @@ function RateLine({
   tip: string;
 }) {
   // `price` is the pool MID price (reserveOut/reserveIn) — it ignores the fee and
-  // price impact, so it's labelled honestly as "Mid price" and the estimated "To"
-  // amount / Minimum received below reflect the actual (post-fee) execution.
+  // price impact, so the rate shown is the mid price and the "To" amount / Minimum
+  // received reflect the actual (post-fee) execution. Collapsed by default: the rate
+  // is the at-a-glance summary; the full breakdown (incl. Minimum received) expands.
+  const [open, setOpen] = useState(false);
   const showRate = price && fromToken && toToken && Number(price) > 0;
   const tipNum = Number(tip);
+  const rateText =
+    loading && !showRate
+      ? "Fetching rate…"
+      : showRate
+        ? `1 ${fromToken.ticker} ≈ ${Number(price).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${toToken.ticker}`
+        : "Rate appears once you enter an amount";
+
   return (
-    <div className="mt-3 space-y-1.5 px-1 text-xs text-muted">
-      <div className="flex items-center justify-between">
-        <span>Mid price</span>
-        <span className="tabular-nums">
-          {loading
-            ? "…"
-            : showRate
-              ? `1 ${fromToken.ticker} ≈ ${Number(price).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${toToken.ticker}`
-              : "—"}
+    <div className="k-field mt-3 text-xs text-muted">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+      >
+        <span className="truncate font-semibold tabular-nums text-foreground">
+          {rateText}
         </span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span>Price impact</span>
-        <span className="tabular-nums">
-          {loading || priceImpact === undefined
-            ? "—"
-            : formatPercent(priceImpact)}
+        <span className="flex shrink-0 items-center gap-1 font-semibold text-muted">
+          <span>Details</span>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            <path
+              d="M2.5 4.5L6 8l3.5-3.5"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span>Pool fee</span>
-        <span className="tabular-nums">
-          {feeBps !== undefined ? `${(feeBps / 100).toFixed(2)}%` : "—"}
-        </span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span>Solver tip</span>
-        <span className="tabular-nums">
-          {Number.isFinite(tipNum) && tipNum > 0 ? `${tip} ADA` : "—"}
-        </span>
-      </div>
-      <div className="flex items-center justify-between">
-        <span>Max slippage</span>
-        <span className="tabular-nums">{slippage.toFixed(1)}%</span>
-      </div>
-      <div className="flex items-center justify-between font-medium text-foreground/90">
-        <span>Minimum received</span>
-        <span className="tabular-nums">
-          {floorDisplay && toToken ? `${floorDisplay} ${toToken.ticker}` : "—"}
-        </span>
-      </div>
-      {poolCount > 1 && (
-        <div className="flex items-center justify-between">
-          <span>Pool</span>
-          <span>best of {poolCount} pools</span>
+      </button>
+
+      {open && (
+        <div className="animate-pop space-y-1.5 border-t border-border px-3 pb-3 pt-2.5">
+          <DetailRow label="Price impact">
+            {loading || priceImpact === undefined ? "—" : formatPercent(priceImpact)}
+          </DetailRow>
+          <DetailRow label="Pool fee">
+            {feeBps !== undefined ? `${(feeBps / 100).toFixed(2)}%` : "—"}
+          </DetailRow>
+          <DetailRow label="Solver tip">
+            {Number.isFinite(tipNum) && tipNum > 0 ? `${tip} ADA` : "—"}
+          </DetailRow>
+          <DetailRow label="Max slippage">{slippage.toFixed(1)}%</DetailRow>
+          <div className="flex items-center justify-between font-bold text-ink">
+            <span>Minimum received</span>
+            <span className="tabular-nums">
+              {floorDisplay && toToken ? `${floorDisplay} ${toToken.ticker}` : "—"}
+            </span>
+          </div>
+          {poolCount > 1 && (
+            <DetailRow label="Pool">best of {poolCount} pools</DetailRow>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span>{label}</span>
+      <span className="tabular-nums">{children}</span>
     </div>
   );
 }

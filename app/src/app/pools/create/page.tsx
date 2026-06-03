@@ -25,6 +25,8 @@ import { createPool } from "@/lib/client/tx";
 import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
 import { truncate } from "@/lib/format";
+import { Pip } from "@/components/Pip";
+import { Confetti } from "@/components/Confetti";
 
 type TxState =
   | { kind: "idle" }
@@ -180,16 +182,16 @@ export default function CreatePoolPage() {
     <div className="mx-auto w-full max-w-md px-4 py-10 sm:px-6 sm:py-14">
       <Link
         href="/pools"
-        className="mb-4 inline-block text-sm text-muted transition-colors hover:text-foreground"
+        className="mb-4 inline-block text-sm text-muted transition-colors hover:text-accent"
       >
         ← All pools
       </Link>
 
       <header className="mb-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Create pool</h1>
+        <h1 className="font-display text-2xl font-extrabold text-ink">Create pool</h1>
         <p className="mt-1 text-sm text-muted">
-          Mint a new pool for any pair of assets you hold. Pool creation is
-          permissionless. The pool starts empty — you add the first liquidity right after.
+          Open a new pool for any pair you hold — anyone can. It starts empty, then you
+          add the first liquidity right after.
         </p>
         <p className="mt-1 text-xs text-muted/70">
           Creating an empty pool locks a ~2 ₳ seed (plus network fees). As the creator you
@@ -198,7 +200,7 @@ export default function CreatePoolPage() {
         </p>
       </header>
 
-      <div className="w-full rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
+      <div className="k-card w-full p-5 sm:p-6">
         <div className="mb-2 px-1 text-xs text-muted/70">
           {connected
             ? "Tokens to choose from: ADA + the assets held in your wallet."
@@ -229,7 +231,7 @@ export default function CreatePoolPage() {
           }}
         />
 
-        <div className="mt-3 rounded-xl border border-white/5 bg-black/20 p-3">
+        <div className="k-field mt-3 p-3.5">
           <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted">
             <span>Trading fee</span>
             <span className="tabular-nums text-foreground/80">
@@ -248,9 +250,9 @@ export default function CreatePoolPage() {
                   if (state.kind !== "idle") setState({ kind: "idle" });
                 }
               }}
-              className="w-full bg-transparent text-2xl font-medium outline-none placeholder:text-muted/50"
+              className="k-input text-2xl font-extrabold tabular-nums text-ink"
             />
-            <span className="shrink-0 rounded-lg bg-white/5 px-2.5 py-1 text-sm font-medium">
+            <span className="k-pill shrink-0 px-2.5 py-1 text-sm font-medium">
               bps
             </span>
           </div>
@@ -262,13 +264,13 @@ export default function CreatePoolPage() {
         </div>
 
         {duplicate && (
-          <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+          <div className="k-note k-note-warn mt-3 text-xs">
             A {duplicate.tokenA.ticker}/{duplicate.tokenB.ticker} pool at{" "}
             {(duplicate.feeBps / 100).toFixed(2)}% already exists. You can still create
             another, but you may prefer to{" "}
             <Link
               href={`/pools/${encodeURIComponent(duplicate.id)}`}
-              className="underline underline-offset-2 hover:text-amber-200"
+              className="k-link"
             >
               add liquidity to the existing pool
             </Link>
@@ -279,9 +281,13 @@ export default function CreatePoolPage() {
         <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
 
         {state.kind === "success" && (
-          <div className="mt-3 rounded-xl border border-accent/20 bg-accent/10 p-3 text-xs">
-            <div className="font-medium text-accent">Pool created ✓</div>
-            <p className="mt-0.5 text-muted">
+          <div className="k-note k-note-success relative mt-3 text-xs">
+            <Confetti />
+            <div className="relative flex items-center gap-2">
+              <Pip size={26} mood="love" />
+              <div className="font-bold text-success">Pool created ✓</div>
+            </div>
+            <p className="mt-1 text-muted">
               Confirming on-chain (~20–40s). Add the first liquidity to start trading —
               the pool may take a moment to appear in the list.
             </p>
@@ -296,7 +302,7 @@ export default function CreatePoolPage() {
               </a>
               <Link
                 href={`/pools/${encodeURIComponent(state.poolId)}`}
-                className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 font-semibold text-accent transition-colors hover:bg-accent/20"
+                className="k-btn-ghost px-3 py-1.5 text-sm font-semibold"
               >
                 Add initial liquidity →
               </Link>
@@ -305,9 +311,9 @@ export default function CreatePoolPage() {
         )}
 
         {state.kind === "error" && (
-          <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">
-            <div className="font-medium">Transaction failed</div>
-            <div className="mt-1 break-words text-red-300/80">{state.message}</div>
+          <div className="k-note k-note-danger mt-3 text-xs">
+            <div className="font-bold">Transaction failed</div>
+            <div className="mt-1 break-words opacity-90">{state.message}</div>
           </div>
         )}
       </div>
@@ -329,7 +335,7 @@ function TokenRow({
   onSelect: (t: TokenInfo) => void;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-white/5 bg-black/20 p-3">
+    <div className="k-field flex items-center justify-between p-3.5">
       <span className="px-1 text-xs text-muted">{label}</span>
       <TokenSelect token={token} tokens={tokens} exclude={exclude} onSelect={onSelect} />
     </div>
@@ -350,7 +356,7 @@ function SubmitButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="mt-4 w-full rounded-xl bg-gradient-to-r from-accent to-accent-2 py-3.5 text-sm font-semibold text-black transition-opacity disabled:cursor-not-allowed disabled:from-white/10 disabled:to-white/10 disabled:text-muted"
+      className="k-btn mt-4 w-full py-3.5 text-sm"
     >
       {label}
     </button>
