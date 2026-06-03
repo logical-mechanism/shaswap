@@ -448,6 +448,14 @@ function AddForm({
         </Row>
       </div>
 
+      {/* Announce the deposit preview to screen readers (the rows update silently as the
+          paired Δb / LP estimate recompute) — mirrors the swap card's sr-only live region. */}
+      <p aria-live="polite" className="sr-only">
+        {preview && preview.error === null && preview.lpToUser > 0n
+          ? `LP you receive ≈ ${preview.lpToUser.toLocaleString()}; at least ${minLpOut.toLocaleString()} LP after slippage.`
+          : ""}
+      </p>
+
       {deltaA > 0n && (!first || deltaB > 0n) && preview?.error && (
         <div className="k-note k-note-warn mt-3 text-xs">
           {depositErrorMessage(preview.error)}
@@ -630,6 +638,14 @@ function RemoveForm({
           <span className="tabular-nums">{slippage.toFixed(1)}%</span>
         </Row>
       </div>
+
+      {/* Announce the withdraw preview to screen readers — mirrors the swap card's
+          sr-only live region (the "you receive" / "at least" rows update silently). */}
+      <p aria-live="polite" className="sr-only">
+        {preview && preview.error === null
+          ? `You receive ≈ ${formatUnits(preview.recvA.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} plus ${formatUnits(preview.recvB.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker}; at least ${formatUnits(minAOut.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} and ${formatUnits(minBOut.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker} after slippage.`
+          : ""}
+      </p>
 
       {lpToBurn > 0n && !overBalance && preview?.error && (
         <div className="k-note k-note-warn mt-3 text-xs">

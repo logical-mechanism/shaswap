@@ -357,8 +357,7 @@ export function SwapCard() {
         exclude={fromToken?.unit}
         amount={toAmount}
         editable={false}
-        loading={quoteLoading}
-        placeholder={quoteLoading ? "…" : "0"}
+        skeleton={quoteLoading}
         onSelect={(t) => {
           setToUnit(t.unit);
           if (post.kind !== "idle") setPost({ kind: "idle" });
@@ -603,6 +602,7 @@ function TokenField({
   amount,
   editable,
   loading,
+  skeleton,
   placeholder = "0",
   onAmount,
   onSelect,
@@ -615,6 +615,8 @@ function TokenField({
   amount: string;
   editable: boolean;
   loading?: boolean;
+  /** Show an animate-pulse skeleton in place of the value (the To field, mid-quote). */
+  skeleton?: boolean;
   placeholder?: string;
   onAmount?: (v: string) => void;
   onSelect: (t: TokenInfo) => void;
@@ -629,19 +631,31 @@ function TokenField({
     <div className="k-field p-3.5">
       <div className="mb-2 px-1 text-xs font-semibold text-muted">{label}</div>
       <div className="flex items-center gap-3">
-        <input
-          inputMode="decimal"
-          value={amount}
-          readOnly={!editable}
-          placeholder={placeholder}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "" || /^\d*\.?\d*$/.test(v)) onAmount?.(v);
-          }}
-          className={`k-input text-3xl font-extrabold tabular-nums ${
-            editable ? "text-ink" : "text-muted"
-          }`}
-        />
+        {skeleton ? (
+          // Match LiquidityPanel's Skeleton (animate-pulse / bordered sunk well) so the
+          // estimated-output value pulses instead of sitting empty mid-quote.
+          <div className="flex-1">
+            <div
+              className="h-9 w-28 max-w-full animate-pulse rounded-xl border border-border bg-surface-sunk"
+              aria-hidden
+            />
+            <span className="sr-only">Fetching estimate…</span>
+          </div>
+        ) : (
+          <input
+            inputMode="decimal"
+            value={amount}
+            readOnly={!editable}
+            placeholder={placeholder}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "" || /^\d*\.?\d*$/.test(v)) onAmount?.(v);
+            }}
+            className={`k-input text-3xl font-extrabold tabular-nums ${
+              editable ? "text-ink" : "text-muted"
+            }`}
+          />
+        )}
         <TokenSelect
           token={token}
           tokens={tokens}
