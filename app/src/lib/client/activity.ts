@@ -26,6 +26,12 @@ export interface RecentOrder {
   partial: boolean;
   /** Date.now() at submit. */
   ts: number;
+  /**
+   * Timestamp we FIRST observed this order live on-chain. Until it's set, the order is
+   * only "pending" (still confirming) — indexer lag must never flip a not-yet-indexed
+   * order to a terminal state. Once set, a later disappearance is the terminal signal.
+   */
+  seenLive?: number;
   /** Set once the owner reclaims it. */
   reclaimTx?: string;
 }
@@ -65,6 +71,27 @@ function prune(list: RecentOrder[], now: number): RecentOrder[] {
 export function recordPost(owner: string, order: RecentOrder): void {
   const list = prune(read(owner), order.ts);
   write(owner, [order, ...list.filter((o) => o.ref !== order.ref)]);
+}
+
+/**
+ * Stamp the first on-chain observation for any logged `refs` not yet marked. Lets the
+ * Orders view keep a just-posted order "pending" (and auto-refreshing) until it's
+ * positively seen on-chain at least once, so a slow indexer can't reclassify a live
+ * order as terminal. Persists only when something actually changed.
+ */
+export function markSeen(owner: string, refs: string[], now: number): void {
+  if (typeof window === "undefined" || !owner || refs.length === 0) return;
+  const set = new Set(refs);
+  const list = read(owner);
+  let changed = false;
+  const next = list.map((o) => {
+    if (o.seenLive === undefined && set.has(o.ref)) {
+      changed = true;
+      return { ...o, seenLive: now };
+    }
+    return o;
+  });
+  if (changed) write(owner, next);
 }
 
 /** Recent orders for a wallet, pruned of stale entries (prune persisted only if any). */

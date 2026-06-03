@@ -6,14 +6,19 @@
  *
  * The chain is the source of truth: a live order is always "open" (reclaimable). The
  * local log only adds what the chain can't show yet — a just-posted order not yet
- * indexed ("pending"), or an order that has since left the set ("settled" if it just
- * vanished, "reclaimed" if we hold a reclaim tx for it).
+ * indexed ("pending"), or an order that has since left the set ("completed" once it has
+ * been seen on-chain and then vanished, "reclaimed" if we hold a reclaim tx for it).
+ *
+ * "completed" is deliberately HONEST, not "settled": the app never verifies *how* an
+ * order left the order address (solver settlement, a reclaim on another device, a
+ * partial-fill remainder, a dropped tx). It only knows the UTXO is gone — so the label,
+ * and any copy, must point the user to the explorer rather than claim a confirmed trade.
  */
 
 import type { WalletPosition } from "@/lib/data";
 import type { RecentOrder } from "./activity";
 
-export type RowStatus = "pending" | "open" | "settled" | "reclaimed";
+export type RowStatus = "pending" | "open" | "completed" | "reclaimed";
 
 export interface OrderRow {
   ref: string;
@@ -30,14 +35,21 @@ export interface OrderRow {
   canReclaim: boolean;
 }
 
-/** A recent post is "pending" (vs assumed-settled) for this long after submit. */
-export const PENDING_MS = 3 * 60 * 1000;
+/**
+ * Fallback only: a recent post we've NEVER observed on-chain stays "pending" (and keeps
+ * the page auto-refreshing) for this long, after which we assume it never landed and show
+ * it as terminal — so a dropped/never-indexed tx doesn't poll forever. This window is
+ * generous (covers real indexer + mempool delay); an order positively seen on-chain is
+ * never bound by it (only its later disappearance is terminal). Replaces the old fixed
+ * 3-min cutoff that wrongly reclassified still-confirming orders and killed the poll.
+ */
+export const OBSERVE_FALLBACK_MS = 30 * 60 * 1000;
 
 const STATUS_ORDER: Record<RowStatus, number> = {
   pending: 0,
   open: 1,
   reclaimed: 2,
-  settled: 3,
+  completed: 3,
 };
 
 export function mergeRows(
@@ -68,14 +80,20 @@ export function mergeRows(
     seen.add(o.ref);
   }
 
-  // 2) Recent local entries the live set doesn't cover: pending / settled / reclaimed.
+  // 2) Recent local entries the live set doesn't cover: pending / completed / reclaimed.
+  //    An order stays "pending" until we've positively seen it on-chain at least once
+  //    (`seenLive`); only a SUBSEQUENT disappearance is terminal ("completed"). A post
+  //    never observed at all falls back to terminal after OBSERVE_FALLBACK_MS so a
+  //    dropped tx can't keep polling forever.
   for (const r of recent) {
     if (seen.has(r.ref)) continue;
     const status: RowStatus = r.reclaimTx
       ? "reclaimed"
-      : now - r.ts < PENDING_MS
-        ? "pending"
-        : "settled";
+      : r.seenLive !== undefined
+        ? "completed"
+        : now - r.ts < OBSERVE_FALLBACK_MS
+          ? "pending"
+          : "completed";
     rows.push({
       ref: r.ref,
       inTicker: r.inTicker,

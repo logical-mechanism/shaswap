@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { WalletPosition } from "@/lib/data";
 import { fetchOrders } from "@/lib/client/api";
+import { toUserMessage } from "@/lib/client/errors";
 
 /**
  * Loads a wallet's orders through our /api/orders route. Stays empty until an
@@ -38,7 +39,7 @@ export function useOrders(address: string | undefined) {
       })
       .catch((e: unknown) => {
         if (ac.signal.aborted) return;
-        setError(String(e));
+        setError(toUserMessage(e));
         setLoadedFor(address);
       });
     return () => ac.abort();

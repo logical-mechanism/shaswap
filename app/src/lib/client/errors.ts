@@ -8,6 +8,8 @@
  * Always falls back to a trimmed version of the original so nothing is fully hidden.
  */
 
+import { networkLabel } from "../config.ts";
+
 /** Pull whatever string-ish content an unknown error carries. */
 function rawText(e: unknown): string {
   if (e == null) return "";
@@ -56,12 +58,27 @@ const RULES: { match: RegExp; message: string }[] = [
   },
   {
     match: /wrong\s*network|network\s*(mismatch|id)|network\s*magic|networkmagic|different\s*network/i,
-    message: "Your wallet is on a different network than the app (preprod).",
+    message: `Your wallet is on a different network than the app (${networkLabel()}).`,
+  },
+  {
+    // Cost-model / script-integrity-hash mismatch: the protocol params the tx was built
+    // with don't match the node's. Usually transient (params changed) — a refresh + rebuild
+    // picks up the current ones. Keep ABOVE the generic script-failure rule.
+    match: /script\s*integrity|integrity\s*hash|cost\s*model|costmdls|plutus.*cost/i,
+    message:
+      "The network parameters changed while building this transaction. Refresh and try again.",
   },
   {
     match: /script.*(fail|error)|evaluat|phase-?2|ex\s*units|redeemer/i,
     message:
       "The transaction failed validation. The order may have changed on-chain — refresh and try again.",
+  },
+  {
+    // Provider/indexer unavailable or lagging (Blockfrost 5xx/429, timeouts, fetch fails).
+    // Distinct from a tx error — the chain is fine, the read path is momentarily down.
+    match: /\b(429|50[234])\b|too\s*many\s*requests|rate\s*limit|service\s*unavailable|bad\s*gateway|gateway\s*time|timed?\s*out|timeout|network\s*request\s*failed|fetch\s*failed|econnrefused|enotfound/i,
+    message:
+      "Can’t reach the network data service right now. Refresh in a moment and try again.",
   },
 ];
 

@@ -97,7 +97,10 @@ export function assetUnit(a: AssetId): string {
 /** Parse a UI `unit` ("lovelace" or `policy(56)+nameHex`) back into an `AssetId`. */
 export function assetFromUnit(unit: string): AssetId {
   if (unit === "lovelace" || unit === "") return ADA;
-  if (!/^[0-9a-fA-F]+$/.test(unit) || unit.length < 56) {
+  // Must be a 28-byte policy (56 hex) + an even-length name. Reject odd-length hex:
+  // MeshJS's `mConStr` silently encodes an odd-length string as raw TEXT, not bytes,
+  // which would mint/encode a different on-chain asset than intended.
+  if (!/^[0-9a-fA-F]+$/.test(unit) || unit.length < 56 || unit.length % 2 !== 0) {
     throw new Error(`malformed asset unit: ${unit}`);
   }
   return { policy: unit.slice(0, 56).toLowerCase(), name: unit.slice(56).toLowerCase() };
@@ -172,6 +175,16 @@ export const orderReclaimRedeemer: Data = mConStr(1, []);
 export const poolSettleRedeemer: Data = mConStr(0, []);
 export const lpActionRedeemer: Data = mConStr(1, []);
 export const closePoolRedeemer: Data = mConStr(2, []);
+
+/**
+ * `MintRedeemer` (nullary) for a pool's one-shot mint policy `pool_mint(seed)`:
+ *  - `Create = Constr 0 []` (mint `{NFT:1, LP:total_lp}` for a new pool, §5.1),
+ *  - `Close  = Constr 1 []` (burn them to tear down a never-seeded pool).
+ * Named `mint*` to keep distinct from the pool-SPEND `closePoolRedeemer` (Constr 2) above —
+ * the mint `Close` is constructor 1, a different validator entirely.
+ */
+export const mintCreateRedeemer: Data = mConStr(0, []);
+export const mintCloseRedeemer: Data = mConStr(1, []);
 
 /** Canonical CBOR hex of any `Data` (handy for tests / byte-verification). */
 export function toCbor(d: Data): string {

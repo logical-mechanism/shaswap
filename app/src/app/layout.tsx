@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ShaSwap — Cardano batch-auction DEX",
   description:
-    "Non-custodial, MEV-resistant batch-auction DEX on Cardano. Skeleton preview.",
+    "Non-custodial, MEV-resistant batch-auction DEX on Cardano.",
 };
 
 export default function RootLayout({
