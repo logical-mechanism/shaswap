@@ -1,15 +1,42 @@
 # App data-access caching & polling — design note
 
-**Status:** design / for discussion (no code yet)
+**Status:** decided + implemented (Phase: *no-poll / manual-refresh*).
 **Scope:** `app/` only. Does **not** touch the protocol, validators, or `BLUEPRINT.md` — the
 app's choice of Blockfrost is an app-layer convenience that the data seam exists to make
 swappable (the "no mortal external dependency" invariant is about the on-chain *core*, not
 the website's read backend).
 **Assumptions confirmed with the owner:** single long-lived server instance (`next start` on
-one DigitalOcean container); keep Blockfrost (lightweight); freshness should be *"snappy when
-it counts, relaxed when it can."*
+one DigitalOcean container); keep Blockfrost (lightweight, pure front-end); freshness should be
+*"snappy when it counts, relaxed when it can."*
 
 ---
+
+## 0. Decision (chosen approach)
+
+Rather than the adaptive *polling* design of §5, we removed background polling entirely and made
+all refresh **user-driven** — the simplest thing that keeps this a pure front-end on a shared,
+rate-limited Blockfrost key. Chosen over the cache/single-flight build:
+
+- **No interval polling anywhere.** Removed the `setInterval` loops in `usePools` (15s),
+  `usePoolUtxo` (15s), and the orders page (10s). Chain reads now happen on **page mount** and
+  on an **explicit Refresh** only ⇒ an idle/backgrounded tab spends **zero** Blockfrost quota.
+  Cost shifts from `users × time` to just **user clicks**.
+- **Manual Refresh on every data view** — pools list (new ↻), pool detail / LP panel (existing
+  ↻), pool-detail *not-found* (new ↻ for the post-create indexing gap), orders ("Refresh").
+- **Price = live estimate + on-demand refresh.** The quote still updates as you type (it's
+  computed from cached reserves — cheap), plus a ↻ on the rate line that re-scans reserves +
+  re-quotes for the freshest price before you post.
+- **Confirmation = manual.** A just-posted order / deposit shows **instantly** via optimistic
+  local state (`recordPost`, the LP success banner); the user hits Refresh to pull the on-chain
+  confirmation once it indexes (~20–40s). No "settling…" auto-poll.
+- **No server-side cache changes.** The existing 6s `poolsCache` stays; we did **not** add the
+  TTL-cache/single-flight layer of §5.1 (not needed once polling is gone — the request volume is
+  now tiny and click-driven). It remains the obvious next lever if request volume ever warrants.
+- **Unchanged + authoritative:** the tx build/submit path still re-resolves a fresh UTXO at
+  submit, so no preview staleness can produce a bad tx.
+
+The §1–§7 analysis + cost model below is retained as background (and the §5 cache/single-flight
+design remains the documented fallback if a future need reintroduces polling or higher volume).
 
 ## 1. The problem
 

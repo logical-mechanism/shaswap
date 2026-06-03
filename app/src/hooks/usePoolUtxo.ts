@@ -5,17 +5,15 @@ import { fetchPoolUtxo } from "@/lib/client/api";
 import { decodePoolDatum } from "@/lib/chain/datums";
 import { poolStats, type PoolStats, type PoolView } from "@/lib/chain/lp";
 
-/** How often to re-poll the pool UTXO so a just-confirmed deposit/withdraw shows up. */
-const POOL_POLL_MS = 15_000;
-
 /**
  * Resolve the live pool UTXO (through the data seam) and derive its accounting
  * (reserves, circulating LP, LP unit, first-deposit flag) for the LP deposit/withdraw
- * previews. `reload()` re-fetches on demand, and the hook also polls on an interval so
- * the view self-heals after a tx confirms — without it, a deposit's immediate reload
- * runs DURING the indexing gap and re-caches the pre-deposit state (e.g. circ == 0),
- * which then makes the withdraw preview reject a perfectly valid amount. The actual
- * deposit/withdraw builders re-resolve a fresh UTXO at submit, so this is for preview/UX.
+ * previews. Read once on mount; refreshed only on demand via `reload()` (the panel's ↻
+ * Refresh) — NO interval polling, so an idle tab spends no Blockfrost quota (see
+ * documentation/app-data-caching.md). After a deposit/withdraw the on-chain reserves take
+ * ~20–40s to index; hit ↻ to pull the updated view. The actual deposit/withdraw builders
+ * re-resolve a fresh UTXO at submit, so this view is for preview/UX only and a stale
+ * preview never builds a bad tx.
  */
 export function usePoolUtxo(poolId: string | undefined) {
   const [view, setView] = useState<PoolView | null>(null);
@@ -61,14 +59,6 @@ export function usePoolUtxo(poolId: string | undefined) {
       });
     return () => ac.abort();
   }, [poolId, nonce]);
-
-  // Poll so a just-confirmed deposit/withdraw is reflected without a manual refresh
-  // (calls reload from a timer — never a synchronous setState in the effect body).
-  useEffect(() => {
-    if (!poolId) return;
-    const id = setInterval(reload, POOL_POLL_MS);
-    return () => clearInterval(id);
-  }, [poolId, reload]);
 
   return { view, stats, loading, error, reload };
 }

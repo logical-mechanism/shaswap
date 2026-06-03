@@ -21,7 +21,7 @@ export default function PoolManagePage({
 }) {
   const { id } = use(params);
   const poolId = decodeURIComponent(id);
-  const { pools, loading, error } = usePools();
+  const { pools, loading, error, reload } = usePools();
   const pool = pools.find((p) => p.id === poolId);
 
   return (
@@ -50,8 +50,15 @@ export default function PoolManagePage({
           <Pip size={56} mood="thinking" />
           <p className="mt-3 max-w-xs">
             Pip can’t find this pool yet. If you just created it, it may still be settling
-            in — this page refreshes itself, so hang tight.
+            in (~20–40s) — give it a moment, then refresh.
           </p>
+          <button
+            type="button"
+            onClick={reload}
+            className="k-btn-ghost mt-4 px-4 py-2 text-sm"
+          >
+            ↻ Refresh
+          </button>
         </div>
       )}
 

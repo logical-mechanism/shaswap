@@ -13,7 +13,6 @@ import {
 } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import {
-  hasPending,
   mergeRows,
   type OrderRow,
   type RowStatus,
@@ -104,7 +103,7 @@ export default function OrdersPage() {
 
   // Re-read the local activity log + refetch the live set. Only ever sets state from
   // here (a callback), never synchronously in an effect body. Also clears any stale
-  // reclaim error so it isn't sticky across a refresh / poll / status change.
+  // reclaim error so it isn't sticky across a refresh / status change.
   const refresh = useCallback(() => {
     reload();
     setRecent(ownerAddr ? getRecent(ownerAddr, nowMs()) : []);
@@ -118,11 +117,11 @@ export default function OrdersPage() {
     return () => clearTimeout(id);
   }, [refresh]);
 
-  // Whenever the live set resolves, stamp each live order as positively observed
-  // on-chain (seenLive), then re-read the log. This keeps a just-posted order "pending"
-  // (and auto-refreshing) through indexer lag, and makes a LATER disappearance the only
-  // terminal signal — instead of a fixed timer guessing "settled". Deferred per the
-  // project's effect convention.
+  // Whenever the live set resolves (on mount or a manual Refresh), stamp each live order
+  // as positively observed on-chain (seenLive), then re-read the log. This keeps a
+  // just-posted order "pending" through indexer lag until a refresh shows it live, and
+  // makes a LATER disappearance the terminal signal — instead of a fixed timer guessing
+  // "settled". Deferred per the project's effect convention.
   useEffect(() => {
     if (!ownerAddr || orders.length === 0) return;
     const id = setTimeout(() => {
@@ -137,14 +136,11 @@ export default function OrdersPage() {
     () => (ownerAddr ? mergeRows(orders, recent, now) : []),
     [ownerAddr, orders, recent, now],
   );
-  const pending = hasPending(rows);
 
-  // Auto-refresh while something is pending confirmation (stops once it lands).
-  useEffect(() => {
-    if (!pending) return;
-    const id = setInterval(refresh, 10_000);
-    return () => clearInterval(id);
-  }, [pending, refresh]);
+  // No interval polling — a just-posted order shows instantly as "pending" (the local
+  // activity log), and the user hits Refresh to pull its on-chain confirmation once the
+  // chain has indexed it (~20–40s). Keeps an idle tab off the shared Blockfrost quota
+  // (see documentation/app-data-caching.md).
 
   async function onReclaim(row: OrderRow) {
     if (reclaiming.current) return;
