@@ -6,6 +6,7 @@ import { usePools } from "@/hooks/usePools";
 import { LiquidityPanel } from "@/components/pools/LiquidityPanel";
 import { formatUnits } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { PipLoading } from "@/components/PipLoading";
 
 /**
  * Dedicated pool-management page: add / remove liquidity for one pool. The pool id in
@@ -39,7 +40,9 @@ export default function PoolManagePage({
       )}
 
       {loading && !pool && (
-        <div className="k-card h-64 animate-pulse" />
+        <div className="k-card">
+          <PipLoading label="Pip’s finding this pool…" />
+        </div>
       )}
 
       {!loading && !error && !pool && (

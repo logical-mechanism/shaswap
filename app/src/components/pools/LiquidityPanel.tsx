@@ -25,6 +25,7 @@ import { toUserMessage } from "@/lib/client/errors";
 import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { Confetti } from "@/components/Confetti";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
 
 type Tab = "add" | "remove";
@@ -923,9 +924,10 @@ function SubmitButton({
 function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
   if (state.kind === "success") {
     return (
-      <div className="k-note k-note-success mt-3 text-xs">
-        <div className="flex items-center gap-2">
-          <Pip size={26} mood="sparkle" />
+      <div className="k-note k-note-success relative mt-3 text-xs">
+        <Confetti />
+        <div className="relative flex items-center gap-2">
+          <Pip size={26} mood="love" />
           <div className="font-bold text-success">{verb} ✓</div>
         </div>
         <p className="mt-0.5 text-muted">

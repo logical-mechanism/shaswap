@@ -26,6 +26,7 @@ import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
 import { truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { Confetti } from "@/components/Confetti";
 
 type TxState =
   | { kind: "idle" }
@@ -280,9 +281,10 @@ export default function CreatePoolPage() {
         <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
 
         {state.kind === "success" && (
-          <div className="k-note k-note-success mt-3 text-xs">
-            <div className="flex items-center gap-2">
-              <Pip size={26} mood="sparkle" />
+          <div className="k-note k-note-success relative mt-3 text-xs">
+            <Confetti />
+            <div className="relative flex items-center gap-2">
+              <Pip size={26} mood="love" />
               <div className="font-bold text-success">Pool created ✓</div>
             </div>
             <p className="mt-1 text-muted">

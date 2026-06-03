@@ -22,6 +22,7 @@ import { toUserMessage } from "@/lib/client/errors";
 import { APP_CONFIG, explorerTxUrl, networkLabel } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { PipLoading } from "@/components/PipLoading";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
   pending: "k-chip-warn",
@@ -224,14 +225,7 @@ export default function OrdersPage() {
       )}
 
       {connected && showLoading && rows.length === 0 && (
-        <div className="space-y-2">
-          {[0, 1].map((i) => (
-            <div
-              key={i}
-              className="h-16 animate-pulse rounded-2xl border border-border bg-surface-sunk"
-            />
-          ))}
-        </div>
+        <PipLoading label="Pip’s gathering your orders…" />
       )}
 
       {connected && !showLoading && !error && rows.length === 0 && (

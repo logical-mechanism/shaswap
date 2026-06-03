@@ -3,6 +3,7 @@ import { Baloo_2, Nunito, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { Nav } from "@/components/Nav";
+import { MobileNav } from "@/components/MobileNav";
 import { Footer } from "@/components/Footer";
 import { BackdropDecor } from "@/components/decor";
 
@@ -27,9 +28,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ShaSwap — a cozy batch-auction DEX on Cardano",
+  title: "ShaSwap — swap with Pip",
   description:
-    "Swap with Pip. Non-custodial, MEV-resistant batch-auction DEX on Cardano.",
+    "A cozy, fair batch-auction house on Cardano. Non-custodial — your keys, your coins.",
+  openGraph: {
+    title: "ShaSwap — swap with Pip",
+    description: "A cozy, fair batch-auction house on Cardano.",
+    siteName: "ShaSwap",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ShaSwap — swap with Pip",
+    description: "A cozy, fair batch-auction house on Cardano.",
+  },
 };
 
 // Applies the saved (or system) theme to <html> BEFORE first paint, so there's no
@@ -53,13 +65,17 @@ export default function RootLayout({
           attributes like data-gr-ext-installed onto <body> before React hydrates,
           which is otherwise reported as a hydration mismatch. Suppresses only this
           element's attribute diff, one level deep — not our descendants. */}
-      <body className="flex min-h-full flex-col" suppressHydrationWarning>
+      <body
+        className="flex min-h-full flex-col pb-16 sm:pb-0"
+        suppressHydrationWarning
+      >
         <script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} />
         <BackdropDecor />
         <Providers>
           <Nav />
           <main className="flex flex-1 flex-col">{children}</main>
           <Footer />
+          <MobileNav />
         </Providers>
       </body>
     </html>

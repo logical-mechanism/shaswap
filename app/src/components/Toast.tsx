@@ -127,7 +127,7 @@ function Toaster({
 }) {
   return (
     <div
-      className="pointer-events-none fixed bottom-3 right-3 z-[60] flex max-w-[calc(100vw-1.5rem)] flex-col items-end gap-2 sm:bottom-4 sm:right-4"
+      className="pointer-events-none fixed bottom-20 right-3 z-[60] flex max-w-[calc(100vw-1.5rem)] flex-col items-end gap-2 sm:bottom-4 sm:right-4"
       aria-live="polite"
       aria-atomic="false"
     >

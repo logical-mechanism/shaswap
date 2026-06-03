@@ -150,6 +150,27 @@
   }
 }
 
+/* One-shot celebratory burst — each piece flies out/up and fades. Direction comes
+   from per-piece --tx/--ty/--rot custom props. Base opacity 0 so reduced-motion
+   (animation disabled) simply shows nothing. */
+@keyframes confetti-burst {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.3) rotate(0deg);
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--tx), var(--ty)) scale(1) rotate(var(--rot));
+  }
+}
+.confetti-piece {
+  opacity: 0;
+  animation: confetti-burst 0.95s ease-out forwards;
+}
+
 html {
   color-scheme: light;
 }

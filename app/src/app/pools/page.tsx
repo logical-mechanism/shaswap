@@ -7,6 +7,7 @@ import { usePools } from "@/hooks/usePools";
 import { networkLabel } from "@/lib/config";
 import { formatUnits } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { PipLoading } from "@/components/PipLoading";
 
 type SortKey = "liquidity" | "pair" | "fee";
 
@@ -121,7 +122,7 @@ export default function PoolsPage() {
         <div className="k-note k-note-danger text-sm">Couldn’t load the pools: {error}</div>
       )}
 
-      {loading && <SkeletonRows />}
+      {loading && <PipLoading label="Pip’s rounding up the pools…" />}
 
       {!loading && !error && poolCount === 0 && (
         <Empty
@@ -346,19 +347,6 @@ function TokenAvatar({ token, size = 30 }: { token: TokenInfo; size?: number }) 
     >
       {token.ticker.slice(0, 2)}
     </span>
-  );
-}
-
-function SkeletonRows() {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {[0, 1, 2, 3].map((i) => (
-        <div
-          key={i}
-          className="h-28 animate-pulse rounded-[1.75rem] border border-border bg-surface-sunk"
-        />
-      ))}
-    </div>
   );
 }
 

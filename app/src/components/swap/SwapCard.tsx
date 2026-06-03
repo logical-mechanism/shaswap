@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAddress, useNetwork, useWallet } from "@meshsdk/react";
+import {
+  useAddress,
+  useAssets,
+  useLovelace,
+  useNetwork,
+  useWallet,
+} from "@meshsdk/react";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
 import { useTokens } from "@/hooks/useTokens";
@@ -13,6 +19,7 @@ import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
 import { formatPercent, formatUnits, toBaseUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
 import { SlippageSettings } from "./SlippageSettings";
 
@@ -28,6 +35,8 @@ export function SwapCard() {
   const address = useAddress();
   const { tokens, loading: tokensLoading } = useTokens();
   const { pools } = usePools();
+  const lovelace = useLovelace();
+  const assets = useAssets();
 
   const [fromUnit, setFromUnit] = useState<string>("lovelace");
   const [toUnit, setToUnit] = useState<string>("");
@@ -135,9 +144,32 @@ export function SwapCard() {
   // a positive tip (mirrors the buildOrder guard) rather than post an un-settleable order.
   const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") > 0n;
 
+  // Wallet balance of the FROM token (ADA via useLovelace; other tokens via useAssets),
+  // and how much of it is actually spendable. For ADA we hold back a reserve for the
+  // network fee + the order's min-ADA + the (separate) tip, so MAX can't build an
+  // un-submittable tx; for other tokens the whole balance is spendable. Plain render
+  // computation (the React Compiler memoizes).
+  const fromBalance =
+    fromToken?.unit === "lovelace"
+      ? toBig(lovelace ?? "0")
+      : toBig(assets?.find((a) => a.unit === fromToken?.unit)?.quantity ?? "0");
+  const fromIsAda = fromToken?.unit === "lovelace";
+  const adaReserve = ADA_RESERVE + (fromIsAda ? BigInt(tipLovelace || "0") : 0n);
+  const spendable = fromIsAda
+    ? fromBalance > adaReserve
+      ? fromBalance - adaReserve
+      : 0n
+    : fromBalance;
+  const amountBig = hasAmount ? BigInt(baseAmountIn) : 0n;
+  const overBalance = connected && hasAmount && amountBig > fromBalance;
+  const overSpendable =
+    connected && hasAmount && !overBalance && amountBig > spendable;
+  const balanceOk = !overBalance && !overSpendable;
+
   const canPost =
     networkReady &&
     hasAmount &&
+    balanceOk &&
     !!pool &&
     quoteFresh &&
     floor > 0n &&
@@ -151,6 +183,12 @@ export function SwapCard() {
     setToUnit(f);
     setAmount("");
     setPost({ kind: "idle" });
+  }
+
+  function setFromAmount(base: bigint) {
+    if (!fromToken || base <= 0n) return;
+    setAmount(formatUnits(base.toString(), fromToken.decimals));
+    if (post.kind !== "idle") setPost({ kind: "idle" });
   }
 
   async function handlePost() {
@@ -196,8 +234,12 @@ export function SwapCard() {
         ? { label: "Checking network…", disabled: true }
         : !hasAmount
           ? { label: "Enter an amount", disabled: true }
-          : !pool
-            ? { label: "No pool for this pair", disabled: true }
+          : overBalance
+            ? { label: `Insufficient ${fromToken?.ticker ?? "balance"}`, disabled: true }
+            : overSpendable
+              ? { label: "Leave ADA for tip + fees", disabled: true }
+              : !pool
+                ? { label: "No pool for this pair", disabled: true }
             : !quoteFresh || quoteLoading
               ? { label: "Fetching quote…", disabled: true }
               : floor <= 0n
@@ -241,6 +283,16 @@ export function SwapCard() {
           setFromUnit(t.unit);
           if (post.kind !== "idle") setPost({ kind: "idle" });
         }}
+        balance={
+          connected && fromToken
+            ? {
+                display: formatUnits(fromBalance.toString(), fromToken.decimals),
+                insufficient: overBalance || overSpendable,
+                onHalf: () => setFromAmount(spendable / 2n),
+                onMax: () => setFromAmount(spendable),
+              }
+            : undefined
+        }
       />
 
       {/* direction toggle */}
@@ -346,6 +398,10 @@ function toBig(s: string): bigint {
   }
 }
 
+// ADA held back when the FROM token is ADA, so a MAX swap still leaves room for the
+// network fee + the order's min-ADA (the tip is added on top of this). ~3 ₳.
+const ADA_RESERVE = 3_000_000n;
+
 const EXPIRY_MS: Record<string, number> = {
   "1h": 3_600_000,
   "6h": 21_600_000,
@@ -362,9 +418,10 @@ function expiryDeadline(key: string): bigint | null {
 function PostResult({ state }: { state: PostState }) {
   if (state.kind === "success") {
     return (
-      <div className="k-note k-note-success mt-3 text-xs">
-        <div className="flex items-center gap-2">
-          <Pip size={26} mood="sparkle" />
+      <div className="k-note k-note-success relative mt-3 text-xs">
+        <Confetti />
+        <div className="relative flex items-center gap-2">
+          <Pip size={26} mood="love" />
           <div className="font-bold text-success">Order posted ✓</div>
         </div>
         <p className="mt-1 text-muted">
@@ -504,6 +561,7 @@ function TokenField({
   placeholder = "0",
   onAmount,
   onSelect,
+  balance,
 }: {
   label: string;
   token: TokenInfo | undefined;
@@ -515,6 +573,12 @@ function TokenField({
   placeholder?: string;
   onAmount?: (v: string) => void;
   onSelect: (t: TokenInfo) => void;
+  balance?: {
+    display: string;
+    insufficient?: boolean;
+    onMax: () => void;
+    onHalf: () => void;
+  };
 }) {
   return (
     <div className="k-field p-3.5">
@@ -540,6 +604,30 @@ function TokenField({
           onSelect={onSelect}
         />
       </div>
+      {balance && (
+        <div className="mt-2 flex items-center justify-between px-1 text-[11px]">
+          <span className={balance.insufficient ? "font-semibold text-danger" : "text-muted"}>
+            Balance:{" "}
+            <span className="tabular-nums">{balance.display}</span> {token?.ticker}
+          </span>
+          <span className="flex gap-1">
+            <button
+              type="button"
+              onClick={balance.onHalf}
+              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+            >
+              Half
+            </button>
+            <button
+              type="button"
+              onClick={balance.onMax}
+              className="rounded-full border border-border px-2 py-0.5 text-[10px] font-bold text-accent transition-colors hover:bg-accent/10"
+            >
+              Max
+            </button>
+          </span>
+        </div>
+      )}
       {loading && <div className="mt-1 px-1 text-xs text-muted">updating…</div>}
     </div>
   );
