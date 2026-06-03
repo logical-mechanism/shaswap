@@ -105,6 +105,8 @@ test("malformed intents are rejected (never silently posted)", () => {
   assert.throws(() => buildOrder({ ...base, sellAmount: 0n }));
   assert.throws(() => buildOrder({ ...base, limit: 0n }));
   assert.throws(() => buildOrder({ ...base, tip: -1n }));
+  // a 0 tip is un-settleable (the tip is the only solver reward) → rejected
+  assert.throws(() => buildOrder({ ...base, tip: 0n }));
   assert.throws(() => buildOrder({ ...base, ownerPkh: "tooshort" }));
   // malformed stake credential hash
   assert.throws(() =>

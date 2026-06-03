@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useNetwork, useWallet } from "@meshsdk/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAddress, useNetwork, useWallet } from "@meshsdk/react";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
 import { useTokens } from "@/hooks/useTokens";
@@ -24,6 +24,7 @@ type PostState =
 export function SwapCard() {
   const { connected, wallet } = useWallet();
   const networkId = useNetwork();
+  const address = useAddress();
   const { tokens, loading: tokensLoading } = useTokens();
   const { pools } = usePools();
 
@@ -36,6 +37,17 @@ export function SwapCard() {
   const [expiry, setExpiry] = useState<string>("none"); // none|1h|6h|1d|1w
   const [advanced, setAdvanced] = useState<boolean>(false);
   const [post, setPost] = useState<PostState>({ kind: "idle" });
+
+  // Drop a stale "Order posted ✓" (and the spent amount) when the wallet / account
+  // changes — a success from a previous identity must not linger over a new one.
+  const prevAddress = useRef(address);
+  useEffect(() => {
+    if (prevAddress.current !== address) {
+      prevAddress.current = address;
+      setPost({ kind: "idle" });
+      setAmount("");
+    }
+  }, [address]);
 
   // Resolve token objects once the list loads; pick sensible defaults.
   const byUnit = useMemo(
@@ -118,7 +130,9 @@ export function SwapCard() {
   // through a wallet whose network we haven't confirmed yet).
   const networkReady = connected && networkId === APP_CONFIG.networkId;
   const tipLovelace = toBaseUnits(tip || "0", 6);
-  const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") >= 0n;
+  // The tip is the ONLY solver reward — a 0-tip order can never be picked up, so require
+  // a positive tip (mirrors the buildOrder guard) rather than post an un-settleable order.
+  const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") > 0n;
 
   const canPost =
     networkReady &&
@@ -188,16 +202,23 @@ export function SwapCard() {
               : floor <= 0n
                 ? { label: "Amount too small", disabled: true }
                 : !tipValid
-                  ? { label: "Enter a valid tip", disabled: true }
+                  ? { label: "Enter a solver tip", disabled: true }
                   : post.kind === "posting"
                     ? { label: "Posting order…", disabled: true }
                     : { label: "Post order", disabled: false };
 
   return (
     <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
-      <div className="mb-3 flex items-center justify-between px-1">
-        <h1 className="text-base font-semibold">Swap</h1>
-        <SlippageSettings value={slippage} onChange={setSlippage} />
+      <div className="mb-3 flex items-start justify-between gap-2 px-1">
+        <div>
+          <h1 className="text-base font-semibold">Swap</h1>
+          <p className="mt-0.5 text-[11px] leading-snug text-muted/80">
+            You post an order (an intent), not an instant swap. An untrusted solver
+            settles the batch later at a uniform price — never below your floor — or you
+            reclaim it.
+          </p>
+        </div>
+        <SlippageSettings value={slippage} onChange={setSlippage} context="swap" />
       </div>
 
       {/* FROM */}
@@ -213,7 +234,10 @@ export function SwapCard() {
           setAmount(v);
           if (post.kind !== "idle") setPost({ kind: "idle" });
         }}
-        onSelect={(t) => setFromUnit(t.unit)}
+        onSelect={(t) => {
+          setFromUnit(t.unit);
+          if (post.kind !== "idle") setPost({ kind: "idle" });
+        }}
       />
 
       {/* direction toggle */}
@@ -247,19 +271,24 @@ export function SwapCard() {
         editable={false}
         loading={quoteLoading}
         placeholder={quoteLoading ? "…" : "0"}
-        onSelect={(t) => setToUnit(t.unit)}
+        onSelect={(t) => {
+          setToUnit(t.unit);
+          if (post.kind !== "idle") setPost({ kind: "idle" });
+        }}
       />
 
-      {/* rate / price impact / floor */}
+      {/* mid price / impact / pool fee / tip / minimum received */}
       <RateLine
         fromToken={fromToken}
         toToken={toToken}
-        price={quote?.price}
-        priceImpact={quote?.priceImpact}
+        price={quoteFresh ? quote?.price : undefined}
+        priceImpact={quoteFresh ? quote?.priceImpact : undefined}
         loading={quoteLoading}
         slippage={slippage}
         floorDisplay={floorDisplay}
         poolCount={poolCount}
+        feeBps={pool?.feeBps}
+        tip={tip}
       />
 
       {/* advanced: tip + partial fills + expiry */}
@@ -304,14 +333,6 @@ export function SwapCard() {
       </button>
 
       <PostResult state={post} />
-
-      {/* The honest framing: this posts an INTENT; a solver settles it later. */}
-      {pool && hasAmount && post.kind === "idle" && (
-        <p className="mt-2 px-1 text-[11px] leading-relaxed text-muted/80">
-          You post an order (an intent). An untrusted solver settles the batch
-          later at a uniform price — never below your floor — or you reclaim it.
-        </p>
-      )}
     </div>
   );
 }
@@ -347,7 +368,9 @@ function PostResult({ state }: { state: PostState }) {
           <a href="/orders" className="underline underline-offset-2 hover:text-accent">
             Orders
           </a>{" "}
-          once the network confirms (~20–40s), where you can reclaim it.
+          once the network confirms (~20–40s). From there a solver settles the batch at a
+          uniform price (never below your floor) — or you can reclaim it anytime, which
+          returns your input plus the min-ADA and tip.
         </p>
         <a
           href={explorerTxUrl(state.hash)}
@@ -408,7 +431,8 @@ function Advanced({
             <span className="text-muted">
               Solver tip (ADA)
               <span className="block text-[10px] text-muted/60">
-                the only solver reward — higher tips settle sooner
+                the only solver reward — required; a 0-tip order won’t be picked up.
+                Higher tips settle sooner.
               </span>
             </span>
             <input
@@ -523,6 +547,8 @@ function RateLine({
   slippage,
   floorDisplay,
   poolCount,
+  feeBps,
+  tip,
 }: {
   fromToken: TokenInfo | undefined;
   toToken: TokenInfo | undefined;
@@ -532,12 +558,18 @@ function RateLine({
   slippage: number;
   floorDisplay: string;
   poolCount: number;
+  feeBps: number | undefined;
+  tip: string;
 }) {
+  // `price` is the pool MID price (reserveOut/reserveIn) — it ignores the fee and
+  // price impact, so it's labelled honestly as "Mid price" and the estimated "To"
+  // amount / Minimum received below reflect the actual (post-fee) execution.
   const showRate = price && fromToken && toToken && Number(price) > 0;
+  const tipNum = Number(tip);
   return (
     <div className="mt-3 space-y-1.5 px-1 text-xs text-muted">
       <div className="flex items-center justify-between">
-        <span>Rate</span>
+        <span>Mid price</span>
         <span className="tabular-nums">
           {loading
             ? "…"
@@ -555,11 +587,23 @@ function RateLine({
         </span>
       </div>
       <div className="flex items-center justify-between">
+        <span>Pool fee</span>
+        <span className="tabular-nums">
+          {feeBps !== undefined ? `${(feeBps / 100).toFixed(2)}%` : "—"}
+        </span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span>Solver tip</span>
+        <span className="tabular-nums">
+          {Number.isFinite(tipNum) && tipNum > 0 ? `${tip} ADA` : "—"}
+        </span>
+      </div>
+      <div className="flex items-center justify-between">
         <span>Max slippage</span>
         <span className="tabular-nums">{slippage.toFixed(1)}%</span>
       </div>
       <div className="flex items-center justify-between font-medium text-foreground/90">
-        <span>Floor (min received)</span>
+        <span>Minimum received</span>
         <span className="tabular-nums">
           {floorDisplay && toToken ? `${floorDisplay} ${toToken.ticker}` : "—"}
         </span>

@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hasPending, mergeRows, PENDING_MS } from "./orderRows.ts";
+import { hasPending, mergeRows, OBSERVE_FALLBACK_MS } from "./orderRows.ts";
 
 const tok = (ticker: string, decimals = 0) => ({
   unit: ticker.toLowerCase(),
@@ -24,7 +24,11 @@ const live = (ref: string, partial = false) => ({
   partial,
 });
 
-const recent = (ref: string, ts: number, reclaimTx?: string) => ({
+const recent = (
+  ref: string,
+  ts: number,
+  opts: { reclaimTx?: string; seenLive?: number } = {},
+) => ({
   ref,
   txHash: ref.split("#")[0],
   inUnit: "test",
@@ -36,7 +40,8 @@ const recent = (ref: string, ts: number, reclaimTx?: string) => ({
   minOut: "50",
   partial: false,
   ts,
-  reclaimTx,
+  seenLive: opts.seenLive,
+  reclaimTx: opts.reclaimTx,
 });
 
 test("live order → open + reclaimable", () => {
@@ -47,23 +52,47 @@ test("live order → open + reclaimable", () => {
   assert.equal(rows[0].partial, true);
 });
 
-test("recent post not yet on-chain → pending (then settled after the window)", () => {
+test("recent post never observed on-chain stays pending past the old 3-min cutoff", () => {
   const now = 10_000_000;
+  // A fresh, unseen post is pending and keeps the auto-refresh alive.
   const fresh = mergeRows([], [recent("b#0", now - 1000)], now);
   assert.equal(fresh[0].status, "pending");
   assert.equal(fresh[0].canReclaim, false);
   assert.ok(hasPending(fresh));
 
-  const old = mergeRows([], [recent("b#0", now - PENDING_MS - 1)], now);
-  assert.equal(old[0].status, "settled");
-  assert.equal(hasPending(old), false);
+  // Indexer lag: 5 min old, still never seen on-chain → MUST remain pending (the old
+  // behaviour flipped this to a terminal "settled" and killed the poll).
+  const lagging = mergeRows([], [recent("b#0", now - 5 * 60 * 1000)], now);
+  assert.equal(lagging[0].status, "pending");
+  assert.ok(hasPending(lagging));
+
+  // Fallback: never seen and very old → terminal, so a dropped tx stops polling.
+  const stale = mergeRows([], [recent("b#0", now - OBSERVE_FALLBACK_MS - 1)], now);
+  assert.equal(stale[0].status, "completed");
+  assert.equal(hasPending(stale), false);
+});
+
+test("once seen on-chain, a later disappearance is the terminal signal", () => {
+  const now = 10_000_000;
+  // Seen live and still live → open (live set is authoritative).
+  const stillLive = mergeRows(
+    [live("c#0")],
+    [recent("c#0", now - 1000, { seenLive: now - 500 })],
+    now,
+  );
+  assert.equal(stillLive[0].status, "open");
+
+  // Seen live before, now gone from the live set → completed (even if young).
+  const gone = mergeRows([], [recent("c#0", now - 1000, { seenLive: now - 500 })], now);
+  assert.equal(gone[0].status, "completed");
+  assert.equal(hasPending(gone), false);
 });
 
 test("a live entry that we reclaimed locally shows as reclaimed (chain lag)", () => {
   const now = 10_000_000;
   const rows = mergeRows(
     [live("c#0")],
-    [recent("c#0", now - 1000, "reclaimtxhash")],
+    [recent("c#0", now - 1000, { reclaimTx: "reclaimtxhash" })],
     now,
   );
   assert.equal(rows.length, 1);
@@ -76,15 +105,18 @@ test("live entry dedups its recent counterpart and is ordered first", () => {
   const now = 10_000_000;
   const rows = mergeRows(
     [live("d#0")],
-    [recent("d#0", now - 1000), recent("e#0", now - PENDING_MS - 1)],
+    [
+      recent("d#0", now - 1000),
+      recent("e#0", now - 1000, { seenLive: now - 800 }),
+    ],
     now,
   );
-  // d#0 once (open), e#0 settled; pending/open before settled
+  // d#0 once (open), e#0 completed (seen then gone); open before completed
   assert.deepEqual(
     rows.map((r) => [r.ref, r.status]),
     [
       ["d#0", "open"],
-      ["e#0", "settled"],
+      ["e#0", "completed"],
     ],
   );
 });

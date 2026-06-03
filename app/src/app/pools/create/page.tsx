@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useAssets, useNetwork, useWallet } from "@meshsdk/react";
 import type { TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
+import { usePools } from "@/hooks/usePools";
 import { createPool } from "@/lib/client/tx";
 import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
@@ -78,6 +79,7 @@ export default function CreatePoolPage() {
   const { connected, wallet } = useWallet();
   const networkId = useNetwork();
   const assets = useAssets();
+  const { pools } = usePools();
 
   const [tokenA, setTokenA] = useState<TokenInfo | undefined>(undefined);
   const [tokenB, setTokenB] = useState<TokenInfo | undefined>(ADA_TOKEN);
@@ -107,6 +109,19 @@ export default function CreatePoolPage() {
   const fee = validBps ? bpsToFee(bps) : null;
 
   const samePair = !!tokenA && !!tokenB && tokenA.unit === tokenB.unit;
+
+  // A pool for the same pair (either orientation) AND the same fee already exists. Only a
+  // non-blocking warning — duplicates are valid (the chain allows them), but usually a
+  // mistake, and the existing pool is the better place to add liquidity.
+  const duplicate = useMemo(() => {
+    if (!tokenA || !tokenB || samePair || !validBps) return undefined;
+    return pools.find(
+      (p) =>
+        p.feeBps === bps &&
+        ((p.tokenA.unit === tokenA.unit && p.tokenB.unit === tokenB.unit) ||
+          (p.tokenA.unit === tokenB.unit && p.tokenB.unit === tokenA.unit)),
+    );
+  }, [pools, tokenA, tokenB, samePair, validBps, bps]);
   const canSubmit =
     networkReady &&
     !!tokenA &&
@@ -173,12 +188,23 @@ export default function CreatePoolPage() {
       <header className="mb-4">
         <h1 className="text-2xl font-semibold tracking-tight">Create pool</h1>
         <p className="mt-1 text-sm text-muted">
-          Mint a new pool for any pair of assets. Pool creation is permissionless. The
-          pool starts empty — you add the first liquidity right after.
+          Mint a new pool for any pair of assets you hold. Pool creation is
+          permissionless. The pool starts empty — you add the first liquidity right after.
+        </p>
+        <p className="mt-1 text-xs text-muted/70">
+          Creating an empty pool locks a ~2 ₳ seed (plus network fees). As the creator you
+          can close it and reclaim that seed any time — until someone seeds it with
+          liquidity, after which it’s permanent.
         </p>
       </header>
 
       <div className="w-full rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
+        <div className="mb-2 px-1 text-xs text-muted/70">
+          {connected
+            ? "Tokens to choose from: ADA + the assets held in your wallet."
+            : "Connect a wallet to choose tokens — the list is ADA + your held assets."}
+        </div>
+
         <TokenRow
           label="Token A"
           token={tokenA}
@@ -204,7 +230,12 @@ export default function CreatePoolPage() {
         />
 
         <div className="mt-3 rounded-xl border border-white/5 bg-black/20 p-3">
-          <div className="mb-2 px-1 text-xs text-muted">Fee (basis points)</div>
+          <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted">
+            <span>Trading fee</span>
+            <span className="tabular-nums text-foreground/80">
+              {fee ? `${(bps / 100).toFixed(2)}%` : "—"}
+            </span>
+          </div>
           <div className="flex items-center gap-3">
             <input
               inputMode="numeric"
@@ -225,10 +256,25 @@ export default function CreatePoolPage() {
           </div>
           <div className="mt-1.5 px-1 text-xs text-muted">
             {fee
-              ? `${(bps / 100).toFixed(2)}% — fee_num/fee_den = ${fee.num}/${fee.den}`
-              : "Enter 0–9999 (30 bps = 0.30% = 3/1000)"}
+              ? `${(bps / 100).toFixed(2)}% per trade — stored on-chain as ${fee.num}/${fee.den}.`
+              : "Enter the fee in basis points (30 bps = 0.30%, range 0–9999)."}
           </div>
         </div>
+
+        {duplicate && (
+          <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+            A {duplicate.tokenA.ticker}/{duplicate.tokenB.ticker} pool at{" "}
+            {(duplicate.feeBps / 100).toFixed(2)}% already exists. You can still create
+            another, but you may prefer to{" "}
+            <Link
+              href={`/pools/${encodeURIComponent(duplicate.id)}`}
+              className="underline underline-offset-2 hover:text-amber-200"
+            >
+              add liquidity to the existing pool
+            </Link>
+            .
+          </div>
+        )}
 
         <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
 

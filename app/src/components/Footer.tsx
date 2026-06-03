@@ -9,7 +9,8 @@ export function Footer() {
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
-          {networkLabel()} · skeleton preview
+          {networkLabel()}
+          {APP_CONFIG.network !== "mainnet" && " · testnet"}
           <span className="sr-only">network {APP_CONFIG.network}</span>
         </span>
       </div>

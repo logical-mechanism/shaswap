@@ -5,16 +5,21 @@ import { useEffect, useRef, useState } from "react";
 const PRESETS = [0.1, 0.5, 1.0];
 
 /**
- * Slippage settings affordance. The value sets the per-order **floor** (limit) on
- * the swap card: `floor = estimatedOut × (1 − slippage)`, serialized into the
- * OrderDatum — i.e. it bounds the worst fill the user will accept. NOT cosmetic.
+ * Slippage settings affordance. The value is NOT cosmetic — it sets an enforced minimum:
+ *  - swap: the per-order **floor** (`floor = estimatedOut × (1 − slippage)`), serialized
+ *    into the OrderDatum, bounding the worst fill the solver may settle at;
+ *  - liquidity: the **minimum amounts out** (min-LP-received on deposit, min token amounts
+ *    on withdraw) the tx will accept if the pool moves before it confirms.
+ * `context` makes the helper copy match the flow it's used in.
  */
 export function SlippageSettings({
   value,
   onChange,
+  context = "swap",
 }: {
   value: number;
   onChange: (v: number) => void;
+  context?: "swap" | "liquidity";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -59,7 +64,7 @@ export function SlippageSettings({
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-medium">Max slippage</span>
             <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-muted">
-              sets your floor
+              {context === "liquidity" ? "sets your minimum out" : "sets your floor"}
             </span>
           </div>
           <div className="flex gap-1.5">

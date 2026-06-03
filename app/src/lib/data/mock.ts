@@ -46,6 +46,7 @@ const POOLS: Pool[] = [
     reserveA: "861338911", // ~861 ADA
     reserveB: "1200000000",
     feeBps: 30,
+    firstDeposit: false,
   },
   {
     id: "a2c6916e…poolnft",
@@ -54,6 +55,17 @@ const POOLS: Pool[] = [
     reserveA: "300000000",
     reserveB: "500000000",
     feeBps: 30,
+    firstDeposit: false,
+  },
+  {
+    // An empty (never-seeded) pool, so the "needs first deposit" affordance is exercised.
+    id: "e0000000…poolnft",
+    tokenA: TEST,
+    tokenB: HOSKY,
+    reserveA: "0",
+    reserveB: "0",
+    feeBps: 30,
+    firstDeposit: true,
   },
 ];
 

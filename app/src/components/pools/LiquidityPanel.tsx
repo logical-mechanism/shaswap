@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { deserializeAddress } from "@meshsdk/core";
-import { useAssets, useNetwork, useWallet } from "@meshsdk/react";
+import { useAddress, useAssets, useNetwork, useWallet } from "@meshsdk/react";
 import type { Pool } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
 import { usePoolUtxo } from "@/hooks/usePoolUtxo";
+import { useWalletCollateral } from "@/hooks/useWalletCollateral";
 import {
   buildDeposit,
   buildWithdraw,
@@ -50,15 +51,26 @@ function withSlippage(amount: bigint, slippagePct: number): bigint {
 export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { connected, wallet } = useWallet();
   const networkId = useNetwork();
+  const address = useAddress();
   const assets = useAssets();
+  const { hasCollateral, loading: collateralLoading } = useWalletCollateral();
   const { view, stats, loading, error, reload } = usePoolUtxo(pool.id);
 
   const [tab, setTab] = useState<Tab>("add");
   const [slippage, setSlippage] = useState(0.5);
+  // A terminal "pool closed" outcome, lifted ABOVE the stats/view gate so the success
+  // persists: closing burns the pool UTXO, so onDone()→reload() then resolves to null and
+  // would otherwise replace the success panel with a "Pool UTXO not found" error.
+  const [closedTxHash, setClosedTxHash] = useState<string | null>(null);
 
   const wrongNetwork =
     connected && networkId !== undefined && networkId !== APP_CONFIG.networkId;
   const networkReady = connected && networkId === APP_CONFIG.networkId;
+  // Gate script-spend writes on a detected collateral UTXO (deposit/withdraw/close all
+  // need one). While the check is in flight, don't block — some wallets set collateral on
+  // demand; only hard-disable once we positively know it's absent.
+  const collateralReady = hasCollateral || collateralLoading;
+  const needsCollateral = connected && !hasCollateral && !collateralLoading;
 
   // The connected wallet's payment key hash — gates the creator-only "Close empty pool"
   // affordance against the pool's `creator`. A never-seeded pool can be torn down by its
@@ -95,6 +107,34 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   }, [assets, stats]);
   const position = stats ? lpPositionValue(stats, lpBalance) : { a: 0n, b: 0n };
 
+  // Terminal: the pool was closed. Persist the success above everything else.
+  if (closedTxHash) {
+    return (
+      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
+        <div className="rounded-xl border border-accent/20 bg-accent/10 p-3 text-sm">
+          <div className="font-medium text-accent">Pool closed ✓</div>
+          <p className="mt-0.5 text-xs text-muted">
+            The pool was permanently burned and the ~2 ₳ seed is on its way back to your
+            wallet (~20–40s).
+          </p>
+          <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+            <a
+              href={explorerTxUrl(closedTxHash)}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
+            >
+              {truncate(closedTxHash, 10, 8)} ↗
+            </a>
+            <Link href="/pools" className="text-accent hover:underline">
+              ← Back to pools
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-md rounded-2xl border border-white/10 bg-surface/80 p-4 shadow-2xl backdrop-blur-sm sm:p-5">
       <div className="mb-3 flex items-center justify-between px-1">
@@ -116,7 +156,11 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
           >
             ↻
           </button>
-          <SlippageSettings value={slippage} onChange={setSlippage} />
+          <SlippageSettings
+            value={slippage}
+            onChange={setSlippage}
+            context="liquidity"
+          />
         </div>
       </div>
 
@@ -129,10 +173,13 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
       )}
 
       {stats && view && (
-        <>
+        // Keyed by wallet identity: a wallet/account switch remounts the forms, clearing
+        // any stale input + success/error from the previous identity.
+        <div key={address ?? "disconnected"}>
           <PositionLine
             pool={pool}
             lpBalance={lpBalance}
+            circ={stats.circ}
             position={position}
             firstDeposit={stats.firstDeposit}
           />
@@ -147,6 +194,8 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               networkReady={networkReady}
               wrongNetwork={!!wrongNetwork}
               connected={connected}
+              collateralReady={collateralReady}
+              needsCollateral={needsCollateral}
               onDone={reload}
             />
           ) : (
@@ -160,6 +209,8 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               networkReady={networkReady}
               wrongNetwork={!!wrongNetwork}
               connected={connected}
+              collateralReady={collateralReady}
+              needsCollateral={needsCollateral}
               onDone={reload}
             />
           )}
@@ -171,10 +222,19 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               connected={connected}
               networkReady={networkReady}
               wrongNetwork={!!wrongNetwork}
-              onDone={reload}
+              collateralReady={collateralReady}
+              needsCollateral={needsCollateral}
+              onClosed={setClosedTxHash}
             />
           )}
-        </>
+
+          {stats.firstDeposit && connected && !isCreator && (
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/10 p-3 text-xs text-muted">
+              This pool is empty (no liquidity yet). Only its creator can close an empty
+              pool to reclaim the ~2 ₳ seed — anyone can seed it with the first deposit.
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -191,6 +251,8 @@ function AddForm({
   networkReady,
   wrongNetwork,
   connected,
+  collateralReady,
+  needsCollateral,
   onDone,
 }: {
   pool: Pool;
@@ -201,6 +263,8 @@ function AddForm({
   networkReady: boolean;
   wrongNetwork: boolean;
   connected: boolean;
+  collateralReady: boolean;
+  needsCollateral: boolean;
   onDone: () => void;
 }) {
   const [amountA, setAmountA] = useState("");
@@ -239,8 +303,19 @@ function AddForm({
     }
   }
 
+  // The enforced minimum LP the tx will accept if the pool moves before it confirms.
+  const minLpOut =
+    preview && preview.error === null && preview.lpToUser > 0n
+      ? withSlippage(preview.lpToUser, slippage)
+      : 0n;
+
   const canSubmit =
-    networkReady && !!preview && preview.error === null && preview.lpToUser > 0n && state.kind !== "busy";
+    networkReady &&
+    collateralReady &&
+    !!preview &&
+    preview.error === null &&
+    preview.lpToUser > 0n &&
+    state.kind !== "busy";
 
   async function submit() {
     if (!canSubmit || !preview) return;
@@ -250,7 +325,7 @@ function AddForm({
         pool,
         deltaA,
         deltaB,
-        minLpOut: withSlippage(preview.lpToUser, slippage),
+        minLpOut,
       });
       setState({ kind: "success", hash: res.txHash });
       setAmountA("");
@@ -267,22 +342,25 @@ function AddForm({
       ? "Wrong network"
       : !networkReady
         ? "Checking network…"
-        : deltaA <= 0n || (first && deltaB <= 0n)
-          ? "Enter an amount"
-          : preview?.error
-            ? "Amount too small"
-            : state.kind === "busy"
-              ? "Depositing…"
-              : first
-                ? "Seed pool"
-                : "Add liquidity";
+        : needsCollateral
+          ? "Set a collateral UTXO"
+          : deltaA <= 0n || (first && deltaB <= 0n)
+            ? "Enter an amount"
+            : preview?.error
+              ? "Can’t add that amount"
+              : state.kind === "busy"
+                ? "Depositing…"
+                : first
+                  ? "Seed pool"
+                  : "Add liquidity";
 
   return (
     <div className="mt-3">
       {first && (
         <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
-          This pool has no circulating LP yet — you’re the first depositor. LP minted
-          = √(reserveA · reserveB); 1000 LP is permanently locked to seed the pool.
+          This pool has no circulating LP yet — you’re the first depositor. Your deposit
+          ratio sets the pool’s opening price. LP minted = √(reserveA · reserveB); 1000 LP
+          is permanently locked to seed the pool.
         </div>
       )}
 
@@ -303,7 +381,7 @@ function AddForm({
         label={
           first
             ? `${pool.tokenB.ticker} to add`
-            : `${pool.tokenB.ticker} (paired automatically)`
+            : `${pool.tokenB.ticker} (paired at pool ratio)`
         }
         ticker={pool.tokenB.ticker}
         value={
@@ -316,6 +394,13 @@ function AddForm({
         }}
       />
 
+      {!first && deltaB > 0n && (
+        <p className="mt-1 px-1 text-[10px] text-muted/70">
+          Paired automatically at the current pool ratio and rounded up, so your share
+          backing holds on both sides.
+        </p>
+      )}
+
       <div className="mt-3 space-y-1.5 px-1 text-xs text-muted">
         <Row label="LP you receive">
           <span className="tabular-nums">
@@ -324,10 +409,28 @@ function AddForm({
               : "—"}
           </span>
         </Row>
+        <Row label="At least (after slippage)">
+          <span className="tabular-nums">
+            {minLpOut > 0n ? `${minLpOut.toLocaleString()} LP` : "—"}
+          </span>
+        </Row>
         <Row label="Max slippage">
           <span className="tabular-nums">{slippage.toFixed(1)}%</span>
         </Row>
       </div>
+
+      {deltaA > 0n && (!first || deltaB > 0n) && preview?.error && (
+        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+          {depositErrorMessage(preview.error)}
+        </div>
+      )}
+
+      {needsCollateral && (
+        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+          This action spends a script UTXO, so your wallet needs a collateral UTXO. Set
+          one in your wallet, then retry.
+        </div>
+      )}
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Liquidity added" />
@@ -347,6 +450,8 @@ function RemoveForm({
   networkReady,
   wrongNetwork,
   connected,
+  collateralReady,
+  needsCollateral,
   onDone,
 }: {
   pool: Pool;
@@ -358,6 +463,8 @@ function RemoveForm({
   networkReady: boolean;
   wrongNetwork: boolean;
   connected: boolean;
+  collateralReady: boolean;
+  needsCollateral: boolean;
   onDone: () => void;
 }) {
   const [lpInput, setLpInput] = useState("");
@@ -385,9 +492,16 @@ function RemoveForm({
     }
   }
 
+  // Enforced minimums the tx will accept if the pool moves before it confirms.
+  const minAOut =
+    preview && preview.error === null ? withSlippage(preview.recvA, slippage) : 0n;
+  const minBOut =
+    preview && preview.error === null ? withSlippage(preview.recvB, slippage) : 0n;
+
   const overBalance = lpToBurn > lpBalance;
   const canSubmit =
     networkReady &&
+    collateralReady &&
     !!preview &&
     preview.error === null &&
     !overBalance &&
@@ -400,8 +514,8 @@ function RemoveForm({
       const res = await withdrawLiquidity(wallet, {
         pool,
         lpToBurn,
-        minAOut: withSlippage(preview.recvA, slippage),
-        minBOut: withSlippage(preview.recvB, slippage),
+        minAOut,
+        minBOut,
       });
       setState({ kind: "success", hash: res.txHash });
       setLpInput("");
@@ -417,15 +531,17 @@ function RemoveForm({
       ? "Wrong network"
       : !networkReady
         ? "Checking network…"
-        : lpToBurn <= 0n
-          ? "Enter LP amount"
-          : overBalance
-            ? "More than your LP"
-            : preview?.error
-              ? "Can't withdraw that amount"
-              : state.kind === "busy"
-                ? "Withdrawing…"
-                : "Remove liquidity";
+        : needsCollateral
+          ? "Set a collateral UTXO"
+          : lpToBurn <= 0n
+            ? "Enter LP amount"
+            : overBalance
+              ? "More than your LP"
+              : preview?.error
+                ? "Can't withdraw that amount"
+                : state.kind === "busy"
+                  ? "Withdrawing…"
+                  : "Remove liquidity";
 
   return (
     <div className="mt-3">
@@ -470,6 +586,13 @@ function RemoveForm({
               : "—"}
           </span>
         </Row>
+        <Row label="At least (after slippage)">
+          <span className="tabular-nums">
+            {preview && preview.error === null
+              ? `${formatUnits(minAOut.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} + ${formatUnits(minBOut.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker}`
+              : "—"}
+          </span>
+        </Row>
         <Row label="Max slippage">
           <span className="tabular-nums">{slippage.toFixed(1)}%</span>
         </Row>
@@ -478,6 +601,13 @@ function RemoveForm({
       {lpToBurn > 0n && !overBalance && preview?.error && (
         <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
           {withdrawErrorMessage(preview.error)}
+        </div>
+      )}
+
+      {needsCollateral && (
+        <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-xs text-amber-300">
+          This action spends a script UTXO, so your wallet needs a collateral UTXO. Set
+          one in your wallet, then retry.
         </div>
       )}
 
@@ -495,27 +625,43 @@ function CloseEmptyPool({
   connected,
   networkReady,
   wrongNetwork,
-  onDone,
+  collateralReady,
+  needsCollateral,
+  onClosed,
 }: {
   pool: Pool;
   wallet: ReturnType<typeof useWallet>["wallet"];
   connected: boolean;
   networkReady: boolean;
   wrongNetwork: boolean;
-  onDone: () => void;
+  collateralReady: boolean;
+  needsCollateral: boolean;
+  onClosed: (txHash: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
 
+  // The single reason the close is currently blocked, surfaced up front (not only at
+  // the confirm step) so the user knows before committing.
+  const gateReason = !connected
+    ? "Connect wallet"
+    : wrongNetwork
+      ? "Wrong network"
+      : needsCollateral
+        ? "Set a collateral UTXO"
+        : null;
+  const gated = !networkReady || !collateralReady;
+
   async function submit() {
-    if (!networkReady || submitting.current) return;
+    if (!networkReady || !collateralReady || submitting.current) return;
     submitting.current = true;
     setState({ kind: "busy" });
     try {
       const res = await closePool(wallet, pool);
-      setState({ kind: "success", hash: res.txHash });
-      onDone();
+      // Lift the terminal outcome to the parent — it persists above the pool-UTXO
+      // reload, which now resolves to null (the pool is burned).
+      onClosed(res.txHash);
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -530,36 +676,17 @@ function CloseEmptyPool({
         ~2 ₳ seed to your wallet. (Once it has liquidity it can never be closed.)
       </div>
 
-      {state.kind === "success" ? (
-        <div className="mt-2 text-xs">
-          <div className="font-medium text-accent">Pool closed ✓</div>
-          <p className="mt-0.5 text-muted">
-            The ~2 ₳ seed is on its way back to your wallet.
-          </p>
-          <div className="mt-1 flex items-center justify-between gap-3">
-            <a
-              href={explorerTxUrl(state.hash)}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
-            >
-              {truncate(state.hash, 10, 8)} ↗
-            </a>
-            <Link href="/pools" className="text-accent hover:underline">
-              ← Back to pools
-            </Link>
-          </div>
-        </div>
-      ) : !confirming ? (
+      {!confirming ? (
         <button
           type="button"
+          disabled={gated}
           onClick={() => {
             setConfirming(true);
             if (state.kind !== "idle") setState({ kind: "idle" });
           }}
-          className="mt-2 w-full rounded-xl border border-red-500/30 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:bg-red-500/10"
+          className="mt-2 w-full rounded-xl border border-red-500/30 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-muted"
         >
-          Close empty pool
+          {gateReason ?? "Close empty pool"}
         </button>
       ) : (
         <div className="mt-2 flex gap-2">
@@ -573,17 +700,11 @@ function CloseEmptyPool({
           </button>
           <button
             type="button"
-            disabled={!networkReady || state.kind === "busy"}
+            disabled={gated || state.kind === "busy"}
             onClick={submit}
             className="flex-1 rounded-xl bg-red-500/80 py-2.5 text-sm font-semibold text-black transition-opacity hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-muted"
           >
-            {!connected
-              ? "Connect wallet"
-              : wrongNetwork
-                ? "Wrong network"
-                : state.kind === "busy"
-                  ? "Closing…"
-                  : "Confirm — burn pool"}
+            {gateReason ?? (state.kind === "busy" ? "Closing…" : "Confirm — burn pool")}
           </button>
         </div>
       )}
@@ -595,6 +716,23 @@ function CloseEmptyPool({
       )}
     </div>
   );
+}
+
+/** Map a `buildDeposit` throw into a user-facing explanation (distinct causes). */
+function depositErrorMessage(err: string): string {
+  if (/first deposit too small|must exceed min_liq/i.test(err)) {
+    return "This first deposit is too small to seed the pool — it must mint more than the locked minimum liquidity. Increase both amounts.";
+  }
+  if (/rounds to zero/i.test(err)) {
+    return "That amount is too small to mint any LP. Increase it.";
+  }
+  if (/LP slippage|below minimum/i.test(err)) {
+    return "The pool moved since this quote. It refreshes automatically — or hit ↻ — then try again, or raise your slippage.";
+  }
+  if (/zero asset_a reserve|drop below min_liq/i.test(err)) {
+    return "The pool data shown may be a step behind a recent change. It refreshes automatically every few seconds — or hit ↻ — then try again.";
+  }
+  return err;
 }
 
 /** Map a `buildWithdraw` throw into a user-facing explanation. */
@@ -616,18 +754,33 @@ function withdrawErrorMessage(err: string): string {
 function PositionLine({
   pool,
   lpBalance,
+  circ,
   position,
   firstDeposit,
 }: {
   pool: Pool;
   lpBalance: bigint;
+  circ: bigint;
   position: { a: bigint; b: bigint };
   firstDeposit: boolean;
 }) {
+  // LP tokens are a share of the pool: your fraction of circulating LP = your fraction
+  // of the reserves. Shown as a % so the raw counts (up to ~9.2e18 total) are legible.
+  const sharePct =
+    circ > 0n && lpBalance > 0n
+      ? Number((lpBalance * 1_000_000n) / circ) / 10_000
+      : 0;
+  const shareLabel =
+    sharePct === 0 ? "" : sharePct < 0.01 ? "<0.01% of the pool" : `${sharePct.toFixed(2)}% of the pool`;
   return (
     <div className="rounded-xl border border-white/5 bg-black/10 p-3 text-xs">
       <div className="flex items-center justify-between">
-        <span className="text-muted">Your position</span>
+        <span className="text-muted">
+          Your position
+          <span className="block text-[10px] text-muted/60">
+            LP tokens = your share of this pool’s reserves
+          </span>
+        </span>
         <span className="tabular-nums font-medium">
           {lpBalance.toLocaleString()} LP
         </span>
@@ -638,6 +791,9 @@ function PositionLine({
           {pool.tokenA.ticker} +{" "}
           {formatUnits(position.b.toString(), pool.tokenB.decimals)}{" "}
           {pool.tokenB.ticker}
+          {shareLabel && (
+            <span className="block text-[10px] text-muted/70">{shareLabel}</span>
+          )}
         </div>
       )}
       {firstDeposit && lpBalance === 0n && (

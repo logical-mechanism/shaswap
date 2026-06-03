@@ -15,9 +15,11 @@ import {
   type OrderDatum,
 } from "@/lib/chain/datums";
 import {
+  lpUnitForPool,
   ORDER_ADDR,
   POOL_ADDR,
   POOL_MIN_ADA,
+  TOTAL_LP,
 } from "@/lib/chain/deployment";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
@@ -233,15 +235,20 @@ export class BlockfrostDataProvider implements DataProvider {
         this.tokenInfo(datum.assetA),
         this.tokenInfo(datum.assetB),
       ]);
+      // Circulating LP = total_lp − (LP held in the pool UTXO); none circulating ⇒ the
+      // pool has never been seeded (the next deposit is the seeding first deposit).
+      const nftUnit = assetUnit(datum.nft);
+      const heldLp = qtyOfUnit(u.output.amount, lpUnitForPool(nftUnit));
       out.push({
         datum,
         pool: {
-          id: assetUnit(datum.nft),
+          id: nftUnit,
           tokenA,
           tokenB,
           reserveA: reserveOf(u.output.amount, datum.assetA).toString(),
           reserveB: reserveOf(u.output.amount, datum.assetB).toString(),
           feeBps: feeToBps(datum.feeNum, datum.feeDen),
+          firstDeposit: TOTAL_LP - heldLp === 0n,
         },
       });
     }

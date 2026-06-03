@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePools } from "@/hooks/usePools";
+import { networkLabel } from "@/lib/config";
 import { formatUnits } from "@/lib/format";
 
 export default function PoolsPage() {
@@ -13,8 +14,8 @@ export default function PoolsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Pools</h1>
           <p className="mt-1 text-sm text-muted">
-            Live preprod liquidity pools, read through the data-access layer. Select a
-            pool to add or remove liquidity.
+            Live {networkLabel()} liquidity pools, read through the data-access layer.
+            Select a pool to add or remove liquidity.
           </p>
         </div>
         <Link
@@ -34,7 +35,15 @@ export default function PoolsPage() {
       {loading && <SkeletonRows />}
 
       {!loading && !error && pools.length === 0 && (
-        <Empty>No pools found.</Empty>
+        <Empty>
+          <div>No pools yet.</div>
+          <Link
+            href="/pools/create"
+            className="mt-3 inline-block rounded-xl bg-gradient-to-r from-accent to-accent-2 px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+          >
+            Create the first pool →
+          </Link>
+        </Empty>
       )}
 
       {!loading && pools.length > 0 && (
@@ -61,12 +70,23 @@ export default function PoolsPage() {
                     >
                       {p.tokenA.ticker} / {p.tokenB.ticker}
                     </Link>
+                    {p.firstDeposit && (
+                      <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-normal text-amber-300">
+                        Empty — needs first deposit
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 tabular-nums text-muted">
-                    {formatUnits(p.reserveA, p.tokenA.decimals)}{" "}
-                    {p.tokenA.ticker} ·{" "}
-                    {formatUnits(p.reserveB, p.tokenB.decimals)}{" "}
-                    {p.tokenB.ticker}
+                    {p.firstDeposit ? (
+                      <span className="text-muted/60">—</span>
+                    ) : (
+                      <>
+                        {formatUnits(p.reserveA, p.tokenA.decimals)}{" "}
+                        {p.tokenA.ticker} ·{" "}
+                        {formatUnits(p.reserveB, p.tokenB.decimals)}{" "}
+                        {p.tokenB.ticker}
+                      </>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-muted">
                     {(p.feeBps / 100).toFixed(2)}%

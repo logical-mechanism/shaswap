@@ -106,7 +106,9 @@ export function buildOrder(intent: OrderIntent): BuiltOrder {
   }
   if (sellAmount <= 0n) throw new Error("sell amount must be positive");
   if (limit <= 0n) throw new Error("limit (floor) must be positive");
-  if (tip < 0n) throw new Error("tip must be non-negative");
+  // The tip is the ONLY solver reward (§5.2.1) — a 0-tip order has no incentive and no
+  // solver will ever pick it up, so reject it client-side rather than post a stuck order.
+  if (tip <= 0n) throw new Error("tip must be positive (the only solver reward)");
   if (deadline !== null && deadline <= 0n) {
     throw new Error("deadline, if set, must be a positive POSIX timestamp");
   }

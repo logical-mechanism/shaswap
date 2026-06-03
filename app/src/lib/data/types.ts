@@ -39,6 +39,12 @@ export interface Pool {
   reserveB: string;
   /** Static trading fee as basis points (e.g. 30 = 0.30%). */
   feeBps: number;
+  /**
+   * True when the pool has never been seeded — no circulating LP (held == total_lp), so
+   * the next deposit is the seeding first deposit. Derived at the data seam from the pool
+   * UTXO; lets the UI flag empty pools instead of showing them as `0 / 0` live pools.
+   */
+  firstDeposit?: boolean;
 }
 
 /** A price quote for swapping `amountIn` of `tokenIn` into `tokenOut`. */
