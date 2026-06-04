@@ -1,0 +1,5 @@
+# Pinned toolchains for reproducible builds (asdf / mise).
+# The contracts are immutable once deployed, so the on-chain script hashes must be
+# re-derivable from source with this exact compiler. CI also fails on plutus.json drift.
+aiken 1.1.22
+nodejs 22.6.0
