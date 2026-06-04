@@ -291,9 +291,7 @@ export default function OrdersPage() {
             live, it’s always yours to grab back.
           </p>
           <p className="mt-1 text-xs text-muted">
-            <span className="text-accent">Open</span> = live & yours to grab back ·{" "}
-            <span className="text-muted">Completed</span> = no longer live (settled or
-            reclaimed — check the explorer to be sure).
+            Hover a status chip for what it means.
           </p>
         </div>
         {connected && (
@@ -454,8 +452,10 @@ function OrderRowItem({
         </div>
         <div className="flex items-center gap-2">
           <span
-            className={`k-chip ${STATUS_STYLE[row.status]}`}
+            className={`k-chip ${STATUS_STYLE[row.status]} cursor-help`}
+            tabIndex={0}
             title={STATUS_HELP[row.status]}
+            aria-label={`${STATUS_LABEL[row.status]} — ${STATUS_HELP[row.status]}`}
           >
             {STATUS_LABEL[row.status]}
           </span>
