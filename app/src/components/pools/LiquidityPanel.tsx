@@ -255,7 +255,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
           {stats.firstDeposit && connected && !isCreator && (
             <div className="k-note k-note-info mt-4 text-xs">
               This pool is empty (no liquidity yet). Only its creator can close an empty
-              pool to reclaim the ~2 ₳ seed — anyone can seed it with the first deposit.
+              pool to reclaim the ~2 ₳ seed. Anyone can seed it with the first deposit.
             </div>
           )}
         </div>
@@ -397,12 +397,12 @@ function AddForm({
           <div className="k-note k-note-warn text-xs">
             <div className="flex items-center gap-2">
               <Pip size={22} mood="thinking" />
-              <span className="font-bold">You’re the first depositor — you set the price</span>
+              <span className="font-bold">You’re the first depositor, so you set the price</span>
             </div>
             <p className="mt-1">
               Your two amounts define the pool’s opening price. There’s no oracle here:
               whatever ratio you pick becomes the starting market price, so aim for fair
-              value — if it’s off, arbitrage traders pull it back and pocket the difference.
+              value. If it’s off, arbitrage traders pull it back and pocket the difference.
               1000 LP is permanently locked to seed the pool (LP minted = √(reserveA · reserveB)).
             </p>
           </div>
@@ -430,7 +430,7 @@ function AddForm({
           )}
 
           <p className="px-1 text-[11px] text-muted">
-            This is only the <em>opening</em> price — trades and later deposits move it from
+            This is only the <em>opening</em> price. Trades and later deposits move it from
             here. Deposits always add BOTH tokens at the current ratio (there’s no
             single-sided ADA top-up), and the more you seed, the less each trade swings it.
           </p>
@@ -809,7 +809,7 @@ function CloseEmptyPool({
             onClick={submit}
             className="k-btn-danger flex-1 text-sm"
           >
-            {gateReason ?? (state.kind === "busy" ? "Closing…" : "Confirm — burn pool")}
+            {gateReason ?? (state.kind === "busy" ? "Closing…" : "Yes, burn pool")}
           </button>
         </div>
       )}
@@ -826,7 +826,7 @@ function CloseEmptyPool({
 /** Map a `buildDeposit` throw into a user-facing explanation (distinct causes). */
 function depositErrorMessage(err: string): string {
   if (/first deposit too small|must exceed min_liq/i.test(err)) {
-    return "This first deposit is too small to seed the pool — it must mint more than the locked minimum liquidity. Increase both amounts.";
+    return "This first deposit is too small to seed the pool. It must mint more than the locked minimum liquidity. Increase both amounts.";
   }
   if (/rounds to zero/i.test(err)) {
     return "That amount is too small to mint any LP. Increase it.";

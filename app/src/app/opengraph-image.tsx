@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 // Branded social/share card (also used for Twitter via the same file convention).
-export const alt = "ShaSwap — a cozy batch swap on Cardano";
+export const alt = "ShaSwap, a cozy batch swap on Cardano";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 

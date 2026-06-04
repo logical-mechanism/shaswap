@@ -26,13 +26,13 @@ export default function SwapPage() {
           </span>
           <div className="space-y-2">
             <p>
-              You don’t swap on the spot — you drop off an order, and Pip does the
+              You don’t swap on the spot. You drop off an order, and Pip does the
               rest. Every little while, all the orders for a pair settle
               together at one shared, fair price, so nobody can jump the line ahead of you.
             </p>
             <p>
               You always get at least the floor you set. Changed your mind? Grab your
-              order back anytime — your tokens never leave your control.
+              order back anytime. Your tokens never leave your control.
             </p>
             <p className="text-muted">
               Prices come from live {networkLabel()} pool reserves, so a quote is just a

@@ -131,7 +131,7 @@ export function SlippageSettings({
 
           {value > 5 && (
             <p className="mt-2 text-[11px] font-semibold text-warning">
-              High tolerance — you could accept a noticeably worse fill.
+              High tolerance. You could accept a noticeably worse fill.
             </p>
           )}
         </div>

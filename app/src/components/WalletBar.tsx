@@ -65,8 +65,8 @@ function ConnectMenu() {
           </div>
           {wallets.length === 0 ? (
             <p className="px-2 py-2 text-xs leading-relaxed text-muted">
-              Pip can’t find a Cardano wallet. Install one — like Eternl, Lace, or
-              Nami — then refresh the page.
+              Pip can’t find a Cardano wallet. Install one (like Eternl, Lace, or
+              Nami), then refresh the page.
             </p>
           ) : (
             <div className="mt-1 space-y-1">

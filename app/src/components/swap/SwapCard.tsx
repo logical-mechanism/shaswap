@@ -301,7 +301,7 @@ export function SwapCard() {
             <h1 className="font-display text-xl font-extrabold text-ink">Swap</h1>
           </div>
           <p className="mt-1 text-[11px] leading-snug text-muted">
-            Drop off an order and the batch settles at one fair price — never below the
+            Drop off an order and the batch settles at one fair price, never below the
             floor you set, or grab it back anytime.
           </p>
         </div>
@@ -310,7 +310,7 @@ export function SwapCard() {
 
       {tokensError && (
         <div className="k-note k-note-danger mb-3 text-xs">
-          Pip couldn’t load the token list — check your connection and refresh the page.
+          Pip couldn’t load the token list. Check your connection and refresh the page.
         </div>
       )}
 
@@ -419,7 +419,7 @@ export function SwapCard() {
           >
             {quote.priceImpact >= 0.15 ? "Very high" : "High"} price impact (
             {formatPercent(quote.priceImpact)}). This pool is shallow for that
-            size — consider a smaller amount or expect a worse fill.
+            size. Consider a smaller amount or expect a worse fill.
           </div>
         )}
 
@@ -427,7 +427,7 @@ export function SwapCard() {
         <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-2">
             <Pip size={22} mood="worried" />
-            Pip couldn’t get a price just now — try again in a sec.
+            Pip couldn’t get a price just now. Try again in a sec.
           </span>
           <button
             type="button"
@@ -444,7 +444,7 @@ export function SwapCard() {
           <Pip size={22} mood="sleepy" />
           <span>
             No pool trades {fromToken?.ticker}/{toToken?.ticker} yet, so Pip can’t route
-            this pair. Try another token — or be the first to{" "}
+            this pair. Try another token, or be the first to{" "}
             <Link href="/pools/create" className="k-link">
               open a pool
             </Link>
@@ -503,7 +503,7 @@ function PostResult({ state }: { state: PostState }) {
             Orders
           </a>{" "}
           once the network confirms (~20–40s). From there the batch settles at one fair
-          price (never below your floor) — or you can grab it back anytime, which returns
+          price (never below your floor), or you can grab it back anytime, which returns
           your input plus the small ADA deposit and tip.
         </p>
         <a
@@ -579,7 +579,7 @@ function Advanced({
             <span className="text-muted">
               Solver tip (ADA)
               <span className="block text-[11px] text-muted">
-                the only solver reward — required; a 0-tip order won’t be picked up.
+                the only solver reward. Required: a 0-tip order won’t be picked up.
                 Higher tips settle sooner.
               </span>
             </span>

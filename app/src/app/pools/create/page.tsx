@@ -196,12 +196,12 @@ export default function CreatePoolPage() {
       <header className="mb-4">
         <h1 className="font-display text-2xl font-extrabold text-ink">Create pool</h1>
         <p className="mt-1 text-sm text-muted">
-          Open a new pool for any pair you hold — anyone can. It starts empty, then you
+          Open a new pool for any pair you hold (anyone can). It starts empty, then you
           add the first liquidity right after.
         </p>
         <p className="mt-1 text-xs text-muted">
           Creating an empty pool locks a ~2 ₳ seed (plus network fees). As the creator you
-          can close it and reclaim that seed any time — until someone seeds it with
+          can close it and reclaim that seed any time, until someone seeds it with
           liquidity, after which it’s permanent.
         </p>
       </header>
@@ -210,7 +210,7 @@ export default function CreatePoolPage() {
         <div className="mb-2 px-1 text-xs text-muted">
           {connected
             ? "Tokens to choose from: ADA + the assets held in your wallet."
-            : "Connect a wallet to choose tokens — the list is ADA + your held assets."}
+            : "Connect a wallet to choose tokens. The list is ADA + your held assets."}
         </div>
 
         <TokenRow
@@ -264,7 +264,7 @@ export default function CreatePoolPage() {
           </div>
           <div className="mt-1.5 px-1 text-xs text-muted">
             {fee
-              ? `${(bps / 100).toFixed(2)}% per trade — stored on-chain as ${fee.num}/${fee.den}.`
+              ? `${(bps / 100).toFixed(2)}% per trade, stored on-chain as ${fee.num}/${fee.den}.`
               : "Enter the fee in basis points (30 bps = 0.30%, range 0–9999)."}
           </div>
         </div>
@@ -301,7 +301,7 @@ export default function CreatePoolPage() {
               <div className="font-bold text-success">Pool created ✓</div>
             </div>
             <p className="mt-1 text-muted">
-              Confirming on-chain (~20–40s). Add the first liquidity to start trading — on
+              Confirming on-chain (~20–40s). Add the first liquidity to start trading. On
               the next screen, hit ↻ Refresh once it’s confirmed (it won’t show in the
               pools list until then).
             </p>

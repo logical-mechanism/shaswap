@@ -34,10 +34,10 @@ const STATUS_STYLE: Record<RowStatus, string> = {
 
 /** Honest, plain-language explanation of each row state (badge tooltip + legend). */
 const STATUS_HELP: Record<RowStatus, string> = {
-  pending: "Submitted — waiting to be confirmed on-chain.",
+  pending: "Submitted, waiting to be confirmed on-chain.",
   open: "Live on-chain and reclaimable by you. A solver may settle it at the batch price.",
   completed:
-    "No longer on-chain — settled by a solver, or reclaimed elsewhere. Confirm the outcome on the explorer.",
+    "No longer on-chain. Settled by a solver, or reclaimed elsewhere. Confirm the outcome on the explorer.",
   reclaimed: "You reclaimed this order; the funds are back in your wallet.",
 };
 
@@ -347,7 +347,7 @@ export default function OrdersPage() {
       {ownerError && (
         <div className="k-note k-note-danger flex items-center gap-2 p-4 text-sm">
           <Pip size={24} mood="worried" />
-          <span>Pip couldn’t read your wallet address — reconnect and try again.</span>
+          <span>Pip couldn’t read your wallet address. Reconnect and try again.</span>
         </div>
       )}
 
@@ -373,7 +373,7 @@ export default function OrdersPage() {
       )}
 
       {connected && !showLoading && !error && rows.length === 0 && (
-        <Empty>No orders yet — drop one off from the Swap page.</Empty>
+        <Empty>No orders yet. Drop one off from the Swap page.</Empty>
       )}
 
       {connected && rows.length > 0 && (
@@ -437,7 +437,7 @@ function OrderRowItem({
             {row.partial && (
               <span
                 className="k-chip k-chip-muted"
-                title="Partial fills allowed — a partly-filled order leaves a separate, reclaimable remainder order with the unfilled amount."
+                title="Partial fills allowed. A partly-filled order leaves a separate, reclaimable remainder order with the unfilled amount."
               >
                 partial ok
               </span>
@@ -461,7 +461,7 @@ function OrderRowItem({
             className={`k-chip ${STATUS_STYLE[row.status]} cursor-help`}
             tabIndex={0}
             title={STATUS_HELP[row.status]}
-            aria-label={`${STATUS_LABEL[row.status]} — ${STATUS_HELP[row.status]}`}
+            aria-label={`${STATUS_LABEL[row.status]}: ${STATUS_HELP[row.status]}`}
           >
             {STATUS_LABEL[row.status]}
           </span>
@@ -487,7 +487,7 @@ function OrderRowItem({
 
       {row.reclaimTx && (
         <div className="mt-2 text-xs text-success">
-          Reclaimed ✓ — your input, min-ADA and tip are back in your wallet.{" "}
+          Reclaimed ✓. Your input, min-ADA and tip are back in your wallet.{" "}
           <a
             href={explorerTxUrl(row.reclaimTx)}
             target="_blank"

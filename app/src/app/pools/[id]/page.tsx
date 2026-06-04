@@ -54,7 +54,7 @@ export default function PoolManagePage({
           <Pip size={56} mood="thinking" />
           <p className="mt-3 max-w-xs">
             Pip can’t find this pool yet. If you just created it, it may still be settling
-            in (~20–40s) — give it a moment, then refresh.
+            in (~20–40s). Give it a moment, then refresh.
           </p>
           <button
             type="button"
@@ -75,7 +75,7 @@ export default function PoolManagePage({
                 {pool.tokenA.ticker} / {pool.tokenB.ticker}
                 {pool.firstDeposit && (
                   <span className="k-chip k-chip-warn">
-                    Empty — needs first deposit
+                    Empty, needs first deposit
                   </span>
                 )}
               </h1>

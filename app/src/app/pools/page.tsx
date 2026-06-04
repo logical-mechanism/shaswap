@@ -148,7 +148,7 @@ export default function PoolsPage() {
         <Empty
           mood="sleepy"
           title="No pools yet"
-          body="Be the first to open one — Pip will keep it cozy."
+          body="Be the first to open one. Pip will keep it cozy."
         >
           <Link href="/pools/create" className="k-btn mt-4 px-4 py-2 text-sm">
             Create the first pool →
@@ -179,7 +179,7 @@ export default function PoolsPage() {
               title="No pairs match"
               body={
                 hideEmpty
-                  ? "Nothing here with that name — try clearing the search or showing empty pools."
+                  ? "Nothing here with that name. Try clearing the search or showing empty pools."
                   : "Nothing here with that name. Try another ticker, like ADA."
               }
             />
@@ -239,7 +239,7 @@ function Controls({
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          placeholder="Find a pair — try ADA"
+          placeholder="Find a pair, like ADA"
           aria-label="Search pairs"
           className="k-input text-sm text-ink"
         />
