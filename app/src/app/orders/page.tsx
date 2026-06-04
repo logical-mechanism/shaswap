@@ -300,9 +300,33 @@ export default function OrdersPage() {
           <button
             type="button"
             onClick={refresh}
-            className="k-btn-ghost shrink-0 px-3 py-1.5 text-xs"
+            disabled={loading}
+            aria-busy={loading}
+            className="k-btn-ghost shrink-0 px-3 py-1.5 text-xs disabled:opacity-70"
           >
-            Refresh
+            {loading ? (
+              <span className="flex items-center gap-1.5">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  className="animate-spin"
+                  aria-hidden
+                >
+                  <path
+                    d="M13.5 8a5.5 5.5 0 10-1.6 3.9M13.5 12.5V9h-3.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Refreshing…
+              </span>
+            ) : (
+              "Refresh"
+            )}
           </button>
         )}
       </header>
@@ -416,8 +440,16 @@ function OrderRowItem({
             )}
           </div>
           <div className="mt-0.5 truncate font-mono text-xs text-muted">
-            {truncate(row.ref, 10, 4)} · min{" "}
-            {formatUnits(row.minOut, row.outDecimals)} {row.outTicker}
+            <a
+              href={explorerTxUrl(row.ref.split("#")[0])}
+              target="_blank"
+              rel="noreferrer"
+              title="View this order’s transaction on Cardanoscan"
+              className="underline decoration-dotted underline-offset-2 hover:text-accent"
+            >
+              {truncate(row.ref, 10, 4)} ↗
+            </a>{" "}
+            · min {formatUnits(row.minOut, row.outDecimals)} {row.outTicker}
           </div>
         </div>
         <div className="flex items-center gap-2">
