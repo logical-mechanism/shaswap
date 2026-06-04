@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { LEGAL } from "../src/lib/legal/config";
 
 /**
  * Keyboard-only a11y smoke — locks in the focus/Escape work: a visible focus ring on
@@ -50,6 +51,17 @@ test("Escape closes the token menu and returns focus to its trigger", async ({ p
 });
 
 test("Escape closes the wallet menu and returns focus to its trigger", async ({ page }) => {
+  // Pre-accept the Terms click-through gate so clicking Connect opens the wallet
+  // picker directly: this test covers the picker's Escape/focus behavior, not the
+  // consent gate (its own concern). Acceptance is keyed to LEGAL.version in
+  // localStorage (see components/legal/LegalConsent), so importing the version keeps
+  // this green across a terms-version bump instead of silently re-gating.
+  await page.addInitScript((version) => {
+    window.localStorage.setItem(
+      "shaswap.legal",
+      JSON.stringify({ version, ts: new Date().toISOString() }),
+    );
+  }, LEGAL.version);
   await page.goto("/");
   // Scope to the header — the swap card also has a disabled "Connect wallet" button.
   const trigger = page
