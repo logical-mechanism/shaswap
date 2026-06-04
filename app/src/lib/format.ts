@@ -114,3 +114,18 @@ export function toBaseUnits(input: string, decimals: number): string {
 export function formatPercent(frac: number, digits = 2): string {
   return `${(frac * 100).toFixed(digits)}%`;
 }
+
+/**
+ * Whether an in-progress amount entry is within a token's decimal precision — used to mask
+ * the amount `<input>`s so the user can't type more fractional digits than the token
+ * supports (and none at all for a 0-decimal token, which is also our fallback when a
+ * token's precision is unknown). Allows a trailing "." and partial entry ("12.", ".5") so
+ * typing isn't interrupted, and "" (an empty field). Beyond-precision digits would only be
+ * rounded away by `toBaseUnits` anyway — blocking them up front keeps the field honest.
+ */
+export function withinDecimals(value: string, decimals: number): boolean {
+  if (value === "") return true;
+  const d = Math.max(0, Math.floor(decimals));
+  const mask = d > 0 ? new RegExp(`^\\d*\\.?\\d{0,${d}}$`) : /^\d*$/;
+  return mask.test(value);
+}

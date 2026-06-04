@@ -16,6 +16,7 @@ import {
   formatUnitsPlain,
   toBaseUnits,
   truncate,
+  withinDecimals,
 } from "./format.ts";
 
 test("toBaseUnits scales by decimals", () => {
@@ -87,4 +88,21 @@ test("truncate keeps short strings, shortens long ones", () => {
 test("formatPercent", () => {
   assert.equal(formatPercent(0.012), "1.20%");
   assert.equal(formatPercent(0.15, 0), "15%");
+});
+
+test("withinDecimals masks fractional digits to a token's precision", () => {
+  // 6-decimal token (ADA): up to 6 fractional digits, partial entry allowed.
+  assert.equal(withinDecimals("", 6), true);
+  assert.equal(withinDecimals("12", 6), true);
+  assert.equal(withinDecimals("12.", 6), true);
+  assert.equal(withinDecimals(".5", 6), true);
+  assert.equal(withinDecimals("1.234567", 6), true);
+  assert.equal(withinDecimals("1.2345678", 6), false); // 7 > 6
+  // 0-decimal / unknown-precision token: no fractional part at all.
+  assert.equal(withinDecimals("12", 0), true);
+  assert.equal(withinDecimals("12.", 0), false);
+  assert.equal(withinDecimals("1.5", 0), false);
+  // Garbage / multiple dots rejected regardless of precision.
+  assert.equal(withinDecimals("1.2.3", 6), false);
+  assert.equal(withinDecimals("abc", 6), false);
 });

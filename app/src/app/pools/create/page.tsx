@@ -305,21 +305,21 @@ export default function CreatePoolPage() {
               the next screen, hit ↻ Refresh once it’s confirmed (it won’t show in the
               pools list until then).
             </p>
-            <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="mt-2 flex flex-col gap-2">
+              <Link
+                href={`/pools/${encodeURIComponent(state.poolId)}`}
+                className="k-btn-ghost w-full px-3 py-2 text-center text-sm font-semibold"
+              >
+                Add initial liquidity →
+              </Link>
               <a
                 href={explorerTxUrl(state.hash)}
                 target="_blank"
                 rel="noreferrer"
-                className="font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
+                className="text-center font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
               >
                 {truncate(state.hash, 10, 8)} ↗
               </a>
-              <Link
-                href={`/pools/${encodeURIComponent(state.poolId)}`}
-                className="k-btn-ghost px-3 py-1.5 text-sm font-semibold"
-              >
-                Add initial liquidity →
-              </Link>
             </div>
           </div>
         )}

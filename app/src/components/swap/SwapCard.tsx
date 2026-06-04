@@ -24,6 +24,7 @@ import {
   formatUnitsPlain,
   toBaseUnits,
   truncate,
+  withinDecimals,
 } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
@@ -77,8 +78,9 @@ export function SwapCard() {
     [tokens],
   );
   const fromToken: TokenInfo | undefined = byUnit.get(fromUnit) ?? tokens[0];
-  const toToken: TokenInfo | undefined =
-    byUnit.get(toUnit) ?? tokens.find((t) => t.unit !== fromToken?.unit);
+  // The "To" side stays UNSELECTED until the user picks it (the chip reads "Select") —
+  // don't auto-pick the first non-ADA token, which surfaced TEST as a misleading default.
+  const toToken: TokenInfo | undefined = byUnit.get(toUnit);
 
   const baseAmountIn =
     fromToken && amount ? toBaseUnits(amount, fromToken.decimals) : "";
@@ -204,10 +206,11 @@ export function SwapCard() {
     post.kind !== "posting";
 
   function flip() {
-    const f = fromToken?.unit ?? "";
-    const t = toToken?.unit ?? "";
-    setFromUnit(t);
-    setToUnit(f);
+    // Nothing to flip until both sides are chosen — and flipping a half-empty pair would
+    // leave "From" unselected (or duplicate ADA on both sides).
+    if (!fromToken || !toToken) return;
+    setFromUnit(toToken.unit);
+    setToUnit(fromToken.unit);
     setAmount("");
     setPost({ kind: "idle" });
   }
@@ -275,6 +278,8 @@ export function SwapCard() {
       ? { label: "Wrong network", disabled: true }
       : !networkReady
         ? { label: "Checking network…", disabled: true }
+        : !toToken
+          ? { label: "Select a token", disabled: true }
         : !hasAmount
           ? { label: "Enter an amount", disabled: true }
           : overBalance
@@ -327,6 +332,7 @@ export function SwapCard() {
         exclude={toToken?.unit}
         amount={amount}
         editable
+        decimals={fromToken?.decimals ?? 0}
         loading={tokensLoading}
         onAmount={(v) => {
           setAmount(v);
@@ -647,6 +653,7 @@ function TokenField({
   exclude,
   amount,
   editable,
+  decimals = 0,
   loading,
   skeleton,
   placeholder = "0",
@@ -660,8 +667,10 @@ function TokenField({
   exclude?: string;
   amount: string;
   editable: boolean;
+  /** Max fractional digits accepted while typing (the token's precision; 0 if unknown). */
+  decimals?: number;
   loading?: boolean;
-  /** Show an animate-pulse skeleton in place of the value (the To field, mid-quote). */
+  /** Show the "Pip’s thinking" dots in place of the value (the To field, mid-quote). */
   skeleton?: boolean;
   placeholder?: string;
   onAmount?: (v: string) => void;
@@ -678,15 +687,16 @@ function TokenField({
       <div className="mb-2 px-1 text-xs font-semibold text-muted">{label}</div>
       <div className="flex items-center gap-3">
         {skeleton ? (
-          // Match LiquidityPanel's Skeleton (animate-pulse / bordered sunk well) so the
-          // estimated-output value pulses instead of sitting empty mid-quote — now with a
-          // thinking Pip so even the quote wait stays in Pip's world.
-          <div className="flex flex-1 items-center gap-2">
+          // Pip works out the estimate: a little bouncing-dots "thinking" indicator in
+          // place of the value — reads as intentional, instead of the old empty bordered
+          // box that looked like a second, broken input.
+          <div className="flex h-9 flex-1 items-center gap-2">
             <Pip size={24} mood="thinking" />
-            <div
-              className="h-9 w-24 max-w-full animate-pulse rounded-xl border border-border bg-surface-sunk"
-              aria-hidden
-            />
+            <span className="flex items-center gap-1" aria-hidden>
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60 [animation-delay:-0.32s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60 [animation-delay:-0.16s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60" />
+            </span>
             <span className="sr-only">Pip’s working out your estimate…</span>
           </div>
         ) : (
@@ -697,7 +707,7 @@ function TokenField({
             placeholder={placeholder}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === "" || /^\d*\.?\d*$/.test(v)) onAmount?.(v);
+              if (withinDecimals(v, decimals)) onAmount?.(v);
             }}
             className={`k-input text-3xl font-extrabold tabular-nums ${
               editable ? "text-ink" : "text-muted"

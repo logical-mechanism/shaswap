@@ -18,7 +18,7 @@ import {
 } from "@/lib/chain/lp";
 import { toUserMessage } from "@/lib/client/errors";
 import { MIN_LIQ } from "@/lib/chain/deployment";
-import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import { formatUnits, toBaseUnits, truncate, withinDecimals } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { Confetti } from "@/components/Confetti";
@@ -387,6 +387,7 @@ function AddForm({
         ticker={pool.tokenA.ticker}
         value={amountA}
         editable
+        decimals={pool.tokenA.decimals}
         onChange={(v) => {
           setAmountA(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
@@ -406,6 +407,7 @@ function AddForm({
           first ? amountB : deltaB > 0n ? formatUnits(deltaB.toString(), pool.tokenB.decimals) : ""
         }
         editable={first}
+        decimals={pool.tokenB.decimals}
         onChange={(v) => {
           setAmountB(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
@@ -667,6 +669,10 @@ function CloseEmptyPool({
   needsCollateral: boolean;
   onClosed: (txHash: string) => void;
 }) {
+  // Collapsed by default: on an empty pool you created, the PRIMARY action is to seed it
+  // (the Add form above). The destructive close is a secondary escape hatch, tucked behind
+  // a quiet link so it doesn't crowd or compete with the first deposit.
+  const [expanded, setExpanded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
@@ -701,8 +707,20 @@ function CloseEmptyPool({
     }
   }
 
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        className="mt-3 w-full text-center text-xs text-muted underline decoration-dotted underline-offset-2 transition-colors hover:text-danger"
+      >
+        Created this pool by mistake? Close the empty pool →
+      </button>
+    );
+  }
+
   return (
-    <div className="k-note k-note-danger mt-4">
+    <div className="k-note k-note-danger mt-3">
       <div className="px-0.5 text-xs text-muted">
         You created this empty pool. Closing permanently burns it and returns the
         ~2 ₳ seed to your wallet. (Once it has liquidity it can never be closed.)
@@ -840,12 +858,15 @@ function AmountField({
   ticker,
   value,
   editable,
+  decimals,
   onChange,
 }: {
   label: string;
   ticker: string;
   value: string;
   editable: boolean;
+  /** Max fractional digits accepted while typing (the token's precision; 0 if unknown). */
+  decimals: number;
   onChange: (v: string) => void;
 }) {
   return (
@@ -859,7 +880,7 @@ function AmountField({
           placeholder="0"
           onChange={(e) => {
             const v = e.target.value;
-            if (v === "" || /^\d*\.?\d*$/.test(v)) onChange(v);
+            if (withinDecimals(v, decimals)) onChange(v);
           }}
           className={`k-input text-3xl font-extrabold tabular-nums ${
             editable ? "text-ink" : "text-muted"
