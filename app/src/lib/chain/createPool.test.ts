@@ -108,6 +108,14 @@ test("mint redeemers: Create = Constr 0 [] (d87980), Close = Constr 1 [] (d87a80
   assert.equal(toCbor(mintCloseRedeemer), "d87a80");
 });
 
+test("fee cap boundary: 5% (1/20) is allowed, just above is rejected", () => {
+  // exactly the cap — allowed
+  assert.ok(buildCreatePool({ ...base, feeNum: 5n, feeDen: 100n })); // 5%
+  assert.ok(buildCreatePool({ ...base, feeNum: 1n, feeDen: 20n })); // 5% (reduced form)
+  // a hair above — rejected
+  assert.throws(() => buildCreatePool({ ...base, feeNum: 201n, feeDen: 4000n })); // 5.025%
+});
+
 test("malformed intents are rejected (never silently minted)", () => {
   // degenerate pair (raw-equal, and normalized-equal: distinct strings, same AssetId)
   assert.throws(() => buildCreatePool({ ...base, assetBUnit: TOK_UNIT }));
@@ -122,6 +130,11 @@ test("malformed intents are rejected (never silently minted)", () => {
   assert.throws(() => buildCreatePool({ ...base, feeNum: -1n }));
   assert.throws(() => buildCreatePool({ ...base, feeNum: 1000n, feeDen: 1000n }));
   assert.throws(() => buildCreatePool({ ...base, feeNum: 1001n, feeDen: 1000n }));
+  // above the app-side LOW-fee cap (5%): a predatory/typo fee is rejected (the on-chain
+  // guard only checks φ < 1, so a 99% trap pool would otherwise be mintable).
+  assert.throws(() => buildCreatePool({ ...base, feeNum: 6n, feeDen: 100n })); // 6%
+  assert.throws(() => buildCreatePool({ ...base, feeNum: 99n, feeDen: 100n })); // 99%
+  assert.throws(() => buildCreatePool({ ...base, feeNum: 51n, feeDen: 1000n })); // 5.1%
   // non-VK / malformed creator
   assert.throws(() => buildCreatePool({ ...base, ownerPkh: "tooshort" }));
   assert.throws(() => buildCreatePool({ ...base, ownerPkh: "zz".repeat(28) }));

@@ -141,6 +141,22 @@ test("lovelace sizing table: (partial?2:1)×min + tip (+ sellAmount when selling
   }
 });
 
+test("order owner is ALWAYS a verification-key credential (reclaimable; never a script owner)", () => {
+  // The non-custodial guarantee (BLUEPRINT §3) relies on signature-based reclaim, which
+  // only works for a VK owner — a script-credential owner could be settled but NEVER
+  // reclaimed (permanent fund-lock, audit L-01). The builder must therefore only ever
+  // emit a VK owner and reject anything that couldn't be a 28-byte payment key hash.
+  for (const stake of [null, { kind: "key" as const, hash: STAKE }]) {
+    const d = decodeOrderDatum(toCbor(buildOrder({ ...base, ownerStake: stake }).datum));
+    assert.equal(d.owner.kind, "key");
+    assert.equal(d.owner.hash, PKH);
+  }
+  // Non-VK / malformed owner shapes can never produce an order.
+  assert.throws(() => buildOrder({ ...base, ownerPkh: "tooshort" }));
+  assert.throws(() => buildOrder({ ...base, ownerPkh: "zz".repeat(28) })); // non-hex
+  assert.throws(() => buildOrder({ ...base, ownerPkh: "ab".repeat(28) + "cd" })); // too long
+});
+
 test("malformed intents are rejected (never silently posted)", () => {
   assert.throws(() => buildOrder({ ...base, sellAmount: 0n }));
   assert.throws(() => buildOrder({ ...base, limit: 0n }));

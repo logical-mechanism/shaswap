@@ -40,6 +40,9 @@ import {
 } from "./datums.ts";
 import {
   LP_NAME_HEX,
+  MAX_POOL_FEE_DEN,
+  MAX_POOL_FEE_NUM,
+  MAX_POOL_FEE_PCT,
   NFT_NAME_HEX,
   POOL_ADDR,
   POOL_MIN_ADA,
@@ -96,6 +99,13 @@ export function buildCreatePool(intent: CreatePoolIntent): BuiltCreatePool {
   if (feeDen <= 0n) throw new Error("fee denominator must be positive");
   if (feeNum < 0n) throw new Error("fee numerator must be non-negative");
   if (feeNum >= feeDen) throw new Error("fee must be below 1 (feeNum < feeDen)");
+  // "static, LOW fees" (§3) is enforced HERE, app-side: the validators only bound φ < 1,
+  // so without this guard the official frontend could mint an immutable, permanently-
+  // discoverable trap pool with a predatory/typo fee. Reject φ > MAX_POOL_FEE (integer
+  // cross-multiply, no floats). See documentation/spec/economic-parameters.md.
+  if (feeNum * MAX_POOL_FEE_DEN > MAX_POOL_FEE_NUM * feeDen) {
+    throw new Error(`pool fee must be at most ${MAX_POOL_FEE_PCT}% (φ ≤ 1/20)`);
+  }
 
   // `assetFromUnit` throws on a malformed unit (bad hex / odd length / too short).
   const assetA = assetFromUnit(assetAUnit);

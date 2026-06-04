@@ -164,6 +164,34 @@ export const TOTAL_LP = 9_223_372_036_854_775_807n;
  */
 export const MIN_LIQ = 1_000n;
 
+// ── App-side policy guards (NOT on-chain) ───────────────────────────────────────────
+// These enforce the "static, LOW fees" §3 invariant and tip sanity in the OFFICIAL
+// frontend. The validators only bound `0 ≤ φ < 1` and impose no tip floor (pool creation
+// is permissionless and the contracts are immutable), so a predatory/typo fee or a
+// stranded low-tip order is prevented HERE rather than on-chain. See
+// documentation/spec/economic-parameters.md.
+
+/**
+ * Maximum pool fee the dApp will create: `φ = MAX_POOL_FEE_NUM / MAX_POOL_FEE_DEN` = 5%.
+ * Generous headroom over typical AMM fees (0.05–1%) while blocking trap pools (e.g. 99%)
+ * that would be permanent on immutable, permissionlessly-discoverable pools.
+ */
+export const MAX_POOL_FEE_NUM = 1n;
+export const MAX_POOL_FEE_DEN = 20n;
+/** Human label for the cap (kept in sync with the rational above). */
+export const MAX_POOL_FEE_PCT = 5;
+
+/** A pool fee at/above this (basis points) is flagged "high" in the trade UI. 1% = 100 bps. */
+export const HIGH_FEE_BPS = 100;
+
+/**
+ * Recommended minimum solver tip (lovelace). Below this the swap UI cautions that the
+ * order may not be picked up: an untrusted solver skips settlements whose tips don't cover
+ * the tx fee, and a single-order settlement pays the whole fee (~0.2–0.5 ADA). `buildOrder`
+ * still only HARD-rejects a non-positive tip — this is advisory, not enforced.
+ */
+export const RECOMMENDED_MIN_TIP = 1_000_000n;
+
 /**
  * On-chain reference scripts for the ACTIVE network (see the `DEPLOYMENTS` table). The
  * app needs the ORDER ref script — to spend an order on the `Reclaim` path without
