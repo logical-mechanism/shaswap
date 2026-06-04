@@ -12,7 +12,7 @@ export default function SwapPage() {
           Swap with <span className="text-accent">Pip</span>
         </h1>
         <p className="mt-2 max-w-sm text-sm text-muted">
-          A cozy batch-auction hut on Cardano. Drop off an order — everyone in
+          Cozy, fair batch auctions on Cardano. Drop off an order — everyone in
           the batch gets the same fair price.
         </p>
       </div>
@@ -26,8 +26,8 @@ export default function SwapPage() {
           </span>
           <div className="space-y-2">
             <p>
-              You don’t swap on the spot — you drop off an order, and Pip’s batch
-              hut does the rest. Every little while, all the orders for a pair settle
+              You don’t swap on the spot — you drop off an order, and Pip does the
+              rest. Every little while, all the orders for a pair settle
               together at one shared, fair price, so nobody can jump the line ahead of you.
             </p>
             <p>
