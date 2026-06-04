@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { usePools } from "@/hooks/usePools";
 import { networkLabel } from "@/lib/config";
-import { formatUnits } from "@/lib/format";
+import { formatCompactUnits } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
@@ -298,11 +298,11 @@ function PairCard({ group }: { group: PairGroup }) {
             <div className="truncate font-display text-base font-extrabold text-ink">
               {x.ticker} <span className="text-muted">/</span> {y.ticker}
             </div>
-            <div className="text-[11px] text-muted">
+            <div className="truncate text-[11px] text-muted">
               {liveCount > 0 ? (
                 <span className="tabular-nums">
-                  {formatUnits(totalX.toString(), x.decimals)} {x.ticker} ·{" "}
-                  {formatUnits(totalY.toString(), y.decimals)} {y.ticker}
+                  {formatCompactUnits(totalX.toString(), x.decimals)} {x.ticker} ·{" "}
+                  {formatCompactUnits(totalY.toString(), y.decimals)} {y.ticker}
                 </span>
               ) : (
                 "No liquidity yet"
@@ -320,20 +320,20 @@ function PairCard({ group }: { group: PairGroup }) {
             href={`/pools/${encodeURIComponent(pool.id)}`}
             className="group flex items-center justify-between gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-surface-sunk"
           >
-            <span className="flex items-center gap-2 text-xs">
-              <span className="k-chip k-chip-accent tabular-nums">
+            <span className="flex min-w-0 items-center gap-2 text-xs">
+              <span className="k-chip k-chip-accent shrink-0 tabular-nums">
                 {(pool.feeBps / 100).toFixed(2)}%
               </span>
               {pool.firstDeposit ? (
-                <span className="k-chip k-chip-warn">Needs first deposit</span>
+                <span className="k-chip k-chip-warn shrink-0">Needs first deposit</span>
               ) : (
-                <span className="tabular-nums text-muted">
-                  {formatUnits(rX, x.decimals)} {x.ticker} · {formatUnits(rY, y.decimals)}{" "}
-                  {y.ticker}
+                <span className="truncate tabular-nums text-muted">
+                  {formatCompactUnits(rX, x.decimals)} {x.ticker} ·{" "}
+                  {formatCompactUnits(rY, y.decimals)} {y.ticker}
                 </span>
               )}
             </span>
-            <span className="text-xs font-bold text-muted transition-colors group-hover:text-accent">
+            <span className="shrink-0 text-xs font-bold text-muted transition-colors group-hover:text-accent">
               Manage →
             </span>
           </Link>
