@@ -21,11 +21,10 @@ export function LegalPage({
       <p className="mt-1 text-xs text-muted">Last updated: {LEGAL.lastUpdated}</p>
 
       <div className="k-note k-note-warn mt-5 text-sm leading-relaxed" role="note">
-        <strong className="font-extrabold">Draft.</strong> These terms are modeled on
-        a comparable Cardano DEX&rsquo;s public terms and are provided for transparency
-        only. They are not legal advice and have not been finalized by counsel. {LEGAL.protocol} is
-        a non-custodial interface to an immutable protocol; you transact directly from
-        your own wallet.
+        <strong className="font-extrabold">Draft.</strong> This document is modeled on
+        a comparable Cardano DEX&rsquo;s public terms and is not final. It is not legal
+        advice and has not been reviewed by counsel. {LEGAL.protocol} is a non-custodial
+        interface to an immutable protocol; you transact directly from your own wallet.
       </div>
 
       {/* Prose styling lives here so the document files are content-only. */}

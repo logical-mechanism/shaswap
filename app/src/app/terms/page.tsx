@@ -46,7 +46,7 @@ export default function TermsPage() {
         blockchain. The Protocol&rsquo;s contracts are immutable: there is no admin key,
         no upgrade authority, and no privileged operator, and there is no governance
         token. Any new version is a separate, independent deployment. The Site is one of
-        potentially many interfaces to the Protocol; you may interact with the Protocol
+        many possible interfaces to the Protocol; you may interact with the Protocol
         through other interfaces or directly.
       </p>
 

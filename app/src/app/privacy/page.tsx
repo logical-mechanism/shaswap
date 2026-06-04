@@ -45,11 +45,10 @@ export default function PrivacyPage() {
       <h2>3. Information Stored Locally</h2>
       <p>
         The Site stores a small amount of data in your browser&rsquo;s local storage on
-        your device &mdash; for example, your display-theme preference and a record that
-        you accepted the current{" "}
-        <Link href="/terms">Terms</Link> and this Privacy Policy. This data stays on your
-        device and is not transmitted to us. You can clear it at any time through your
-        browser.
+        your device, such as your display-theme preference and a record that you
+        accepted the current <Link href="/terms">Terms</Link> and this Privacy Policy.
+        This data stays on your device and is not transmitted to us. You can clear it at
+        any time through your browser.
       </p>
 
       <h2>4. Chain Data Provider</h2>
