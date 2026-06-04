@@ -299,9 +299,6 @@ export default function OrdersPage() {
             Everything you’ve dropped off, plus recent activity. While an order’s
             live, it’s always yours to grab back.
           </p>
-          <p className="mt-1 text-xs text-muted">
-            Hover a status chip for what it means.
-          </p>
         </div>
         {connected && (
           <button
