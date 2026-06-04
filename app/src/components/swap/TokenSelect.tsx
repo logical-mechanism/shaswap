@@ -82,6 +82,17 @@ export function TokenSelect({
 }
 
 function TokenIcon({ token }: { token: TokenInfo | undefined }) {
+  // ADA gets its own mark: the ₳ symbol on Cardano blue, not gradient initials.
+  if (token?.unit === "lovelace") {
+    return (
+      <span
+        className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#0033ad] text-[13px] font-bold text-white"
+        aria-hidden
+      >
+        ₳
+      </span>
+    );
+  }
   // Real registry logo (a data-URI) as a background — avoids next/image config and
   // the no-img-element rule, and degrades to the gradient initials when absent.
   if (token?.icon) {
