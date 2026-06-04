@@ -10,6 +10,7 @@ import {
 import { APP_CONFIG, networkLabel } from "@/lib/config";
 import { formatAda, truncate } from "@/lib/format";
 import { useMenu } from "@/hooks/useMenu";
+import { useLegalConsent } from "./legal/LegalConsent";
 import { Pip } from "./Pip";
 
 /**
@@ -31,6 +32,7 @@ function ConnectMenu() {
   const { connect, connecting } = useWallet();
   const wallets = useWalletList();
   const { open, setOpen, containerRef, triggerRef } = useMenu();
+  const { requireConsent } = useLegalConsent();
 
   async function pick(walletName: string) {
     setOpen(false);
@@ -46,7 +48,12 @@ function ConnectMenu() {
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        // Gate the wallet picker behind the Terms click-through: opening it requires
+        // accepting the current Terms first (or runs straight through if already
+        // accepted). Closing an open picker stays a plain toggle.
+        onClick={() =>
+          open ? setOpen(false) : requireConsent(() => setOpen(true))
+        }
         disabled={connecting}
         aria-haspopup="menu"
         aria-expanded={open}
