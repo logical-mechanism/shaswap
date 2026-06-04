@@ -401,13 +401,12 @@ function AddForm({
           <div className="k-note k-note-warn text-xs">
             <div className="flex items-center gap-2">
               <Pip size={22} mood="thinking" />
-              <span className="font-bold">You’re the first depositor, so you set the price</span>
+              <span className="font-bold">You set the opening price</span>
             </div>
             <p className="mt-1">
-              Your two amounts define the pool’s opening price. There’s no oracle here:
-              whatever ratio you pick becomes the starting market price, so aim for fair
-              value. If it’s off, arbitrage traders pull it back and pocket the difference.
-              1000 LP is permanently locked to seed the pool (LP minted = √(reserveA · reserveB)).
+              You’re first to add liquidity, so your two amounts set the pool’s starting
+              price. Try to match what the pair is worth, so it opens fair. A little LP is
+              locked in to seed the pool.
             </p>
           </div>
 
@@ -882,40 +881,36 @@ function PositionLine({
   position: { a: bigint; b: bigint };
   firstDeposit: boolean;
 }) {
-  // LP tokens are a share of the pool: your fraction of circulating LP = your fraction
-  // of the reserves. Shown as a % so the raw counts (up to ~9.2e18 total) are legible.
+  // LP is a share of the pool: your fraction of circulating LP = your fraction of the
+  // reserves. Shown as a % so the raw counts (up to ~9.2e18) stay legible.
   const sharePct =
     circ > 0n && lpBalance > 0n
       ? Number((lpBalance * 1_000_000n) / circ) / 10_000
       : 0;
-  const shareLabel =
-    sharePct === 0 ? "" : sharePct < 0.01 ? "<0.01% of the pool" : `${sharePct.toFixed(2)}% of the pool`;
+  const shareText =
+    sharePct === 0 ? "—" : sharePct < 0.01 ? "<0.01%" : `${sharePct.toFixed(2)}%`;
   return (
     <div className="k-field p-3 text-xs">
-      <div className="flex items-center justify-between">
-        <span className="text-muted">
-          Your position
-          <span className="block text-[11px] text-muted">
-            LP tokens = your share of this pool’s reserves
-          </span>
-        </span>
-        <span className="tabular-nums font-medium">
-          {lpBalance.toLocaleString()} LP
-        </span>
-      </div>
-      {lpBalance > 0n && (
-        <div className="mt-1 text-right tabular-nums text-muted">
-          ≈ {formatUnits(position.a.toString(), pool.tokenA.decimals)}{" "}
-          {pool.tokenA.ticker} +{" "}
-          {formatUnits(position.b.toString(), pool.tokenB.decimals)}{" "}
-          {pool.tokenB.ticker}
-          {shareLabel && (
-            <span className="block text-[11px] text-muted">{shareLabel}</span>
-          )}
+      <div className="mb-2 text-muted">Your position</div>
+      {lpBalance > 0n ? (
+        <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 tabular-nums">
+          <dt className="text-muted">LP</dt>
+          <dd className="text-right font-medium text-ink">{lpBalance.toLocaleString()}</dd>
+          <dt className="text-muted">Share</dt>
+          <dd className="text-right text-ink">{shareText}</dd>
+          <dt className="text-muted">{pool.tokenA.ticker}</dt>
+          <dd className="text-right text-ink">
+            {formatUnits(position.a.toString(), pool.tokenA.decimals)}
+          </dd>
+          <dt className="text-muted">{pool.tokenB.ticker}</dt>
+          <dd className="text-right text-ink">
+            {formatUnits(position.b.toString(), pool.tokenB.decimals)}
+          </dd>
+        </dl>
+      ) : (
+        <div className="text-muted">
+          {firstDeposit ? "No liquidity yet." : "You hold no LP in this pool."}
         </div>
-      )}
-      {firstDeposit && lpBalance === 0n && (
-        <div className="mt-1 text-right text-muted">no liquidity yet</div>
       )}
     </div>
   );
