@@ -35,17 +35,17 @@ export const metadata: Metadata = {
   ),
   title: "ShaSwap — swap with Pip",
   description:
-    "A cozy, fair batch-auction house on Cardano. Non-custodial — your keys, your coins.",
+    "A cozy, fair batch-auction hut on Cardano. Non-custodial — your keys, your coins.",
   openGraph: {
     title: "ShaSwap — swap with Pip",
-    description: "A cozy, fair batch-auction house on Cardano.",
+    description: "A cozy, fair batch-auction hut on Cardano.",
     siteName: "ShaSwap",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "ShaSwap — swap with Pip",
-    description: "A cozy, fair batch-auction house on Cardano.",
+    description: "A cozy, fair batch-auction hut on Cardano.",
   },
 };
 

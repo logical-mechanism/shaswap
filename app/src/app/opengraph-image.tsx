@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 
 // Branded social/share card (also used for Twitter via the same file convention).
-export const alt = "ShaSwap — a cozy batch-auction house on Cardano";
+export const alt = "ShaSwap — a cozy batch-auction hut on Cardano";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -61,7 +61,7 @@ export default function OpengraphImage() {
           ShaSwap
         </div>
         <div style={{ display: "flex", fontSize: 38, color: "#7a6796", marginTop: 4 }}>
-          A cozy batch-auction house on Cardano
+          A cozy batch-auction hut on Cardano
         </div>
       </div>
     ),
