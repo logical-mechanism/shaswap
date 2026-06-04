@@ -13,6 +13,15 @@
 //! floor price) plus the spot, keep every price whose residual passes the
 //! `k`-check, and choose the feasible one that clears the most user volume.
 //!
+//! Capping (`solve_capped`): when the per-tx cap truncates a netted book, pricing the
+//! kept subset at the *full-book* balance price is self-defeating — that price is
+//! tuned for the full book's zero residual, so the truncated subset's leftover
+//! residual fails the `k`-check and the whole batch is rejected. We therefore (a)
+//! interleave the two sides so a truncated batch stays balanced, and (b) re-price the
+//! chosen subset at *its own* balance price (+ nudges) so a capped netted batch nets
+//! internally and clears. Without this a netted book larger than the cap would settle
+//! as the whole book or not at all — see `cap_tests::capped_netted_book_still_clears`.
+//!
 //! Every returned settlement is **re-verified** against the [`clearing`] pin
 //! generator *and* [`curve::k_with_fee_ok`] before it is handed back, so this
 //! module can under-solve (a liveness limitation, acceptable in v1) but can never
@@ -181,6 +190,57 @@ fn nudge(p: Price, bps: i128) -> Price {
     reduce(p.num * (10_000 + bps), p.den * 10_000)
 }
 
+/// Pool-favoring neighbors (basis points) of a balance price, so a tiny rounding
+/// residual still clears the k-check. Both signs are tried: the residual's direction
+/// decides which one lands on the pool's side.
+const PRICE_NUDGES_BPS: [i128; 8] = [1, 5, 25, 100, -1, -5, -25, -100];
+
+/// Reorder orders so the two sides alternate, so a *capped* (truncated) batch keeps
+/// both sides and can net — instead of going one-sided by input/discovery order,
+/// which forces the whole batch through the pool. Stable within each side; a no-op
+/// for a one-sided book or when the cap exceeds the book (every order is included).
+fn interleave_sides(orders: &[OrderInput]) -> Vec<OrderInput> {
+    let (toks, adas): (Vec<OrderInput>, Vec<OrderInput>) =
+        orders.iter().cloned().partition(|o| o.datum.sell_a);
+    let mut out = Vec::with_capacity(orders.len());
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < toks.len() || j < adas.len() {
+        if i < toks.len() {
+            out.push(toks[i].clone());
+            i += 1;
+        }
+        if j < adas.len() {
+            out.push(adas[j].clone());
+            j += 1;
+        }
+    }
+    out
+}
+
+/// Re-price an already-selected capped subset at the subset's OWN balance price
+/// (+ nudges) and return the feasible candidates. Capping a netted book at the
+/// *full-book* price leaves a residual the pool rejects (the full-book price is tuned
+/// for the full-book's zero residual, not the subset's); re-balancing to the chosen
+/// subset nets it internally so the k-check passes. The subset is ≤ `max_orders`, so
+/// `evaluate` never truncates it further — an order is dropped only if its own floor
+/// fails at the refined price. Empty for a one-sided subset (no two-sided balance).
+fn refine_to_subset(
+    subset: &[OrderInput],
+    res_a: i128,
+    res_b: i128,
+    fee: Fee,
+    max_orders: usize,
+) -> Vec<Candidate> {
+    let Some(bp) = balance_price(subset) else {
+        return Vec::new();
+    };
+    std::iter::once(bp)
+        .chain(PRICE_NUDGES_BPS.iter().map(|&b| nudge(bp, b)))
+        .filter(|p| p.num > 0 && p.den > 0)
+        .filter_map(|p| evaluate(subset, p, res_a, res_b, fee, max_orders))
+        .collect()
+}
+
 /// Solve a batch: returns the best floor-only settlement, or `None` if no
 /// non-empty feasible batch exists at any candidate price.
 pub fn solve(orders: &[OrderInput], pool: &PoolInput) -> Option<SolveResult> {
@@ -211,6 +271,11 @@ pub fn solve_capped(
         return None;
     }
 
+    // When capping, prefer a BALANCED subset: interleave the two sides so a truncated
+    // batch keeps both and can net, instead of going one-sided by discovery order.
+    // No-op when uncapped (all included) or one-sided.
+    let ordered = interleave_sides(&orders);
+
     // Candidate prices, in priority order of economic quality:
     //  - the supply/demand balance price (CoW clearing) + pool-favoring nudges,
     //    which clear the most volume with the least pool reliance;
@@ -218,44 +283,51 @@ pub fn solve_capped(
     //  - each order's floor price, the inclusion breakpoints (the fallback that
     //    routes a one-sided residual through the pool at a feasible price).
     let mut candidates: Vec<Price> = Vec::new();
-    if let Some(bp) = balance_price(&orders) {
+    if let Some(bp) = balance_price(&ordered) {
         // exact balance + small nudges each way so a rounding residual still clears.
         candidates.push(bp);
-        for bps in [1, 5, 25, 100, -1, -5, -25, -100] {
+        for bps in PRICE_NUDGES_BPS {
             candidates.push(nudge(bp, bps));
         }
     }
     if let Some(sp) = spot_price(res_a, res_b) {
         candidates.push(sp);
     }
-    candidates.extend(orders.iter().map(floor_price));
+    candidates.extend(ordered.iter().map(floor_price));
 
-    // Pick the feasible candidate clearing the most user volume; tie-break toward
-    // the smallest pool residual (highest netting → best surplus, lowest LVR).
+    // Pick the feasible candidate clearing the most user volume; tie-break toward the
+    // smallest pool residual (highest netting → best surplus, lowest LVR). For each
+    // base price we ALSO try re-pricing the selected subset to its own balance price
+    // (`refine_to_subset`): when the cap truncates a netted book, the full-book price
+    // leaves a residual the pool rejects, but the subset's own balance price nets it
+    // internally and clears the k-check — so a capped netted book still settles.
     let mut best: Option<Candidate> = None;
     for p in candidates {
         if p.num <= 0 || p.den <= 0 {
             continue;
         }
-        let Some(cand) = evaluate(&orders, p, res_a, res_b, fee, max_orders) else {
+        let Some(cand) = evaluate(&ordered, p, res_a, res_b, fee, max_orders) else {
             continue;
         };
-        if !cand.feasible {
-            continue;
-        }
-        // Objective: include the most orders (price-independent welfare proxy),
-        // then minimize the pool residual (max netting → best surplus, least LVR).
-        // We deliberately do NOT rank by `volume_a`: it counts asset_b-sellers'
-        // *received* asset_a, which a lower price inflates, biasing the choice.
-        let better = match &best {
-            None => true,
-            Some(b) => {
-                let (n, bn) = (cand.included.len(), b.included.len());
-                n > bn || (n == bn && cand.residual_a < b.residual_a)
+        let refined = refine_to_subset(&cand.included, res_a, res_b, fee, max_orders);
+        for c in std::iter::once(cand).chain(refined) {
+            if !c.feasible {
+                continue;
             }
-        };
-        if better {
-            best = Some(cand);
+            // Objective: include the most orders (price-independent welfare proxy),
+            // then minimize the pool residual (max netting → best surplus, least LVR).
+            // We deliberately do NOT rank by `volume_a`: it counts asset_b-sellers'
+            // *received* asset_a, which a lower price inflates, biasing the choice.
+            let better = match &best {
+                None => true,
+                Some(b) => {
+                    let (n, bn) = (c.included.len(), b.included.len());
+                    n > bn || (n == bn && c.residual_a < b.residual_a)
+                }
+            };
+            if better {
+                best = Some(c);
+            }
         }
     }
 
@@ -387,5 +459,94 @@ mod cap_tests {
         assert_eq!(one.orders.len(), 1);
         // exactly one owner output + the pool output (re-verified by build_settlement).
         assert_eq!(one.settlement.owner_outputs.len(), 1);
+    }
+
+    // An asset_b-seller (sells ADA for token) with a loose floor. Mirror of
+    // `token_seller` on the other side; distinct owner + ref ids so it never collides.
+    fn ada_seller(i: u8, sell: i128, limit: i128) -> OrderInput {
+        OrderInput {
+            output_reference: OutputReference {
+                transaction_id: vec![i; 32],
+                output_index: 0,
+            },
+            address: Address {
+                payment: Credential::Script(vec![0x0cu8; 28]),
+                stake: Some(Credential::Script(vec![0x55u8; 28])),
+            },
+            // an ada-seller's UTXO holds the sold ADA + min-ADA + tip (all lovelace).
+            value: Value::from_lovelace(ORDER_MIN_ADA + 2_000_000 + sell),
+            datum: OrderDatum {
+                owner: Credential::VerificationKey(vec![0xb2u8; 28]),
+                owner_stake: None,
+                pool_nft: nft(),
+                sell_a: false,
+                sell_amount: sell,
+                limit,
+                tip: 2_000_000,
+                partial: false,
+                deadline: None,
+            },
+        }
+    }
+
+    // A netted two-sided book: 4 token-sellers (8M each, floor price 0.5) + 4
+    // ada-sellers (12M each, floor cap 2.0). Σ_ada (48M) > Σ_tok (32M) ⇒ the full-book
+    // balance price is 1.5 — ABOVE the 1.0 spot. Reserves are only ~10× the per-order
+    // size, so a capped subset's residual is large enough to actually fail the k-check
+    // at the full-book price (the bug); the fix re-prices the subset to its own
+    // balance price. Orders are in [all token, all ada] order so a naive cap truncates
+    // to an unbalanced prefix — exactly what trips the old solver.
+    fn netted_book() -> (Vec<OrderInput>, PoolInput) {
+        let pool = pool(100_000_000, 100_000_000); // spot = 1.0
+        let mut orders = Vec::new();
+        for i in 0..4u8 {
+            orders.push(token_seller(i, 8_000_000, 4_000_000)); // floor price 0.5
+        }
+        for i in 0..4u8 {
+            orders.push(ada_seller(100 + i, 12_000_000, 6_000_000)); // floor cap 2.0
+        }
+        (orders, pool)
+    }
+
+    #[test]
+    fn capped_netted_book_still_clears() {
+        let (orders, pool) = netted_book();
+        // Uncapped: the whole netted book clears at the balance price.
+        let full = solve(&orders, &pool).expect("uncapped netted book clears");
+        assert_eq!(full.orders.len(), 8);
+
+        // Capped below the book size: a naive solver reuses the full-book price, whose
+        // truncated residual fails the k-check → no clearing. The fix re-prices the
+        // capped subset to its own balance price (and prefers a balanced subset), so
+        // it still settles. This is the case that left posted orders unfulfilled.
+        let capped = solve_capped(&orders, &pool, 6)
+            .expect("capped netted book must still produce a settlement");
+        assert_eq!(capped.orders.len(), 6, "cap of 6 includes exactly 6");
+
+        let four = solve_capped(&orders, &pool, 4).expect("a tighter cap still clears");
+        assert_eq!(four.orders.len(), 4);
+    }
+
+    #[test]
+    fn capped_netted_book_with_uneven_sizes_clears() {
+        // Uneven sizes within each side, so even a count-balanced (interleaved) capped
+        // subset has a non-zero residual at the full-book price — only the per-subset
+        // re-pricing (`refine_to_subset`) makes it net. Guards that path specifically.
+        let pool = pool(100_000_000, 100_000_000); // spot = 1.0
+        let mut orders = Vec::new();
+        for (i, sell) in [10_000_000i128; 4].iter().enumerate() {
+            orders.push(token_seller(i as u8, *sell, 5_000_000)); // floor price 0.5
+        }
+        for (i, sell) in [5_000_000i128, 5_000_000, 25_000_000, 25_000_000]
+            .iter()
+            .enumerate()
+        {
+            // floor cap 2.0 ⇒ limit = sell / 2.
+            orders.push(ada_seller(100 + i as u8, *sell, sell / 2));
+        }
+        let full = solve(&orders, &pool).expect("uncapped clears");
+        assert_eq!(full.orders.len(), 8);
+        let capped = solve_capped(&orders, &pool, 6).expect("uneven netted book caps");
+        assert_eq!(capped.orders.len(), 6);
     }
 }
