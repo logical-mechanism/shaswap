@@ -15,6 +15,11 @@
  * is added to the blueprint.
  */
 
+/** Single source for the documents' effective date — drives both the displayed
+ * "Last Updated" line and the accepted-terms version. Bump this one string when the
+ * text changes. */
+const TERMS_DATE = "2026-06-04";
+
 export const LEGAL = {
   /**
    * The operating entity named in the documents and the entity↔protocol separation
@@ -30,16 +35,14 @@ export const LEGAL = {
   /** The protocol/site name (kept distinct from the entity on purpose). */
   protocol: "ShaSwap",
 
-  /**
-   * Human "Last Updated" date shown on the documents (ISO date). Bump when the text
-   * changes. Keep in lockstep with `version` below so a real edit re-prompts users.
-   */
-  lastUpdated: "2026-06-04",
+  /** Human "Last Updated" date shown on the documents. */
+  lastUpdated: TERMS_DATE,
 
   /**
-   * The accepted-terms version. The click-through gate stores this against the user's
-   * acceptance; bumping it (alongside `lastUpdated`) re-prompts everyone — this is how
-   * we avoid SundaeSwap's stale-terms trap, where a 2021 click-through still stands.
+   * The accepted-terms version stored against the user's acceptance; the click-through
+   * gate re-prompts whenever it changes — how we avoid SundaeSwap's stale-terms trap.
+   * Shares `TERMS_DATE` with `lastUpdated` so a date change and a re-prompt can never
+   * drift apart (the trap is bumping the displayed date but not the version).
    */
-  version: "2026-06-04",
+  version: TERMS_DATE,
 } as const;

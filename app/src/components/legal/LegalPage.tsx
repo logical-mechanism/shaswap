@@ -42,3 +42,25 @@ export function LegalPage({
     </div>
   );
 }
+
+/**
+ * The shared "Contact" section, identical across the legal documents apart from the
+ * section number and which document it names.
+ */
+export function LegalContact({
+  section,
+  document,
+}: {
+  section: number;
+  document: string;
+}) {
+  return (
+    <>
+      <h2>{section}. Contact</h2>
+      <p>
+        Questions about {document} may be sent to{" "}
+        <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>.
+      </p>
+    </>
+  );
+}

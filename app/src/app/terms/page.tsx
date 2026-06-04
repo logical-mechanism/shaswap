@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LegalPage } from "@/components/legal/LegalPage";
+import { LegalContact, LegalPage } from "@/components/legal/LegalPage";
 import { LEGAL } from "@/lib/legal/config";
 
 export const metadata: Metadata = {
@@ -107,11 +107,7 @@ export default function TermsPage() {
         ACTION IS PERMANENTLY BARRED.
       </p>
 
-      <h2>8. Contact</h2>
-      <p>
-        Questions about these Terms may be sent to{" "}
-        <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>.
-      </p>
+      <LegalContact section={8} document="these Terms" />
     </LegalPage>
   );
 }

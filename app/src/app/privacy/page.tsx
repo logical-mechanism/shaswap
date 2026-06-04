@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { LegalPage } from "@/components/legal/LegalPage";
+import Link from "next/link";
+import { LegalContact, LegalPage } from "@/components/legal/LegalPage";
 import { LEGAL } from "@/lib/legal/config";
 
 export const metadata: Metadata = {
@@ -46,7 +47,7 @@ export default function PrivacyPage() {
         The Site stores a small amount of data in your browser&rsquo;s local storage on
         your device &mdash; for example, your display-theme preference and a record that
         you accepted the current{" "}
-        <a href="/terms">Terms</a> and this Privacy Policy. This data stays on your
+        <Link href="/terms">Terms</Link> and this Privacy Policy. This data stays on your
         device and is not transmitted to us. You can clear it at any time through your
         browser.
       </p>
@@ -72,11 +73,7 @@ export default function PrivacyPage() {
         updated&rdquo; date above reflects the current version.
       </p>
 
-      <h2>7. Contact</h2>
-      <p>
-        Questions about this Privacy Policy may be sent to{" "}
-        <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>.
-      </p>
+      <LegalContact section={7} document="this Privacy Policy" />
     </LegalPage>
   );
 }
