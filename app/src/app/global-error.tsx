@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { Pip } from "@/components/Pip";
+import { reloadOnceOnChunkError } from "@/lib/client/chunkError";
 
 /**
  * Last-resort boundary for an error thrown in the ROOT layout itself. It replaces the
@@ -17,6 +18,9 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    // A stale/failed code-split chunk (often an old tab after a redeploy) self-heals on a
+    // one-time reload; if that fires, the document is replaced — skip the rest.
+    if (reloadOnceOnChunkError(error)) return;
     console.error("[app] global error:", error);
   }, [error]);
 

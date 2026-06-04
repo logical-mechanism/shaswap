@@ -20,7 +20,7 @@
   --ink: #362946; /* strong ink for headings */
   --surface: #ffffff; /* cards */
   --surface-sunk: #f8effb; /* inner fields / wells */
-  --muted: #7a6796; /* secondary text — kept dark enough to read (~4.6:1) */
+  --muted: #6f5b8b; /* secondary text — AA on BOTH the white card (~5.9:1) and the sunk field (~5.3:1) */
   --border: #efe0f4; /* soft lilac outline */
 
   /* What soft tints mix TOWARD — white in light mode, a deep plum in dark mode —

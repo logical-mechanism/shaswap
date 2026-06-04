@@ -16,11 +16,6 @@ import {
   type PoolStats,
   type PoolView,
 } from "@/lib/chain/lp";
-import {
-  closePool,
-  depositLiquidity,
-  withdrawLiquidity,
-} from "@/lib/client/tx";
 import { toUserMessage } from "@/lib/client/errors";
 import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
@@ -343,6 +338,9 @@ function AddForm({
     submitting.current = true;
     setState({ kind: "busy" });
     try {
+      // Dynamically imported so @meshsdk/core tx-building stays out of the initial
+      // bundle — only pulled in when the user actually deposits.
+      const { depositLiquidity } = await import("@/lib/client/tx");
       const res = await depositLiquidity(wallet, {
         pool,
         deltaA,
@@ -537,6 +535,9 @@ function RemoveForm({
     submitting.current = true;
     setState({ kind: "busy" });
     try {
+      // Dynamically imported so @meshsdk/core tx-building stays out of the initial
+      // bundle — only pulled in when the user actually withdraws.
+      const { withdrawLiquidity } = await import("@/lib/client/tx");
       const res = await withdrawLiquidity(wallet, {
         pool,
         lpToBurn,
@@ -686,6 +687,9 @@ function CloseEmptyPool({
     submitting.current = true;
     setState({ kind: "busy" });
     try {
+      // Dynamically imported so @meshsdk/core tx-building stays out of the initial
+      // bundle — only pulled in when the creator actually closes the pool.
+      const { closePool } = await import("@/lib/client/tx");
       const res = await closePool(wallet, pool);
       // Lift the terminal outcome to the parent — it persists above the pool-UTXO
       // reload, which now resolves to null (the pool is burned).
