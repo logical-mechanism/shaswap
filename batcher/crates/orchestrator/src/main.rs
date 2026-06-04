@@ -201,7 +201,10 @@ fn run() -> Result<(), Err> {
                 .map(|s| s.saturating_mul(1000))
         })
         .filter(|n| *n > 0);
+    let net_label = network_label(network_id, raw.network_magic);
     info!(
+        network = %net_label,
+        network_magic = raw.network_magic,
         solver = %solver_addr,
         submit,
         mode = %poll_ms.map_or("one-shot".into(), |n| format!("loop {n}ms")),
@@ -209,6 +212,15 @@ fn run() -> Result<(), Err> {
         cap = cfg.max_orders_per_tx,
         "starting"
     );
+    // Loud, unmissable guard before any live mainnet submission — settlements move real
+    // funds and the contracts are immutable. An operator who started a preprod-built binary
+    // against a mainnet deployment (or vice versa) sees it here before the first pass.
+    if submit && network_id == 1 {
+        warn!(
+            network = %net_label,
+            "SUBMITTING LIVE ON MAINNET — settlements will spend real funds"
+        );
+    }
 
     // The reference-script sizes never change for a fixed deployment — fetch once.
     let ref_bytes = backend
@@ -839,7 +851,19 @@ fn ensure_collateral(
     Err("timed out waiting for the collateral split to confirm".into())
 }
 
-/// Derive the solver's enterprise (payment-only) bech32 address from its signing
+/// Human label for the active network, for the startup banner. `network_id == 1` is the
+/// Shelley mainnet tag; testnets share id 0 and are told apart by the magic (preprod = 1,
+/// preview = 2). An operator must be able to eyeball this before enabling live submission.
+fn network_label(network_id: u8, network_magic: u64) -> String {
+    match (network_id, network_magic) {
+        (1, _) => "MAINNET".to_string(),
+        (0, 1) => "preprod".to_string(),
+        (0, 2) => "preview".to_string(),
+        (id, magic) => format!("testnet(id={id}, magic={magic})"),
+    }
+}
+
+/// The solver's own enterprise (no-stake) address for a given network, from its signing
 /// key — payment credential = blake2b-224 of the ed25519 public key.
 fn solver_address(network_id: u8, skey: &SecretKey) -> Result<String, Err> {
     let pk = skey.public_key();
@@ -856,6 +880,15 @@ fn solver_address(network_id: u8, skey: &SecretKey) -> Result<String, Err> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_label_distinguishes_mainnet_from_testnets() {
+        assert_eq!(network_label(1, 764824073), "MAINNET");
+        assert_eq!(network_label(1, 0), "MAINNET"); // id==1 is mainnet regardless of magic
+        assert_eq!(network_label(0, 1), "preprod");
+        assert_eq!(network_label(0, 2), "preview");
+        assert_eq!(network_label(0, 42), "testnet(id=0, magic=42)");
+    }
 
     fn nft(b: u8) -> NftKey {
         (vec![b; 28], b"NFT".to_vec())
