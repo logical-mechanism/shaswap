@@ -39,6 +39,15 @@ function withSlippage(amount: bigint, slippagePct: number): bigint {
   return (amount * (10_000n - bps)) / 10_000n;
 }
 
+/** Legible price ratio: grouped thousands for ≥1, significant digits for sub-1 (mirrors
+ * the swap card's mid-price), so a tiny-but-real opening price never rounds to "0". */
+function formatRate(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return n >= 1
+    ? n.toLocaleString(undefined, { maximumFractionDigits: 6 })
+    : n.toLocaleString(undefined, { maximumSignificantDigits: 4 });
+}
+
 export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { connected, wallet } = useWallet();
   const address = useAddress();
@@ -307,6 +316,15 @@ function AddForm({
     }
   }
 
+  // First-deposit opening price the creator is SETTING from their two amounts (display
+  // only — like the swap mid-price, computed with Number for legibility, not trust-
+  // critical). Shown both ways so it reads regardless of which side is ADA.
+  const humanA = Number(deltaA) / 10 ** Math.max(0, pool.tokenA.decimals);
+  const humanB = Number(deltaB) / 10 ** Math.max(0, pool.tokenB.decimals);
+  const showOpening = first && humanA > 0 && humanB > 0;
+  const bPerA = showOpening ? humanB / humanA : 0;
+  const aPerB = showOpening ? humanA / humanB : 0;
+
   // Preview the LP received (pure builder; throws on a too-small/invalid intent).
   let preview: { lpToUser: bigint; lockLp: bigint | null; error: string | null } | null =
     null;
@@ -375,10 +393,47 @@ function AddForm({
   return (
     <div className="mt-3">
       {first && (
-        <div className="k-note k-note-warn mb-3 text-xs">
-          This pool has no circulating LP yet — you’re the first depositor. Your deposit
-          ratio sets the pool’s opening price. LP minted = √(reserveA · reserveB); 1000 LP
-          is permanently locked to seed the pool.
+        <div className="mb-3 space-y-2">
+          <div className="k-note k-note-warn text-xs">
+            <div className="flex items-center gap-2">
+              <Pip size={22} mood="thinking" />
+              <span className="font-bold">You’re the first depositor — you set the price</span>
+            </div>
+            <p className="mt-1">
+              Your two amounts define the pool’s opening price. There’s no oracle here:
+              whatever ratio you pick becomes the starting market price, so aim for fair
+              value — if it’s off, arbitrage traders pull it back and pocket the difference.
+              1000 LP is permanently locked to seed the pool (LP minted = √(reserveA · reserveB)).
+            </p>
+          </div>
+
+          {showOpening && (
+            <div className="k-field p-3 text-xs">
+              <div className="mb-1.5 px-1 text-muted">Opening price you’re setting</div>
+              <div className="flex items-center justify-between tabular-nums">
+                <span className="text-muted">1 {pool.tokenA.ticker}</span>
+                <span className="font-semibold text-ink">
+                  ≈ {formatRate(bPerA)} {pool.tokenB.ticker}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center justify-between tabular-nums">
+                <span className="text-muted">1 {pool.tokenB.ticker}</span>
+                <span className="font-semibold text-ink">
+                  ≈ {formatRate(aPerB)} {pool.tokenA.ticker}
+                </span>
+              </div>
+              {/* TODO(mainnet): surface an external reference price (e.g. Minswap) beside
+                  this as a non-binding sanity check. No preprod reference market exists; the
+                  data seam (DataProvider) is the single place to source it — keep it OPTIONAL
+                  so the app (and this guidance) still works when it's unavailable. */}
+            </div>
+          )}
+
+          <p className="px-1 text-[11px] text-muted">
+            This is only the <em>opening</em> price — trades and later deposits move it from
+            here. Deposits always add BOTH tokens at the current ratio (there’s no
+            single-sided ADA top-up), and the more you seed, the less each trade swings it.
+          </p>
         </div>
       )}
 
