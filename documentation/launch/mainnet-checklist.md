@@ -21,7 +21,12 @@
 ## 1. Deploy the immutable artifacts (mainnet)
 
 Use [`scripts/deploy-mainnet.sh`](../../scripts/deploy-mainnet.sh) (idempotent; prints a
-plan and requires explicit confirmation). It performs, against mainnet:
+plan and requires explicit confirmation) for the all-in-one run, **or** the human-paced
+step scripts in [`scripts/mainnet/`](../../scripts/mainnet/) (`00-verify-build.sh` →
+`01-register-s.sh` → `02-deploy-refs.sh` → `03-verify-onchain.sh`) to pause and inspect
+between each irreversible step. Both share `scripts/mainnet/lib.sh`, so the same
+confirmation-wait + idempotency + verification logic backs either path. They perform,
+against mainnet:
 
 - [ ] Apply params and **publish the order + pool reference scripts** (one funding wallet).
 - [ ] **Register the settlement staking script `S`** (the withdraw-0 anchor authorizes its
