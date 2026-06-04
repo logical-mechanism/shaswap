@@ -285,8 +285,7 @@ export default function CreatePoolPage() {
 
         {needsCollateral && (
           <CollateralNote onRecheck={recheckCollateral}>
-            Creating a pool spends a script, so your wallet needs a collateral UTXO. Set
-            one in your wallet, then re-check.
+            Creating a pool needs a collateral set in your wallet. Add one, then re-check.
           </CollateralNote>
         )}
 
