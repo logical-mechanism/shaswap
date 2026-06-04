@@ -95,7 +95,10 @@ export default function PoolsPage() {
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="font-display text-2xl font-extrabold text-ink">Pools</h1>
+          <div className="flex items-center gap-2">
+            <Pip size={30} mood="happy" />
+            <h1 className="font-display text-2xl font-extrabold text-ink">Pools</h1>
+          </div>
           <p className="mt-1 text-sm text-muted">
             Every pair Pip looks after. Pop one open to add or pull out liquidity.
           </p>
@@ -124,7 +127,11 @@ export default function PoolsPage() {
 
       {error && (
         <div className="k-note k-note-danger text-sm">
-          <div>Couldn’t load the pools: {error}</div>
+          <div className="flex items-center gap-2">
+            <Pip size={24} mood="worried" />
+            <span className="font-bold">Pip couldn’t round up the pools.</span>
+          </div>
+          <div className="mt-1 break-words text-xs text-muted">{error}</div>
           <button
             type="button"
             onClick={reload}
@@ -232,7 +239,7 @@ function Controls({
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          placeholder="Search pairs — e.g. ADA"
+          placeholder="Find a pair — try ADA"
           aria-label="Search pairs"
           className="k-input text-sm text-ink"
         />

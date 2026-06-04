@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   useAddress,
   useAssets,
@@ -14,7 +15,6 @@ import { orderFunding } from "@/lib/chain/orderFunding";
 import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
-import { postOrder } from "@/lib/client/tx";
 import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
@@ -182,6 +182,15 @@ export function SwapCard() {
   // The quote read failed (provider blip) and we have no usable fresh quote to post.
   const quoteFailed = !!quoteError && hasAmount && !!pool && !quoteFresh;
 
+  // No pool trades the selected pair (and pools have loaded) — show a friendly Pip empty
+  // state, not just a disabled button. Display-only (token tickers); not trust-critical.
+  const noPoolForPair =
+    !!fromToken &&
+    !!toToken &&
+    fromToken.unit !== toToken.unit &&
+    pools.length > 0 &&
+    poolCount === 0;
+
   const canPost =
     networkReady &&
     hasAmount &&
@@ -224,6 +233,9 @@ export function SwapCard() {
     submitting.current = true;
     setPost({ kind: "posting" });
     try {
+      // Dynamically imported so @meshsdk/core (MeshTxBuilder + WASM serialization) stays
+      // out of the initial bundle — it's only needed once the user actually posts.
+      const { postOrder } = await import("@/lib/client/tx");
       const res = await postOrder(wallet, {
         pool,
         sellUnit: fromToken.unit,
@@ -274,9 +286,9 @@ export function SwapCard() {
               : !pool
                 ? { label: "No pool for this pair", disabled: true }
             : quoteFailed
-              ? { label: "Quote unavailable", disabled: true }
+              ? { label: "No price right now", disabled: true }
             : !quoteFresh || quoteLoading
-              ? { label: "Fetching quote…", disabled: true }
+              ? { label: "Pip’s pricing it…", disabled: true }
               : floor <= 0n
                 ? { label: "Amount too small", disabled: true }
                 : !tipValid
@@ -421,7 +433,7 @@ export function SwapCard() {
         <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-2">
             <Pip size={22} mood="worried" />
-            Couldn’t fetch a quote just now.
+            Pip couldn’t get a price just now — try again in a sec.
           </span>
           <button
             type="button"
@@ -430,6 +442,20 @@ export function SwapCard() {
           >
             Try again
           </button>
+        </div>
+      )}
+
+      {noPoolForPair && (
+        <div className="k-note k-note-info mt-3 flex items-center gap-2 text-xs">
+          <Pip size={22} mood="sleepy" />
+          <span>
+            No pool trades {fromToken?.ticker}/{toToken?.ticker} yet, so Pip can’t route
+            this pair. Try another token — or be the first to{" "}
+            <Link href="/pools/create" className="k-link">
+              open a pool
+            </Link>
+            .
+          </span>
         </div>
       )}
 
@@ -494,6 +520,17 @@ function PostResult({ state }: { state: PostState }) {
         >
           {truncate(state.hash, 10, 8)} ↗
         </a>
+      </div>
+    );
+  }
+  if (state.kind === "posting") {
+    return (
+      <div className="k-note k-note-info mt-3 text-xs">
+        <div className="flex items-center gap-2">
+          <Pip size={26} mood="thinking" float />
+          <div className="font-bold">Pip’s tucking your order into the next batch…</div>
+        </div>
+        <p className="mt-1 text-muted">Confirm the transaction in your wallet.</p>
       </div>
     );
   }
@@ -642,13 +679,15 @@ function TokenField({
       <div className="flex items-center gap-3">
         {skeleton ? (
           // Match LiquidityPanel's Skeleton (animate-pulse / bordered sunk well) so the
-          // estimated-output value pulses instead of sitting empty mid-quote.
-          <div className="flex-1">
+          // estimated-output value pulses instead of sitting empty mid-quote — now with a
+          // thinking Pip so even the quote wait stays in Pip's world.
+          <div className="flex flex-1 items-center gap-2">
+            <Pip size={24} mood="thinking" />
             <div
-              className="h-9 w-28 max-w-full animate-pulse rounded-xl border border-border bg-surface-sunk"
+              className="h-9 w-24 max-w-full animate-pulse rounded-xl border border-border bg-surface-sunk"
               aria-hidden
             />
-            <span className="sr-only">Fetching estimate…</span>
+            <span className="sr-only">Pip’s working out your estimate…</span>
           </div>
         ) : (
           <input
@@ -696,7 +735,7 @@ function TokenField({
           </span>
         </div>
       )}
-      {loading && <div className="mt-1 px-1 text-xs text-muted">updating…</div>}
+      {loading && <div className="mt-1 px-1 text-xs text-muted">Pip’s refreshing…</div>}
     </div>
   );
 }
@@ -743,10 +782,10 @@ function RateLine({
       : priceNum.toLocaleString(undefined, { maximumSignificantDigits: 4 });
   const rateText =
     loading && !showRate
-      ? "Fetching rate…"
+      ? "Pip’s checking the rate…"
       : showRate
         ? `1 ${fromToken.ticker} ≈ ${priceText} ${toToken.ticker}`
-        : "Rate appears once you enter an amount";
+        : "Pop in an amount and Pip will price it.";
 
   return (
     <div className="k-field mt-3 text-xs text-muted">

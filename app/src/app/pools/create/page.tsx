@@ -22,7 +22,6 @@ import type { TokenInfo } from "@/lib/data";
 import { explorerTxUrl } from "@/lib/config";
 import { usePools } from "@/hooks/usePools";
 import { useWriteGate } from "@/hooks/useWriteGate";
-import { createPool } from "@/lib/client/tx";
 import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
 import { truncate } from "@/lib/format";
@@ -152,6 +151,9 @@ export default function CreatePoolPage() {
       if (assetAUnit === "lovelace" && assetBUnit !== "lovelace") {
         [assetAUnit, assetBUnit] = [assetBUnit, assetAUnit];
       }
+      // Dynamically imported so @meshsdk/core (tx-building + WASM) stays out of the
+      // initial bundle — only pulled in when the user actually creates a pool.
+      const { createPool } = await import("@/lib/client/tx");
       const res = await createPool(wallet, {
         assetAUnit,
         assetBUnit,

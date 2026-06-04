@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@meshsdk/react";
 import { useOrders } from "@/hooks/useOrders";
 import { useWriteGate } from "@/hooks/useWriteGate";
-import { reclaimOrder } from "@/lib/client/tx";
 import {
   getRecent,
   markSeen,
@@ -147,6 +146,9 @@ export default function OrdersPage() {
     reclaiming.current = true;
     setReclaim({ kind: "busy", ref: row.ref });
     try {
+      // Dynamically imported so @meshsdk/core (tx-building + WASM) stays out of the
+      // initial bundle — only pulled in when the user actually reclaims.
+      const { reclaimOrder } = await import("@/lib/client/tx");
       const hash = await reclaimOrder(wallet, row.ref);
       // Upsert a reclaimed entry (recordPost dedups by ref) so the row shows
       // "reclaimed" — and isn't offered for a doomed second reclaim — even while the
@@ -219,14 +221,19 @@ export default function OrdersPage() {
       {!connected && <Empty>Connect a wallet and Pip will round up your orders.</Empty>}
 
       {ownerError && (
-        <div className="k-note k-note-danger p-4 text-sm">
-          Couldn’t read your wallet address. Reconnect the wallet and try again.
+        <div className="k-note k-note-danger flex items-center gap-2 p-4 text-sm">
+          <Pip size={24} mood="worried" />
+          <span>Pip couldn’t read your wallet address — reconnect and try again.</span>
         </div>
       )}
 
       {connected && error && (
         <div className="k-note k-note-danger p-4 text-sm">
-          <div>Couldn’t load your orders. {error}</div>
+          <div className="flex items-center gap-2">
+            <Pip size={24} mood="worried" />
+            <span className="font-bold">Pip couldn’t gather your orders just now.</span>
+          </div>
+          <div className="mt-1 break-words text-xs text-muted">{error}</div>
           <button
             type="button"
             onClick={refresh}
@@ -358,7 +365,10 @@ function OrderRowItem({
         </div>
       )}
       {error && (
-        <div className="mt-2 break-words text-xs text-danger">{error}</div>
+        <div className="mt-2 flex items-center gap-1.5 break-words text-xs text-danger">
+          <Pip size={18} mood="worried" />
+          <span>{error}</span>
+        </div>
       )}
     </li>
   );

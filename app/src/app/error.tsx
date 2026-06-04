@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { Pip } from "@/components/Pip";
+import { reloadOnceOnChunkError } from "@/lib/client/chunkError";
 
 /**
  * Branded route-level error boundary. Catches a render/runtime error in any page under
@@ -17,6 +18,9 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
+    // A stale/failed code-split chunk (often an old tab after a redeploy) self-heals on a
+    // one-time reload; if that fires, the document is replaced — skip the rest.
+    if (reloadOnceOnChunkError(error)) return;
     console.error("[app] route error:", error);
   }, [error]);
 

@@ -35,7 +35,11 @@ export default function PoolManagePage({
 
       {error && (
         <div className="k-note k-note-danger p-4 text-sm">
-          Failed to load pool: {error}
+          <div className="flex items-center gap-2">
+            <Pip size={24} mood="worried" />
+            <span className="font-bold">Pip couldn’t open this pool.</span>
+          </div>
+          <div className="mt-1 break-words text-xs text-muted">{error}</div>
         </div>
       )}
 
@@ -65,14 +69,17 @@ export default function PoolManagePage({
       {pool && (
         <>
           <header className="mb-4">
-            <h1 className="flex flex-wrap items-center gap-2 font-display text-2xl font-extrabold text-ink">
-              {pool.tokenA.ticker} / {pool.tokenB.ticker}
-              {pool.firstDeposit && (
-                <span className="k-chip k-chip-warn">
-                  Empty — needs first deposit
-                </span>
-              )}
-            </h1>
+            <div className="flex items-center gap-2">
+              <Pip size={30} mood="happy" />
+              <h1 className="flex flex-wrap items-center gap-2 font-display text-2xl font-extrabold text-ink">
+                {pool.tokenA.ticker} / {pool.tokenB.ticker}
+                {pool.firstDeposit && (
+                  <span className="k-chip k-chip-warn">
+                    Empty — needs first deposit
+                  </span>
+                )}
+              </h1>
+            </div>
             <p className="mt-1 text-sm tabular-nums text-muted">
               {pool.firstDeposit ? (
                 <>No liquidity yet · fee {(pool.feeBps / 100).toFixed(2)}%</>
