@@ -188,7 +188,7 @@ describe("SwapCard — disabled-button label ladder", () => {
     expect(screen.getByRole("button", { name: "No pool for this pair" })).toBeDisabled();
   });
 
-  it("quote read failed → Quote unavailable", () => {
+  it("quote read failed → No price right now", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
@@ -196,10 +196,10 @@ describe("SwapCard — disabled-button label ladder", () => {
     h.data.quoteError = "provider blip";
     render(<SwapCard />);
     typeFrom("10");
-    expect(screen.getByRole("button", { name: "Quote unavailable" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "No price right now" })).toBeDisabled();
   });
 
-  it("quote in flight → Fetching quote…", () => {
+  it("quote in flight → Pip’s pricing it…", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
@@ -207,7 +207,7 @@ describe("SwapCard — disabled-button label ladder", () => {
     h.data.quoteLoading = true;
     render(<SwapCard />);
     typeFrom("10");
-    expect(screen.getByRole("button", { name: "Fetching quote…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pip’s pricing it…" })).toBeDisabled();
   });
 
   it("estimated output rounds to nothing → Amount too small", () => {
@@ -320,7 +320,7 @@ describe("SwapCard — quoteFresh rejects a stale-amount quote", () => {
     expect(toInput().value).toBe("");
     // and the order is not postable — the button reflects "still fetching", not Post order
     expect(screen.queryByRole("button", { name: "Post order" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Fetching quote…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pip’s pricing it…" })).toBeDisabled();
   });
 });
 

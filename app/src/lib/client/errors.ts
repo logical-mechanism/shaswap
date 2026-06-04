@@ -78,7 +78,7 @@ const RULES: { match: RegExp; message: string }[] = [
     // Distinct from a tx error — the chain is fine, the read path is momentarily down.
     match: /\b(429|50[234])\b|too\s*many\s*requests|rate\s*limit|service\s*unavailable|bad\s*gateway|gateway\s*time|timed?\s*out|timeout|network\s*request\s*failed|fetch\s*failed|econnrefused|enotfound/i,
     message:
-      "Can’t reach the network data service right now. Refresh in a moment and try again.",
+      "Pip can’t reach the data service right now — give it a moment and refresh.",
   },
 ];
 
@@ -89,6 +89,6 @@ export function toUserMessage(e: unknown): string {
   for (const { match, message } of RULES) {
     if (match.test(text)) return message;
   }
-  if (!text) return "Something went wrong. Please try again.";
+  if (!text) return "Pip’s not sure what happened there — give it another go.";
   return text.length > 180 ? `${text.slice(0, 180)}…` : text;
 }
