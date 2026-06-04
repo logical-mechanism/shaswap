@@ -21,7 +21,6 @@ import { toUserMessage } from "@/lib/client/errors";
 import {
   formatPercent,
   formatUnits,
-  formatUnitsPlain,
   toBaseUnits,
   truncate,
   withinDecimals,
@@ -175,7 +174,6 @@ export function SwapCard() {
     tip: BigInt(tipLovelace || "0"),
     amount: amountBig,
   });
-  const spendable = funding.spendable;
   const overBalance = connected && funding.overBalance;
   const overSpendable = connected && funding.overSpendable;
   const insufficientAda = connected && funding.insufficientAda;
@@ -221,14 +219,6 @@ export function SwapCard() {
   function refreshPrice() {
     reloadPools();
     reloadQuote();
-  }
-
-  function setFromAmount(base: bigint) {
-    if (!fromToken || base <= 0n) return;
-    // Plain (non-grouped) so the value round-trips back through toBaseUnits and stays
-    // editable — a comma-grouped "1,000" would be rejected and dead-end the button.
-    setAmount(formatUnitsPlain(base.toString(), fromToken.decimals));
-    if (post.kind !== "idle") setPost({ kind: "idle" });
   }
 
   async function handlePost() {
@@ -347,8 +337,6 @@ export function SwapCard() {
             ? {
                 display: formatUnits(fromBalance.toString(), fromToken.decimals),
                 insufficient: overBalance || overSpendable,
-                onHalf: () => setFromAmount(spendable / 2n),
-                onMax: () => setFromAmount(spendable),
               }
             : undefined
         }
@@ -678,8 +666,6 @@ function TokenField({
   balance?: {
     display: string;
     insufficient?: boolean;
-    onMax: () => void;
-    onHalf: () => void;
   };
 }) {
   return (
@@ -722,26 +708,10 @@ function TokenField({
         />
       </div>
       {balance && (
-        <div className="mt-2 flex items-center justify-between px-1 text-[11px]">
+        <div className="mt-2 px-1 text-[11px]">
           <span className={balance.insufficient ? "font-semibold text-danger" : "text-muted"}>
             Balance:{" "}
             <span className="tabular-nums">{balance.display}</span> {token?.ticker}
-          </span>
-          <span className="flex gap-1">
-            <button
-              type="button"
-              onClick={balance.onHalf}
-              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
-            >
-              Half
-            </button>
-            <button
-              type="button"
-              onClick={balance.onMax}
-              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
-            >
-              Max
-            </button>
           </span>
         </div>
       )}
