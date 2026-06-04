@@ -119,6 +119,10 @@ Deterministic, IO-free, unit/property tested in isolation:
   net opposing orders, route the residual through the pool so `k`-with-fee holds.
   **Every returned settlement is re-verified** against the pin generator and the
   `k`-check — it can under-solve, but never emits a settlement the chain rejects.
+  When the per-tx cap truncates a **netted** book, the kept subset is re-priced at
+  *its own* balance price (and the two sides are interleaved so the subset stays
+  balanced) — otherwise reusing the full-book price leaves a residual the pool
+  rejects, and a netted book larger than the cap would fail to settle at all.
 - **`sim`** — synthetic order-book harness; the economic measurement (no chain).
 
 ### Tests
