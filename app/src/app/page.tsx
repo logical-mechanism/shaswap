@@ -12,7 +12,7 @@ export default function SwapPage() {
           Swap with <span className="text-accent">Pip</span>
         </h1>
         <p className="mt-2 max-w-sm text-sm text-muted">
-          A cozy batch-auction house on Cardano. Drop off an order — everyone in the
+          A cozy batch hut on Cardano. Drop off an order — everyone in the
           batch gets the same fair price.
         </p>
       </div>

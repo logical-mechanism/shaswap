@@ -17,7 +17,7 @@ import {
   type RowStatus,
 } from "@/lib/client/orderRows";
 import { toUserMessage } from "@/lib/client/errors";
-import { explorerTxUrl, networkLabel } from "@/lib/config";
+import { explorerTxUrl } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
@@ -191,8 +191,8 @@ export default function OrdersPage() {
             <h1 className="font-display text-2xl font-extrabold text-ink">Orders</h1>
           </div>
           <p className="mt-1 text-sm text-muted">
-            Everything you’ve dropped off on {networkLabel()}, plus recent activity. While
-            an order’s live, it’s always yours to grab back.
+            Everything you’ve dropped off, plus recent activity. While an order’s
+            live, it’s always yours to grab back.
           </p>
           <p className="mt-1 text-xs text-muted">
             <span className="text-accent">Open</span> = live & yours to grab back ·{" "}
