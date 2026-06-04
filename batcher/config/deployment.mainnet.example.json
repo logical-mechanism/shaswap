@@ -1,0 +1,32 @@
+{
+  "_comment": "MAINNET deployment template for the ShaSwap reference solver. Copy to deployment.mainnet.json, fill the <...> values from the mainnet deploy (see documentation/launch/mainnet-checklist.md), and confirm the startup banner prints 'network=MAINNET' before setting SHASWAP_SUBMIT=1. The script_hash / pool_mint_policy / nft_name / lp_name / total_lp / min_liq / *_min_ada values are network-independent and match contracts/plutus.json + constants.ak.",
+
+  "network_id": 1,
+  "network_magic": 764824073,
+
+  "_provider": "Point at your OWN mainnet node (Kupo + Ogmios, or Dolos) for a no-third-party-dependency setup. Localhost shown; replace with your endpoints.",
+  "kupo_url": "http://127.0.0.1:1442",
+  "ogmios_url": "http://127.0.0.1:1337",
+
+  "settlement_hash": "a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e",
+  "order_script_hash": "801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2",
+  "pool_script_hash": "4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b",
+  "pool_mint_policy": "3d36f7963dcca05ba53e32babdf3c2572d467c7388dbb1cf4b28645f",
+  "nft_name": "4e4654",
+  "lp_name": "4c50",
+  "total_lp": 9223372036854775807,
+  "min_liq": 1000,
+  "pool_min_ada": 2000000,
+  "order_min_ada": 2000000,
+
+  "_refs": "From the MAINNET reference-script deploy tx (settlement #0, pool #1, order #2 by convention). Fill after running scripts/deploy-mainnet.sh.",
+  "settlement_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 0 },
+  "order_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 2 },
+  "pool_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 1 },
+
+  "_skey": "cardano-cli TextEnvelope signing key for the solver wallet. File mode 0600, OUTSIDE the repo. Controls only the solver's own float, never user funds.",
+  "signing_key_path": "/opt/shaswap/keys/solver.skey",
+
+  "max_orders_per_tx": 20,
+  "strategy": "round-robin"
+}
