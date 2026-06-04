@@ -433,9 +433,8 @@ function AddForm({
           )}
 
           <p className="px-1 text-[11px] text-muted">
-            This is only the <em>opening</em> price. Trades and later deposits move it from
-            here. Deposits always add BOTH tokens at the current ratio (there’s no
-            single-sided ADA top-up), and the more you seed, the less each trade swings it.
+            This is just the <em>opening</em> price. Trades and new deposits move it from
+            here, and the deeper the pool, the less each trade swings it.
           </p>
         </div>
       )}
