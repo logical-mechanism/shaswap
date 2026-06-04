@@ -55,7 +55,7 @@ test("provider/indexer unavailable (5xx / fetch failed) → data-service message
 
 test("unknown errors fall back to a trimmed original", () => {
   assert.equal(toUserMessage("a weird thing happened"), "a weird thing happened");
-  assert.equal(toUserMessage(""), "Pip’s not sure what happened there — give it another go.");
+  assert.equal(toUserMessage(""), "Pip’s not sure what happened there. Give it another go.");
   const long = "x".repeat(400);
   assert.ok(toUserMessage(long).length <= 181);
 });

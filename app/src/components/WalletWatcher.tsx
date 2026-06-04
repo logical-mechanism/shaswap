@@ -49,7 +49,7 @@ export function WalletWatcher() {
         variant: "info",
         mood: "wave",
         title: "Wallet disconnected",
-        message: "Come back soon — Pip will hold the fort.",
+        message: "Come back soon. Pip will hold the fort.",
       });
     }
   }, [connected, toast]);
@@ -70,7 +70,7 @@ export function WalletWatcher() {
       toast({
         variant: "danger",
         mood: "worried",
-        title: "Whoa — wrong network",
+        title: "Whoa, wrong network",
         message: `Your wallet is on ${walletNet}, but ShaSwap lives on ${networkLabel()}. Switch networks in your wallet to swap.`,
         duration: 8000,
       });
@@ -79,7 +79,7 @@ export function WalletWatcher() {
         variant: "success",
         mood: "love",
         title: `Back on ${networkLabel()}`,
-        message: "Networks match — you’re all set.",
+        message: "Networks match. You’re all set.",
       });
     }
   }, [connected, networkId, toast]);

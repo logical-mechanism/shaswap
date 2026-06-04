@@ -5,10 +5,11 @@ import Link from "next/link";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { usePools } from "@/hooks/usePools";
 import { networkLabel } from "@/lib/config";
-import { formatUnits } from "@/lib/format";
+import { formatCompactUnits } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { RefreshIcon } from "@/components/RefreshIcon";
 
 type SortKey = "liquidity" | "pair" | "fee";
 
@@ -37,7 +38,7 @@ function canonical(pool: Pool) {
 }
 
 export default function PoolsPage() {
-  const { pools, loading, error, reload } = usePools();
+  const { pools, loading, refreshing, error, reload } = usePools();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("liquidity");
   const [hideEmpty, setHideEmpty] = useState(false);
@@ -113,11 +114,13 @@ export default function PoolsPage() {
           <button
             type="button"
             onClick={reload}
+            disabled={loading || refreshing}
+            aria-busy={loading || refreshing}
             title="Refresh pools"
             aria-label="Refresh pools"
-            className="k-pill px-3 py-2.5 text-sm text-muted hover:text-accent"
+            className="k-pill px-3 py-2.5 text-sm text-muted hover:text-accent disabled:opacity-70"
           >
-            ↻
+            <RefreshIcon busy={loading || refreshing} />
           </button>
           <Link href="/pools/create" className="k-btn px-4 py-2.5 text-sm">
             + Create pool
@@ -148,7 +151,7 @@ export default function PoolsPage() {
         <Empty
           mood="sleepy"
           title="No pools yet"
-          body="Be the first to open one — Pip will keep it cozy."
+          body="Be the first to open one. Pip will keep it cozy."
         >
           <Link href="/pools/create" className="k-btn mt-4 px-4 py-2 text-sm">
             Create the first pool →
@@ -179,7 +182,7 @@ export default function PoolsPage() {
               title="No pairs match"
               body={
                 hideEmpty
-                  ? "Nothing here with that name — try clearing the search or showing empty pools."
+                  ? "Nothing here with that name. Try clearing the search or showing empty pools."
                   : "Nothing here with that name. Try another ticker, like ADA."
               }
             />
@@ -239,7 +242,7 @@ function Controls({
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
-          placeholder="Find a pair — try ADA"
+          placeholder="Find a pair, like ADA"
           aria-label="Search pairs"
           className="k-input text-sm text-ink"
         />
@@ -295,11 +298,11 @@ function PairCard({ group }: { group: PairGroup }) {
             <div className="truncate font-display text-base font-extrabold text-ink">
               {x.ticker} <span className="text-muted">/</span> {y.ticker}
             </div>
-            <div className="text-[11px] text-muted">
+            <div className="truncate text-[11px] text-muted">
               {liveCount > 0 ? (
                 <span className="tabular-nums">
-                  {formatUnits(totalX.toString(), x.decimals)} {x.ticker} ·{" "}
-                  {formatUnits(totalY.toString(), y.decimals)} {y.ticker}
+                  {formatCompactUnits(totalX.toString(), x.decimals)} {x.ticker} ·{" "}
+                  {formatCompactUnits(totalY.toString(), y.decimals)} {y.ticker}
                 </span>
               ) : (
                 "No liquidity yet"
@@ -317,20 +320,20 @@ function PairCard({ group }: { group: PairGroup }) {
             href={`/pools/${encodeURIComponent(pool.id)}`}
             className="group flex items-center justify-between gap-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-surface-sunk"
           >
-            <span className="flex items-center gap-2 text-xs">
-              <span className="k-chip k-chip-accent tabular-nums">
+            <span className="flex min-w-0 items-center gap-2 text-xs">
+              <span className="k-chip k-chip-accent shrink-0 tabular-nums">
                 {(pool.feeBps / 100).toFixed(2)}%
               </span>
               {pool.firstDeposit ? (
-                <span className="k-chip k-chip-warn">Needs first deposit</span>
+                <span className="k-chip k-chip-warn shrink-0">Needs first deposit</span>
               ) : (
-                <span className="tabular-nums text-muted">
-                  {formatUnits(rX, x.decimals)} {x.ticker} · {formatUnits(rY, y.decimals)}{" "}
-                  {y.ticker}
+                <span className="truncate tabular-nums text-muted">
+                  {formatCompactUnits(rX, x.decimals)} {x.ticker} ·{" "}
+                  {formatCompactUnits(rY, y.decimals)} {y.ticker}
                 </span>
               )}
             </span>
-            <span className="text-xs font-bold text-muted transition-colors group-hover:text-accent">
+            <span className="shrink-0 text-xs font-bold text-muted transition-colors group-hover:text-accent">
               Manage →
             </span>
           </Link>

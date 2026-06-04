@@ -7,6 +7,7 @@ import { LiquidityPanel } from "@/components/pools/LiquidityPanel";
 import { formatUnits } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { RefreshIcon } from "@/components/RefreshIcon";
 
 /**
  * Dedicated pool-management page: add / remove liquidity for one pool. The pool id in
@@ -21,7 +22,7 @@ export default function PoolManagePage({
 }) {
   const { id } = use(params);
   const poolId = decodeURIComponent(id);
-  const { pools, loading, error, reload } = usePools();
+  const { pools, loading, refreshing, error, reload } = usePools();
   const pool = pools.find((p) => p.id === poolId);
 
   return (
@@ -54,14 +55,16 @@ export default function PoolManagePage({
           <Pip size={56} mood="thinking" />
           <p className="mt-3 max-w-xs">
             Pip can’t find this pool yet. If you just created it, it may still be settling
-            in (~20–40s) — give it a moment, then refresh.
+            in (~20–40s). Give it a moment, then refresh.
           </p>
           <button
             type="button"
             onClick={reload}
-            className="k-btn-ghost mt-4 px-4 py-2 text-sm"
+            disabled={loading || refreshing}
+            aria-busy={loading || refreshing}
+            className="k-btn-ghost mt-4 px-4 py-2 text-sm disabled:opacity-70"
           >
-            ↻ Refresh
+            <RefreshIcon busy={loading || refreshing} /> Refresh
           </button>
         </div>
       )}
@@ -75,7 +78,7 @@ export default function PoolManagePage({
                 {pool.tokenA.ticker} / {pool.tokenB.ticker}
                 {pool.firstDeposit && (
                   <span className="k-chip k-chip-warn">
-                    Empty — needs first deposit
+                    Empty, needs first deposit
                   </span>
                 )}
               </h1>

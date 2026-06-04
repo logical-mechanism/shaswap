@@ -18,7 +18,6 @@ function formatBaseUnitString(
   value: string,
   decimals: number,
   maxFractionDigits: number,
-  group = true,
 ): string {
   let s = value.trim();
   if (!s) return "0";
@@ -46,7 +45,7 @@ function formatBaseUnitString(
     frac = padded.slice(padded.length - decimals);
   }
 
-  const grouped = group ? whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : whole;
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   const shownFrac = frac
     .slice(0, Math.max(0, maxFractionDigits))
     .replace(/0+$/, "");
@@ -70,18 +69,42 @@ export function formatUnits(
   return formatBaseUnitString(amount, decimals, Math.min(decimals, 6));
 }
 
+// Thousands tiers for compact display, largest-first.
+const COMPACT_TIERS: ReadonlyArray<readonly [number, string]> = [
+  [1e12, "T"],
+  [1e9, "B"],
+  [1e6, "M"],
+  [1e3, "K"],
+];
+
 /**
- * Like `formatUnits` but WITHOUT thousands separators — for values that flow back into
- * an amount `<input>` (e.g. the MAX/Half buttons). Grouped strings ("1,000") are
- * rejected by `toBaseUnits` and by the input mask, so a grouped MAX left the field
- * populated but un-parseable; a plain "1000" round-trips and stays editable.
+ * Compact, width-bounded display of a base-unit amount for dense lists (the pools grid):
+ * scales by `decimals`, then abbreviates thousands with a single suffix (1.2K / 9M / 412B)
+ * so a huge-supply token or a long ticker can't blow the row onto a second line. Below 1000
+ * it shows up to 2 trimmed decimals; a non-zero amount under 0.001 reads "<0.001" rather than
+ * rounding to "0". Deterministic (no locale) so it matches the app's grouped style and is
+ * hydration-stable.
+ *
+ * Display-only: uses `Number` (not BigInt), so it is NOT exact past 2^53 — fine for a
+ * liquidity-proxy glance; full precision lives on the pool's manage page. Falls back to the
+ * exact `formatUnits` if the value isn't a finite number.
  */
-export function formatUnitsPlain(
+export function formatCompactUnits(
   amount: string | undefined,
   decimals: number,
 ): string {
   if (!amount) return "0";
-  return formatBaseUnitString(amount, decimals, Math.min(decimals, 6), false);
+  const n = Number(amount) / 10 ** Math.max(0, decimals);
+  if (!Number.isFinite(n)) return formatUnits(amount, decimals);
+  const abs = Math.abs(n);
+  if (abs === 0) return "0";
+  if (abs < 0.001) return "<0.001";
+  const tier = COMPACT_TIERS.find(([v]) => abs >= v);
+  if (!tier) return String(parseFloat(n.toFixed(2)));
+  const scaled = n / tier[0];
+  const sa = Math.abs(scaled);
+  const digits = sa < 10 ? 2 : sa < 100 ? 1 : 0;
+  return `${parseFloat(scaled.toFixed(digits))}${tier[1]}`;
 }
 
 /**
@@ -113,4 +136,19 @@ export function toBaseUnits(input: string, decimals: number): string {
 /** Format a fraction (0.012) as a percentage string ("1.20%"). */
 export function formatPercent(frac: number, digits = 2): string {
   return `${(frac * 100).toFixed(digits)}%`;
+}
+
+/**
+ * Whether an in-progress amount entry is within a token's decimal precision — used to mask
+ * the amount `<input>`s so the user can't type more fractional digits than the token
+ * supports (and none at all for a 0-decimal token, which is also our fallback when a
+ * token's precision is unknown). Allows a trailing "." and partial entry ("12.", ".5") so
+ * typing isn't interrupted, and "" (an empty field). Beyond-precision digits would only be
+ * rounded away by `toBaseUnits` anyway — blocking them up front keeps the field honest.
+ */
+export function withinDecimals(value: string, decimals: number): boolean {
+  if (value === "") return true;
+  const d = Math.max(0, Math.floor(decimals));
+  const mask = d > 0 ? new RegExp(`^\\d*\\.?\\d{0,${d}}$`) : /^\d*$/;
+  return mask.test(value);
 }

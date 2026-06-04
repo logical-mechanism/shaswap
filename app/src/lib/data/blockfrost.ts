@@ -21,7 +21,7 @@ import {
 } from "@/lib/chain/deployment";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
-import { feeToBps, isRetriable } from "./providerUtil";
+import { feeToBps, httpStatus, isRetriable } from "./providerUtil";
 import { qtyOfUnit, reserveOf, toPosition } from "./providerMap";
 import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
 import { toBigInt as toBig } from "../bigint";
@@ -320,6 +320,20 @@ export class BlockfrostDataProvider implements DataProvider {
       (x) => x.input.txHash === txHash && x.input.outputIndex === index,
     );
     return stillUnspent ? u : null;
+  }
+
+  async transactionConfirmed(txHash: string): Promise<boolean> {
+    // `txs/{hash}` is 200 once the tx is in a block, and 404 while it is unknown /
+    // mempool-only — so a 404 is the definitive "not confirmed". Any other (transient)
+    // error propagates: the caller must not read a rate-limit/5xx as "didn't land" and
+    // clear a reclaim that actually succeeded.
+    try {
+      await retry(() => this.bf.get(`txs/${txHash}`));
+      return true;
+    } catch (e) {
+      if (httpStatus(e) === 404) return false;
+      throw e;
+    }
   }
 
   async resolvePoolUtxo(poolNftUnit: string): Promise<UTxO | null> {

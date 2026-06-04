@@ -14,6 +14,9 @@ import { fetchPools } from "@/lib/client/api";
 export function usePools() {
   const [pools, setPools] = useState<Pool[]>([]);
   const [loading, setLoading] = useState(true);
+  // True while a manual reload() is in flight (loading stays false so the list doesn't
+  // flash) — lets the Refresh button spin so a refresh never feels like nothing happened.
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   // Once a list has loaded, a later POLL failure (a transient network blip) must NOT
@@ -22,7 +25,10 @@ export function usePools() {
   // Keep showing the stale list; only a genuine first-load failure (no data) surfaces.
   const loaded = useRef(false);
 
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  const reload = useCallback(() => {
+    setRefreshing(true);
+    setNonce((n) => n + 1);
+  }, []);
 
   // On reload the list refreshes in place; we don't flip back to a loading skeleton.
   useEffect(() => {
@@ -38,10 +44,13 @@ export function usePools() {
         if (!ac.signal.aborted && !loaded.current) setError(String(e));
       })
       .finally(() => {
-        if (!ac.signal.aborted) setLoading(false);
+        if (!ac.signal.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
     return () => ac.abort();
   }, [nonce]);
 
-  return { pools, loading, error, reload };
+  return { pools, loading, refreshing, error, reload };
 }

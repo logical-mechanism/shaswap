@@ -151,6 +151,13 @@ export class MockProvider implements DataProvider {
     throw new Error("MockProvider cannot resolve UTXOs");
   }
 
+  async transactionConfirmed(): Promise<boolean> {
+    // No real chain to confirm against — treat every tx as confirmed so the offline mock
+    // never clears the Orders view's optimistic reclaim state. (Reclaim is a no-op here
+    // anyway: resolveUtxo throws, so a reclaim never records a tx to verify.)
+    return true;
+  }
+
   async resolvePoolUtxo(): Promise<UTxO | null> {
     throw new Error("MockProvider cannot resolve UTXOs");
   }

@@ -1,7 +1,7 @@
 /**
  * Component tests for SwapCard — the disabled-button label ladder per app state, the
- * MAX/Half affordances, the ADA-funding blockers (over-balance / over-spendable /
- * insufficient-ADA incl. the partial reserve), and stale-quote rejection. The MeshJS
+ * ADA-funding blockers (over-balance / over-spendable / insufficient-ADA incl. the partial
+ * reserve), and stale-quote rejection. The MeshJS
  * wallet hooks, the read hooks, and the tx builder are mocked via vi.hoisted state so each
  * state is driven deterministically. Run with `npm run test:components`.
  */
@@ -126,7 +126,17 @@ function toInput(): HTMLInputElement {
   if (!el) throw new Error("no readOnly To input");
   return el;
 }
+/** Pick the "To" token from its dropdown — it now defaults to UNSELECTED (chip reads
+ *  "Select"). The To trigger's accessible name is exactly "Select token"; the From one
+ *  reads "Select token (current: …)", so the anchored match targets the To selector. */
+function selectTo(ticker: string) {
+  fireEvent.click(screen.getByRole("button", { name: /^Select token$/ }));
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(ticker) }));
+}
 function typeFrom(v: string) {
+  // The "To" side defaults to unselected now; pick TEST first so there's a complete pair
+  // before typing the sell amount (mirrors a user choosing what to buy, then the amount).
+  if (screen.queryByRole("button", { name: /^Select token$/ })) selectTo("TEST");
   fireEvent.change(fromInput(), { target: { value: v } });
 }
 
@@ -155,6 +165,7 @@ describe("SwapCard — disabled-button label ladder", () => {
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
     render(<SwapCard />);
+    selectTo("TEST");
     expect(screen.getByRole("button", { name: "Enter an amount" })).toBeDisabled();
   });
 
@@ -254,7 +265,8 @@ describe("SwapCard — non-ADA sell funds min-ADA + tip + fee from wallet ADA", 
     h.state.lovelace = lovelace;
     h.state.assets = [{ unit: TEST.unit, quantity: "1000" }];
     render(<SwapCard />);
-    // flip so the FROM side becomes TEST (a non-ADA sell)
+    // pick a To token first, THEN flip so the FROM side becomes TEST (a non-ADA sell)
+    selectTo("TEST");
     fireEvent.click(screen.getByRole("button", { name: "Swap direction" }));
     typeFrom("10"); // 10 TEST (0 decimals)
   }
@@ -278,32 +290,6 @@ describe("SwapCard — non-ADA sell funds min-ADA + tip + fee from wallet ADA", 
     expect(
       screen.getByRole("button", { name: "Not enough ADA for fees" }),
     ).toBeDisabled();
-  });
-});
-
-describe("SwapCard — MAX / Half produce a usable amount", () => {
-  beforeEach(() => {
-    h.state.connected = true;
-    h.state.networkId = 0;
-    h.state.lovelace = BIG_ADA;
-  });
-
-  it("MAX fills a parseable (round-trippable) amount", () => {
-    render(<SwapCard />);
-    fireEvent.click(screen.getByRole("button", { name: "Max" }));
-    const v = fromInput().value;
-    expect(v).not.toBe("");
-    expect(toBaseUnits(v, 6)).not.toBe(""); // round-trips back to base units (not "1,000")
-  });
-
-  it("Half fills a parseable amount that is less than MAX", () => {
-    render(<SwapCard />);
-    fireEvent.click(screen.getByRole("button", { name: "Max" }));
-    const max = toBaseUnits(fromInput().value, 6);
-    fireEvent.click(screen.getByRole("button", { name: "Half" }));
-    const half = fromInput().value;
-    expect(toBaseUnits(half, 6)).not.toBe("");
-    expect(BigInt(toBaseUnits(half, 6))).toBeLessThan(BigInt(max));
   });
 });
 

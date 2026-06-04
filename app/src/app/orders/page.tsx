@@ -5,11 +5,13 @@ import { useWallet } from "@meshsdk/react";
 import { useOrders } from "@/hooks/useOrders";
 import { useWriteGate } from "@/hooks/useWriteGate";
 import {
+  clearReclaim,
   getRecent,
   markSeen,
   recordPost,
   type RecentOrder,
 } from "@/lib/client/activity";
+import { fetchTxConfirmed } from "@/lib/client/api";
 import { nowMs } from "@/lib/client/now";
 import {
   mergeRows,
@@ -17,10 +19,12 @@ import {
   type RowStatus,
 } from "@/lib/client/orderRows";
 import { toUserMessage } from "@/lib/client/errors";
-import { explorerTxUrl, networkLabel } from "@/lib/config";
+import { explorerTxUrl } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { PipOverlay } from "@/components/PipOverlay";
+import { RefreshIcon } from "@/components/RefreshIcon";
 import { CollateralNote } from "@/components/CollateralNote";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
@@ -32,10 +36,10 @@ const STATUS_STYLE: Record<RowStatus, string> = {
 
 /** Honest, plain-language explanation of each row state (badge tooltip + legend). */
 const STATUS_HELP: Record<RowStatus, string> = {
-  pending: "Submitted — waiting to be confirmed on-chain.",
+  pending: "Submitted, waiting to be confirmed on-chain.",
   open: "Live on-chain and reclaimable by you. A solver may settle it at the batch price.",
   completed:
-    "No longer on-chain — settled by a solver, or reclaimed elsewhere. Confirm the outcome on the explorer.",
+    "No longer on-chain. Settled by a solver, or reclaimed elsewhere. Confirm the outcome on the explorer.",
   reclaimed: "You reclaimed this order; the funds are back in your wallet.",
 };
 
@@ -45,6 +49,16 @@ const STATUS_LABEL: Record<RowStatus, string> = {
   completed: "completed",
   reclaimed: "reclaimed",
 };
+
+/**
+ * Grace window before the Orders view reconciles a logged entry against the chain — used
+ * for BOTH an optimistic reclaim (verify its tx landed) and a "pending" post we never saw
+ * live (verify the post landed). It's measured from the relevant tx's submit time and is
+ * comfortably past confirmation + Blockfrost indexer lag, so we never act inside the brief
+ * window where a tx is in a block but its effects aren't yet reflected in the address-UTXO
+ * set. 5 min tidies up promptly without flickering a still-confirming tx.
+ */
+const RECONCILE_GRACE_MS = 5 * 60 * 1000;
 
 type ReclaimState =
   | { kind: "idle" }
@@ -131,6 +145,94 @@ export default function OrdersPage() {
     return () => clearTimeout(id);
   }, [ownerAddr, orders]);
 
+  // Reconcile logged entries against the chain — once on mount/Refresh, and via a single
+  // re-armed one-shot timer so an idle tab self-corrects without a manual Refresh (bounded,
+  // not interval polling). Two flows, both gated by RECONCILE_GRACE_MS (anchored on the tx's
+  // submit time, `reclaimTs ?? ts`, so legacy entries with no reclaimTs still qualify):
+  //
+  //   • Optimistic reclaim: a reclaim and a settlement both spend the order UTXO, so a
+  //     reclaim can lose a mempool race and never land, leaving a false "reclaimed ✓". Clear
+  //     it ONLY when its tx is unconfirmed AND the order has LEFT the live set (the lost-race
+  //     signal) — never flip a still-live order back to a clickable "open" that invites a
+  //     doomed second reclaim. (Blockfrost drops the order from the live set only once it has
+  //     indexed the spending block, when a WINNING reclaim's own tx is queryable too — so
+  //     liveness gating also stops us clearing a genuine reclaim during indexer lag.)
+  //
+  //   • Stuck "pending" post: an order can be settled by a solver before we ever refresh
+  //     while it's live, so it's never stamped seenLive and sits "pending" until the 30-min
+  //     OBSERVE_FALLBACK. If its post tx IS on-chain yet the order is gone from the live set,
+  //     it landed and has since been spent → stamp seenLive so the row reads "completed" now.
+  //
+  // Transient provider errors never act (leave the row, retry next pass); confirmed reclaims
+  // are cached in-session so we don't re-query them. Deferred per the effect convention.
+  const reclaimVerified = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!ownerAddr) return;
+    let cancelled = false;
+    let rearm: ReturnType<typeof setTimeout> | undefined;
+    const ac = new AbortController();
+
+    // Entries still needing a chain check: an unconfirmed optimistic reclaim, or a pending
+    // post we've never seen live (no seenLive, no reclaim).
+    const needsWork = () =>
+      getRecent(ownerAddr, nowMs()).filter(
+        (o) =>
+          (o.reclaimTx !== undefined && !reclaimVerified.current.has(o.reclaimTx)) ||
+          (o.reclaimTx === undefined && o.seenLive === undefined),
+      );
+    // The entry's grace window elapses this far in the future (≤0 ⇒ already due).
+    const dueIn = (o: RecentOrder) =>
+      (o.reclaimTs ?? o.ts) + RECONCILE_GRACE_MS - nowMs();
+    const isLive = (ref: string) => orders.some((p) => p.ref === ref);
+
+    const runVerify = async () => {
+      if (cancelled) return;
+      let changed = false;
+      for (const o of needsWork().filter((e) => dueIn(e) <= 0)) {
+        if (cancelled) return;
+        try {
+          if (o.reclaimTx !== undefined) {
+            if (await fetchTxConfirmed(o.reclaimTx, ac.signal)) {
+              reclaimVerified.current.add(o.reclaimTx); // genuine reclaim — keep "reclaimed ✓"
+            } else if (!isLive(o.ref)) {
+              clearReclaim(ownerAddr, o.ref, nowMs()); // lost the race → honest "completed"
+              changed = true;
+            }
+            // else: unconfirmed but still live → pending in the mempool; keep optimistic.
+          } else if (
+            !isLive(o.ref) &&
+            (await fetchTxConfirmed(o.ref.split("#")[0], ac.signal))
+          ) {
+            // Pending post, gone from the live set, but its post tx IS on-chain → it landed
+            // and was settled/spent before we saw it live. Stamp seenLive → "completed".
+            markSeen(ownerAddr, [o.ref], nowMs());
+            changed = true;
+          }
+        } catch {
+          // transient provider error / aborted — leave the row as-is, retry next pass
+        }
+      }
+      if (changed && !cancelled) {
+        setRecent(getRecent(ownerAddr, nowMs()));
+        setNow(nowMs());
+      }
+      // Self-correct an idle tab: fire once when the soonest not-yet-due item crosses its
+      // grace window (a bounded one-shot, re-scheduled each pass — not interval polling).
+      if (!cancelled) {
+        const waits = needsWork().map(dueIn).filter((ms) => ms > 0);
+        if (waits.length > 0) rearm = setTimeout(runVerify, Math.min(...waits));
+      }
+    };
+
+    const id = setTimeout(runVerify, 0);
+    return () => {
+      cancelled = true;
+      ac.abort();
+      clearTimeout(id);
+      if (rearm) clearTimeout(rearm);
+    };
+  }, [ownerAddr, orders]);
+
   const rows = useMemo(
     () => (ownerAddr ? mergeRows(orders, recent, now) : []),
     [ownerAddr, orders, recent, now],
@@ -167,7 +269,12 @@ export default function OrdersPage() {
           minOut: row.minOut,
           partial: row.partial,
           ts: nowMs(),
+          // Reclaim only targets a LIVE order, so it has been seen on-chain — stamp it so
+          // that if this reclaim is later cleared (it lost a mempool race) the row reads
+          // as "completed", not "pending". reclaimTs gates the on-chain verify grace window.
+          seenLive: nowMs(),
           reclaimTx: hash,
+          reclaimTs: nowMs(),
         });
       }
       setReclaim({ kind: "idle" });
@@ -191,30 +298,29 @@ export default function OrdersPage() {
             <h1 className="font-display text-2xl font-extrabold text-ink">Orders</h1>
           </div>
           <p className="mt-1 text-sm text-muted">
-            Everything you’ve dropped off on {networkLabel()}, plus recent activity. While
-            an order’s live, it’s always yours to grab back.
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            <span className="text-accent">Open</span> = live & yours to grab back ·{" "}
-            <span className="text-muted">Completed</span> = no longer live (settled or
-            reclaimed — check the explorer to be sure).
+            Everything you’ve dropped off, plus recent activity. While an order’s
+            live, it’s always yours to grab back.
           </p>
         </div>
         {connected && (
           <button
             type="button"
             onClick={refresh}
-            className="k-btn-ghost shrink-0 px-3 py-1.5 text-xs"
+            disabled={loading}
+            aria-busy={loading}
+            className="k-btn-ghost shrink-0 px-3 py-1.5 text-xs disabled:opacity-70"
           >
-            Refresh
+            <span className="flex items-center gap-1.5">
+              <RefreshIcon busy={loading} />
+              {loading ? "Refreshing…" : "Refresh"}
+            </span>
           </button>
         )}
       </header>
 
       {connected && needsCollateral && (
         <CollateralNote onRecheck={recheckCollateral}>
-          Reclaiming an order spends a script, so your wallet needs a collateral UTXO. Set
-          one in your wallet, then re-check.
+          Reclaiming needs a collateral set in your wallet. Add one, then re-check.
         </CollateralNote>
       )}
 
@@ -223,7 +329,7 @@ export default function OrdersPage() {
       {ownerError && (
         <div className="k-note k-note-danger flex items-center gap-2 p-4 text-sm">
           <Pip size={24} mood="worried" />
-          <span>Pip couldn’t read your wallet address — reconnect and try again.</span>
+          <span>Pip couldn’t read your wallet address. Reconnect and try again.</span>
         </div>
       )}
 
@@ -249,7 +355,7 @@ export default function OrdersPage() {
       )}
 
       {connected && !showLoading && !error && rows.length === 0 && (
-        <Empty>No orders yet — drop one off from the Swap page.</Empty>
+        <Empty>No orders yet. Drop one off from the Swap page.</Empty>
       )}
 
       {connected && rows.length > 0 && (
@@ -273,6 +379,11 @@ export default function OrdersPage() {
           ))}
         </ul>
       )}
+
+      <PipOverlay
+        show={reclaim.kind === "busy"}
+        title="Grabbing your order back…"
+      />
     </div>
   );
 }
@@ -313,21 +424,31 @@ function OrderRowItem({
             {row.partial && (
               <span
                 className="k-chip k-chip-muted"
-                title="Partial fills allowed — a partly-filled order leaves a separate, reclaimable remainder order with the unfilled amount."
+                title="Partial fills allowed. A partly-filled order leaves a separate, reclaimable remainder order with the unfilled amount."
               >
                 partial ok
               </span>
             )}
           </div>
           <div className="mt-0.5 truncate font-mono text-xs text-muted">
-            {truncate(row.ref, 10, 4)} · min{" "}
-            {formatUnits(row.minOut, row.outDecimals)} {row.outTicker}
+            <a
+              href={explorerTxUrl(row.ref.split("#")[0])}
+              target="_blank"
+              rel="noreferrer"
+              title="View this order’s transaction on Cardanoscan"
+              className="underline decoration-dotted underline-offset-2 hover:text-accent"
+            >
+              {truncate(row.ref, 10, 4)} ↗
+            </a>{" "}
+            · min {formatUnits(row.minOut, row.outDecimals)} {row.outTicker}
           </div>
         </div>
         <div className="flex items-center gap-2">
           <span
-            className={`k-chip ${STATUS_STYLE[row.status]}`}
+            className={`k-chip ${STATUS_STYLE[row.status]} cursor-help`}
+            tabIndex={0}
             title={STATUS_HELP[row.status]}
+            aria-label={`${STATUS_LABEL[row.status]}: ${STATUS_HELP[row.status]}`}
           >
             {STATUS_LABEL[row.status]}
           </span>
@@ -353,7 +474,7 @@ function OrderRowItem({
 
       {row.reclaimTx && (
         <div className="mt-2 text-xs text-success">
-          Reclaimed ✓ — your input, min-ADA and tip are back in your wallet.{" "}
+          Reclaimed ✓. Your input, min-ADA and tip are back in your wallet.{" "}
           <a
             href={explorerTxUrl(row.reclaimTx)}
             target="_blank"

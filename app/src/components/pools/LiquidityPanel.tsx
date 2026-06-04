@@ -18,9 +18,11 @@ import {
 } from "@/lib/chain/lp";
 import { toUserMessage } from "@/lib/client/errors";
 import { MIN_LIQ } from "@/lib/chain/deployment";
-import { formatUnits, toBaseUnits, truncate } from "@/lib/format";
+import { formatUnits, toBaseUnits, truncate, withinDecimals } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
+import { PipOverlay } from "@/components/PipOverlay";
+import { RefreshIcon } from "@/components/RefreshIcon";
 import { Confetti } from "@/components/Confetti";
 import { CollateralNote } from "@/components/CollateralNote";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
@@ -39,6 +41,15 @@ function withSlippage(amount: bigint, slippagePct: number): bigint {
   return (amount * (10_000n - bps)) / 10_000n;
 }
 
+/** Legible price ratio: grouped thousands for ≥1, significant digits for sub-1 (mirrors
+ * the swap card's mid-price), so a tiny-but-real opening price never rounds to "0". */
+function formatRate(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  return n >= 1
+    ? n.toLocaleString(undefined, { maximumFractionDigits: 6 })
+    : n.toLocaleString(undefined, { maximumSignificantDigits: 4 });
+}
+
 export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { connected, wallet } = useWallet();
   const address = useAddress();
@@ -53,7 +64,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
     // their own flow-specific reasons after it (DRY with the swap/orders gating).
     baseReason,
   } = useWriteGate({ requireCollateral: true });
-  const { view, stats, loading, error, reload } = usePoolUtxo(pool.id);
+  const { view, stats, loading, refreshing, error, reload } = usePoolUtxo(pool.id);
 
   const [tab, setTab] = useState<Tab>("add");
   const [slippage, setSlippage] = useState(0.5);
@@ -167,11 +178,13 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
           <button
             type="button"
             onClick={reload}
+            disabled={loading || refreshing}
+            aria-busy={loading || refreshing}
             title="Refresh pool data"
             aria-label="Refresh pool data"
-            className="k-pill px-3 py-1.5 text-xs text-muted hover:text-accent"
+            className="k-pill px-3 py-1.5 text-xs text-muted hover:text-accent disabled:opacity-70"
           >
-            ↻
+            <RefreshIcon busy={loading || refreshing} />
           </button>
           <SlippageSettings
             value={slippage}
@@ -246,7 +259,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
           {stats.firstDeposit && connected && !isCreator && (
             <div className="k-note k-note-info mt-4 text-xs">
               This pool is empty (no liquidity yet). Only its creator can close an empty
-              pool to reclaim the ~2 ₳ seed — anyone can seed it with the first deposit.
+              pool to reclaim the ~2 ₳ seed. Anyone can seed it with the first deposit.
             </div>
           )}
         </div>
@@ -306,6 +319,15 @@ function AddForm({
       deltaB = 0n;
     }
   }
+
+  // First-deposit opening price the creator is SETTING from their two amounts (display
+  // only — like the swap mid-price, computed with Number for legibility, not trust-
+  // critical). Shown both ways so it reads regardless of which side is ADA.
+  const humanA = Number(deltaA) / 10 ** Math.max(0, pool.tokenA.decimals);
+  const humanB = Number(deltaB) / 10 ** Math.max(0, pool.tokenB.decimals);
+  const showOpening = first && humanA > 0 && humanB > 0;
+  const bPerA = showOpening ? humanB / humanA : 0;
+  const aPerB = showOpening ? humanA / humanB : 0;
 
   // Preview the LP received (pure builder; throws on a too-small/invalid intent).
   let preview: { lpToUser: bigint; lockLp: bigint | null; error: string | null } | null =
@@ -375,10 +397,45 @@ function AddForm({
   return (
     <div className="mt-3">
       {first && (
-        <div className="k-note k-note-warn mb-3 text-xs">
-          This pool has no circulating LP yet — you’re the first depositor. Your deposit
-          ratio sets the pool’s opening price. LP minted = √(reserveA · reserveB); 1000 LP
-          is permanently locked to seed the pool.
+        <div className="mb-3 space-y-2">
+          <div className="k-note k-note-warn text-xs">
+            <div className="flex items-center gap-2">
+              <Pip size={22} mood="thinking" />
+              <span className="font-bold">You set the opening price</span>
+            </div>
+            <p className="mt-1">
+              You’re first to add liquidity, so your two amounts set the pool’s starting
+              price. Try to match what the pair is worth, so it opens fair. A little LP is
+              locked in to seed the pool.
+            </p>
+          </div>
+
+          {showOpening && (
+            <div className="k-field p-3 text-xs">
+              <div className="mb-1.5 px-1 text-muted">Opening price you’re setting</div>
+              <div className="flex items-center justify-between tabular-nums">
+                <span className="text-muted">1 {pool.tokenA.ticker}</span>
+                <span className="font-semibold text-ink">
+                  ≈ {formatRate(bPerA)} {pool.tokenB.ticker}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center justify-between tabular-nums">
+                <span className="text-muted">1 {pool.tokenB.ticker}</span>
+                <span className="font-semibold text-ink">
+                  ≈ {formatRate(aPerB)} {pool.tokenA.ticker}
+                </span>
+              </div>
+              {/* TODO(mainnet): surface an external reference price (e.g. Minswap) beside
+                  this as a non-binding sanity check. No preprod reference market exists; the
+                  data seam (DataProvider) is the single place to source it — keep it OPTIONAL
+                  so the app (and this guidance) still works when it's unavailable. */}
+            </div>
+          )}
+
+          <p className="px-1 text-[11px] text-muted">
+            This is just the <em>opening</em> price. Trades and new deposits move it from
+            here, and the deeper the pool, the less each trade swings it.
+          </p>
         </div>
       )}
 
@@ -387,6 +444,7 @@ function AddForm({
         ticker={pool.tokenA.ticker}
         value={amountA}
         editable
+        decimals={pool.tokenA.decimals}
         onChange={(v) => {
           setAmountA(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
@@ -406,6 +464,7 @@ function AddForm({
           first ? amountB : deltaB > 0n ? formatUnits(deltaB.toString(), pool.tokenB.decimals) : ""
         }
         editable={first}
+        decimals={pool.tokenB.decimals}
         onChange={(v) => {
           setAmountB(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
@@ -457,6 +516,11 @@ function AddForm({
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Liquidity added" />
+
+      <PipOverlay
+        show={state.kind === "busy"}
+        title={first ? "Seeding the pool…" : "Adding liquidity…"}
+      />
     </div>
   );
 }
@@ -642,6 +706,8 @@ function RemoveForm({
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Liquidity removed" />
+
+      <PipOverlay show={state.kind === "busy"} title="Removing liquidity…" />
     </div>
   );
 }
@@ -667,6 +733,10 @@ function CloseEmptyPool({
   needsCollateral: boolean;
   onClosed: (txHash: string) => void;
 }) {
+  // Collapsed by default: on an empty pool you created, the PRIMARY action is to seed it
+  // (the Add form above). The destructive close is a secondary escape hatch, tucked behind
+  // a quiet link so it doesn't crowd or compete with the first deposit.
+  const [expanded, setExpanded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
@@ -701,8 +771,20 @@ function CloseEmptyPool({
     }
   }
 
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        className="mt-3 w-full text-center text-xs text-muted underline decoration-dotted underline-offset-2 transition-colors hover:text-danger"
+      >
+        Created this pool by mistake? Close the empty pool →
+      </button>
+    );
+  }
+
   return (
-    <div className="k-note k-note-danger mt-4">
+    <div className="k-note k-note-danger mt-3">
       <div className="px-0.5 text-xs text-muted">
         You created this empty pool. Closing permanently burns it and returns the
         ~2 ₳ seed to your wallet. (Once it has liquidity it can never be closed.)
@@ -736,7 +818,7 @@ function CloseEmptyPool({
             onClick={submit}
             className="k-btn-danger flex-1 text-sm"
           >
-            {gateReason ?? (state.kind === "busy" ? "Closing…" : "Confirm — burn pool")}
+            {gateReason ?? (state.kind === "busy" ? "Closing…" : "Yes, burn pool")}
           </button>
         </div>
       )}
@@ -746,6 +828,8 @@ function CloseEmptyPool({
           {state.message}
         </div>
       )}
+
+      <PipOverlay show={state.kind === "busy"} title="Closing the pool…" />
     </div>
   );
 }
@@ -753,7 +837,7 @@ function CloseEmptyPool({
 /** Map a `buildDeposit` throw into a user-facing explanation (distinct causes). */
 function depositErrorMessage(err: string): string {
   if (/first deposit too small|must exceed min_liq/i.test(err)) {
-    return "This first deposit is too small to seed the pool — it must mint more than the locked minimum liquidity. Increase both amounts.";
+    return "This first deposit is too small to seed the pool. It must mint more than the locked minimum liquidity. Increase both amounts.";
   }
   if (/rounds to zero/i.test(err)) {
     return "That amount is too small to mint any LP. Increase it.";
@@ -796,40 +880,36 @@ function PositionLine({
   position: { a: bigint; b: bigint };
   firstDeposit: boolean;
 }) {
-  // LP tokens are a share of the pool: your fraction of circulating LP = your fraction
-  // of the reserves. Shown as a % so the raw counts (up to ~9.2e18 total) are legible.
+  // LP is a share of the pool: your fraction of circulating LP = your fraction of the
+  // reserves. Shown as a % so the raw counts (up to ~9.2e18) stay legible.
   const sharePct =
     circ > 0n && lpBalance > 0n
       ? Number((lpBalance * 1_000_000n) / circ) / 10_000
       : 0;
-  const shareLabel =
-    sharePct === 0 ? "" : sharePct < 0.01 ? "<0.01% of the pool" : `${sharePct.toFixed(2)}% of the pool`;
+  const shareText =
+    sharePct === 0 ? "—" : sharePct < 0.01 ? "<0.01%" : `${sharePct.toFixed(2)}%`;
   return (
     <div className="k-field p-3 text-xs">
-      <div className="flex items-center justify-between">
-        <span className="text-muted">
-          Your position
-          <span className="block text-[11px] text-muted">
-            LP tokens = your share of this pool’s reserves
-          </span>
-        </span>
-        <span className="tabular-nums font-medium">
-          {lpBalance.toLocaleString()} LP
-        </span>
-      </div>
-      {lpBalance > 0n && (
-        <div className="mt-1 text-right tabular-nums text-muted">
-          ≈ {formatUnits(position.a.toString(), pool.tokenA.decimals)}{" "}
-          {pool.tokenA.ticker} +{" "}
-          {formatUnits(position.b.toString(), pool.tokenB.decimals)}{" "}
-          {pool.tokenB.ticker}
-          {shareLabel && (
-            <span className="block text-[11px] text-muted">{shareLabel}</span>
-          )}
+      <div className="mb-2 text-muted">Your position</div>
+      {lpBalance > 0n ? (
+        <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 tabular-nums">
+          <dt className="text-muted">LP</dt>
+          <dd className="text-right font-medium text-ink">{lpBalance.toLocaleString()}</dd>
+          <dt className="text-muted">Share</dt>
+          <dd className="text-right text-ink">{shareText}</dd>
+          <dt className="text-muted">{pool.tokenA.ticker}</dt>
+          <dd className="text-right text-ink">
+            {formatUnits(position.a.toString(), pool.tokenA.decimals)}
+          </dd>
+          <dt className="text-muted">{pool.tokenB.ticker}</dt>
+          <dd className="text-right text-ink">
+            {formatUnits(position.b.toString(), pool.tokenB.decimals)}
+          </dd>
+        </dl>
+      ) : (
+        <div className="text-muted">
+          {firstDeposit ? "No liquidity yet." : "You hold no LP in this pool."}
         </div>
-      )}
-      {firstDeposit && lpBalance === 0n && (
-        <div className="mt-1 text-right text-muted">no liquidity yet</div>
       )}
     </div>
   );
@@ -840,12 +920,15 @@ function AmountField({
   ticker,
   value,
   editable,
+  decimals,
   onChange,
 }: {
   label: string;
   ticker: string;
   value: string;
   editable: boolean;
+  /** Max fractional digits accepted while typing (the token's precision; 0 if unknown). */
+  decimals: number;
   onChange: (v: string) => void;
 }) {
   return (
@@ -859,7 +942,7 @@ function AmountField({
           placeholder="0"
           onChange={(e) => {
             const v = e.target.value;
-            if (v === "" || /^\d*\.?\d*$/.test(v)) onChange(v);
+            if (withinDecimals(v, decimals)) onChange(v);
           }}
           className={`k-input text-3xl font-extrabold tabular-nums ${
             editable ? "text-ink" : "text-muted"

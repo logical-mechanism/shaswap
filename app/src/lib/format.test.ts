@@ -11,11 +11,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   formatAda,
+  formatCompactUnits,
   formatPercent,
   formatUnits,
-  formatUnitsPlain,
   toBaseUnits,
   truncate,
+  withinDecimals,
 } from "./format.ts";
 
 test("toBaseUnits scales by decimals", () => {
@@ -48,29 +49,26 @@ test("toBaseUnits tolerates grouped / spaced input (MAX-button regression)", () 
   assert.equal(toBaseUnits(" 12 ", 0), "12");
 });
 
-test("formatUnits groups + trims; formatUnitsPlain does not group", () => {
-  assert.equal(formatUnits("1000000", 6), "1");
-  assert.equal(formatUnits("1234500000", 6), "1,234.5");
-  assert.equal(formatUnitsPlain("1234500000", 6), "1234.5");
-  assert.equal(formatUnits("1000", 0), "1,000");
-  assert.equal(formatUnitsPlain("1000", 0), "1000");
+test("formatCompactUnits abbreviates thousands with a single suffix (bounded width)", () => {
+  // Scales by decimals, then K/M/B/T so a huge-supply reserve can't blow out a row.
+  assert.equal(formatCompactUnits("1200000000", 0), "1.2B"); // 1.2B TEST
+  assert.equal(formatCompactUnits("500000000", 0), "500M"); // 500M HOSKY
+  assert.equal(formatCompactUnits("861338911", 6), "861.34"); // ~861 ADA → under 1000, 2dp
+  assert.equal(formatCompactUnits("300000000", 6), "300"); // exactly 300 ADA, trimmed
+  assert.equal(formatCompactUnits("1003000000", 6), "1K"); // 1003 → 1K (compact glance)
+  assert.equal(formatCompactUnits("123456789012", 0), "123B"); // ≥100 → no decimals
 });
 
-test("MAX round-trips: formatUnitsPlain output parses back, never over balance", () => {
-  // <=6 decimals: exact round-trip (the common case).
-  for (const [base, dec] of [
-    ["1000", 0],
-    ["1003000000", 6],
-    ["12345", 0],
-  ] as const) {
-    const plain = formatUnitsPlain(base, dec);
-    assert.ok(!plain.includes(","), `plain has no comma: ${plain}`);
-    assert.equal(toBaseUnits(plain, dec), base);
-  }
-  // High-decimal: display caps at 6 fractional digits, so MAX may leave tiny dust — but
-  // must NEVER round up past the real balance.
-  const plain8 = formatUnitsPlain("123456789", 8);
-  assert.ok(BigInt(toBaseUnits(plain8, 8)) <= 123456789n);
+test("formatCompactUnits handles zero, dust, and empty", () => {
+  assert.equal(formatCompactUnits("0", 6), "0");
+  assert.equal(formatCompactUnits(undefined, 6), "0");
+  assert.equal(formatCompactUnits("1", 6), "<0.001"); // 0.000001 ADA → non-zero dust
+});
+
+test("formatUnits groups + trims", () => {
+  assert.equal(formatUnits("1000000", 6), "1");
+  assert.equal(formatUnits("1234500000", 6), "1,234.5");
+  assert.equal(formatUnits("1000", 0), "1,000");
 });
 
 test("formatters stay exact beyond Number.MAX_SAFE_INTEGER", () => {
@@ -87,4 +85,21 @@ test("truncate keeps short strings, shortens long ones", () => {
 test("formatPercent", () => {
   assert.equal(formatPercent(0.012), "1.20%");
   assert.equal(formatPercent(0.15, 0), "15%");
+});
+
+test("withinDecimals masks fractional digits to a token's precision", () => {
+  // 6-decimal token (ADA): up to 6 fractional digits, partial entry allowed.
+  assert.equal(withinDecimals("", 6), true);
+  assert.equal(withinDecimals("12", 6), true);
+  assert.equal(withinDecimals("12.", 6), true);
+  assert.equal(withinDecimals(".5", 6), true);
+  assert.equal(withinDecimals("1.234567", 6), true);
+  assert.equal(withinDecimals("1.2345678", 6), false); // 7 > 6
+  // 0-decimal / unknown-precision token: no fractional part at all.
+  assert.equal(withinDecimals("12", 0), true);
+  assert.equal(withinDecimals("12.", 0), false);
+  assert.equal(withinDecimals("1.5", 0), false);
+  // Garbage / multiple dots rejected regardless of precision.
+  assert.equal(withinDecimals("1.2.3", 6), false);
+  assert.equal(withinDecimals("abc", 6), false);
 });

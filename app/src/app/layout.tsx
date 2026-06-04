@@ -33,19 +33,19 @@ export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
   ),
-  title: "ShaSwap — swap with Pip",
+  title: "ShaSwap: swap with Pip",
   description:
-    "A cozy, fair batch-auction house on Cardano. Non-custodial — your keys, your coins.",
+    "A cozy batch swap on Cardano. Non-custodial. Your keys, your coins.",
   openGraph: {
-    title: "ShaSwap — swap with Pip",
-    description: "A cozy, fair batch-auction house on Cardano.",
+    title: "ShaSwap: swap with Pip",
+    description: "A cozy batch swap on Cardano.",
     siteName: "ShaSwap",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "ShaSwap — swap with Pip",
-    description: "A cozy, fair batch-auction house on Cardano.",
+    title: "ShaSwap: swap with Pip",
+    description: "A cozy batch swap on Cardano.",
   },
 };
 
