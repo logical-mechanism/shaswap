@@ -1,7 +1,6 @@
 import { SwapCard } from "@/components/swap/SwapCard";
 import { Pip } from "@/components/Pip";
 import { Disclosure } from "@/components/Disclosure";
-import { networkLabel } from "@/lib/config";
 
 export default function SwapPage() {
   return (
@@ -35,8 +34,8 @@ export default function SwapPage() {
               order back anytime. Your tokens never leave your control.
             </p>
             <p className="text-muted">
-              Prices come from live {networkLabel()} pool reserves, so a quote is just a
-              friendly estimate until the batch settles.
+              Prices come from live pool reserves, so a quote is just a friendly
+              estimate until the batch settles.
             </p>
           </div>
         </div>

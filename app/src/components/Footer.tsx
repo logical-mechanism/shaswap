@@ -11,7 +11,6 @@ export function Footer() {
         <span className="k-pill text-xs">
           <Pip size={18} mood="happy" />
           {networkLabel()}
-          {APP_CONFIG.network !== "mainnet" && " · testnet"}
           <span className="sr-only">network {APP_CONFIG.network}</span>
         </span>
       </div>
