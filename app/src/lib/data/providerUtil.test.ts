@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { feeToBps, isRetriable } from "./providerUtil.ts";
+import { feeToBps, httpStatus, isRetriable } from "./providerUtil.ts";
 
 test("feeToBps converts fee_num/fee_den to basis points", () => {
   assert.equal(feeToBps(3n, 1000n), 30);
@@ -37,4 +37,19 @@ test("isRetriable: 4xx (non-429) and tx/validation errors are NOT retried", () =
   assert.equal(isRetriable({ status: 400 }), false);
   assert.equal(isRetriable(new Error("ScriptFailure BadInputsUTxO")), false);
   assert.equal(isRetriable("nope"), false);
+});
+
+test("httpStatus: from an object status / status_code", () => {
+  assert.equal(httpStatus({ status: 404 }), 404);
+  assert.equal(httpStatus({ status_code: 502 }), 502);
+});
+
+test("httpStatus: parsed out of a JSON-string error (Blockfrost shape)", () => {
+  assert.equal(httpStatus(JSON.stringify({ status_code: 404, message: "Not Found" })), 404);
+  assert.equal(httpStatus(JSON.stringify({ status: 200 })), 200);
+});
+
+test("httpStatus: undefined for a statusless network blip", () => {
+  assert.equal(httpStatus("fetch failed"), undefined);
+  assert.equal(httpStatus(new Error("ETIMEDOUT connecting")), undefined);
 });

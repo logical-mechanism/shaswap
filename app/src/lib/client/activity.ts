@@ -34,6 +34,13 @@ export interface RecentOrder {
   seenLive?: number;
   /** Set once the owner reclaims it. */
   reclaimTx?: string;
+  /**
+   * Date.now() when the reclaim was submitted. The Orders view waits a grace window past
+   * this before verifying the reclaim actually confirmed on-chain — a reclaim can lose a
+   * mempool race to a solver settlement (both spend the order), never land, and leave a
+   * stale `reclaimTx` that must be cleared (see `clearReclaim`).
+   */
+  reclaimTs?: number;
 }
 
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // forget after a day
@@ -90,6 +97,28 @@ export function markSeen(owner: string, refs: string[], now: number): void {
       return { ...o, seenLive: now };
     }
     return o;
+  });
+  if (changed) write(owner, next);
+}
+
+/**
+ * Drop a stale optimistic reclaim: the recorded reclaim tx never confirmed on-chain (it
+ * lost a mempool race to a solver settlement — a double-spend), so strip `reclaimTx` /
+ * `reclaimTs` and let the row fall back to its honest on-chain status. Stamps `seenLive`
+ * if absent — a reclaimed order was, by definition, live at least once — so the cleared
+ * row reads as "completed" rather than briefly bouncing back to "pending". Persists only
+ * if something actually changed.
+ */
+export function clearReclaim(owner: string, ref: string, now: number): void {
+  if (typeof window === "undefined" || !owner) return;
+  const list = read(owner);
+  let changed = false;
+  const next = list.map((o) => {
+    if (o.ref !== ref || o.reclaimTx === undefined) return o;
+    changed = true;
+    // Set undefined (not delete) — JSON.stringify drops undefined keys, so they read
+    // back absent; mergeRows treats absent reclaimTx as "not reclaimed".
+    return { ...o, reclaimTx: undefined, reclaimTs: undefined, seenLive: o.seenLive ?? now };
   });
   if (changed) write(owner, next);
 }
