@@ -9,3 +9,6 @@ CLAUDE.local.md
 # Local env
 .env.local
 *.local.env
+
+# mainnet deploy working dir (tx drafts, refs.json)
+scripts/work-mainnet/

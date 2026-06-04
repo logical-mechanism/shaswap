@@ -15,10 +15,17 @@ jobs:
       - uses: actions/checkout@v3
       - uses: aiken-lang/setup-aiken@v1
         with:
+          # Pinned for reproducible builds — the validators are immutable, so the on-chain
+          # script hashes must be re-derivable from source with this exact compiler.
           version: v1.1.22
       - run: aiken fmt --check
       - run: aiken check -D
       - run: aiken build
+      # Reproducible-build guard: a fresh build must reproduce the committed plutus.json
+      # byte-for-byte. Fails if the committed artifact drifted from source (so a deployed
+      # script hash can always be re-derived and verified against the audited source).
+      - name: plutus.json is reproducible (no hash drift)
+        run: git diff --exit-code plutus.json
 
   app:
     runs-on: ubuntu-latest
