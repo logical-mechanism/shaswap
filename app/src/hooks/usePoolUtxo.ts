@@ -19,6 +19,9 @@ export function usePoolUtxo(poolId: string | undefined) {
   const [view, setView] = useState<PoolView | null>(null);
   const [stats, setStats] = useState<PoolStats | null>(null);
   const [loading, setLoading] = useState(true);
+  // True while a manual reload() is in flight (loading stays false so the panel keeps its
+  // last-good reserves) — lets the ↻ Refresh spin so a refresh shows it's working.
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   // The poolId we last loaded successfully. With no interval poll, a transient reload
@@ -27,7 +30,10 @@ export function usePoolUtxo(poolId: string | undefined) {
   // when there's no good data for THIS pool yet (first load). Mirrors usePools' guard.
   const loadedFor = useRef<string | undefined>(undefined);
 
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  const reload = useCallback(() => {
+    setRefreshing(true);
+    setNonce((n) => n + 1);
+  }, []);
 
   // All state is set from the async callbacks only (never synchronously in the effect
   // body) — the project's effect convention (cf. the Orders page). On reload the data
@@ -63,10 +69,13 @@ export function usePoolUtxo(poolId: string | undefined) {
         }
       })
       .finally(() => {
-        if (!ac.signal.aborted) setLoading(false);
+        if (!ac.signal.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       });
     return () => ac.abort();
   }, [poolId, nonce]);
 
-  return { view, stats, loading, error, reload };
+  return { view, stats, loading, refreshing, error, reload };
 }

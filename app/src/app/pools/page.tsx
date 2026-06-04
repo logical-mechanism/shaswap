@@ -9,6 +9,7 @@ import { formatUnits } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { RefreshIcon } from "@/components/RefreshIcon";
 
 type SortKey = "liquidity" | "pair" | "fee";
 
@@ -37,7 +38,7 @@ function canonical(pool: Pool) {
 }
 
 export default function PoolsPage() {
-  const { pools, loading, error, reload } = usePools();
+  const { pools, loading, refreshing, error, reload } = usePools();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("liquidity");
   const [hideEmpty, setHideEmpty] = useState(false);
@@ -113,11 +114,13 @@ export default function PoolsPage() {
           <button
             type="button"
             onClick={reload}
+            disabled={loading || refreshing}
+            aria-busy={loading || refreshing}
             title="Refresh pools"
             aria-label="Refresh pools"
-            className="k-pill px-3 py-2.5 text-sm text-muted hover:text-accent"
+            className="k-pill px-3 py-2.5 text-sm text-muted hover:text-accent disabled:opacity-70"
           >
-            ↻
+            <RefreshIcon busy={loading || refreshing} />
           </button>
           <Link href="/pools/create" className="k-btn px-4 py-2.5 text-sm">
             + Create pool

@@ -21,6 +21,7 @@ import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate, withinDecimals } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
+import { RefreshIcon } from "@/components/RefreshIcon";
 import { Confetti } from "@/components/Confetti";
 import { CollateralNote } from "@/components/CollateralNote";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
@@ -62,7 +63,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
     // their own flow-specific reasons after it (DRY with the swap/orders gating).
     baseReason,
   } = useWriteGate({ requireCollateral: true });
-  const { view, stats, loading, error, reload } = usePoolUtxo(pool.id);
+  const { view, stats, loading, refreshing, error, reload } = usePoolUtxo(pool.id);
 
   const [tab, setTab] = useState<Tab>("add");
   const [slippage, setSlippage] = useState(0.5);
@@ -176,11 +177,13 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
           <button
             type="button"
             onClick={reload}
+            disabled={loading || refreshing}
+            aria-busy={loading || refreshing}
             title="Refresh pool data"
             aria-label="Refresh pool data"
-            className="k-pill px-3 py-1.5 text-xs text-muted hover:text-accent"
+            className="k-pill px-3 py-1.5 text-xs text-muted hover:text-accent disabled:opacity-70"
           >
-            ↻
+            <RefreshIcon busy={loading || refreshing} />
           </button>
           <SlippageSettings
             value={slippage}
