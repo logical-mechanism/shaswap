@@ -21,6 +21,7 @@ import { MIN_LIQ } from "@/lib/chain/deployment";
 import { formatUnits, toBaseUnits, truncate, withinDecimals } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
+import { PipOverlay } from "@/components/PipOverlay";
 import { RefreshIcon } from "@/components/RefreshIcon";
 import { Confetti } from "@/components/Confetti";
 import { CollateralNote } from "@/components/CollateralNote";
@@ -517,6 +518,11 @@ function AddForm({
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Liquidity added" />
+
+      <PipOverlay
+        show={state.kind === "busy"}
+        title={first ? "Seeding the pool…" : "Adding liquidity…"}
+      />
     </div>
   );
 }
@@ -702,6 +708,8 @@ function RemoveForm({
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Liquidity removed" />
+
+      <PipOverlay show={state.kind === "busy"} title="Removing liquidity…" />
     </div>
   );
 }
@@ -822,6 +830,8 @@ function CloseEmptyPool({
           {state.message}
         </div>
       )}
+
+      <PipOverlay show={state.kind === "busy"} title="Closing the pool…" />
     </div>
   );
 }

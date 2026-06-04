@@ -23,6 +23,7 @@ import { explorerTxUrl } from "@/lib/config";
 import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { PipOverlay } from "@/components/PipOverlay";
 import { CollateralNote } from "@/components/CollateralNote";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
@@ -397,6 +398,11 @@ export default function OrdersPage() {
           ))}
         </ul>
       )}
+
+      <PipOverlay
+        show={reclaim.kind === "busy"}
+        title="Grabbing your order back…"
+      />
     </div>
   );
 }

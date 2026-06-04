@@ -27,6 +27,7 @@ import {
 } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
+import { PipOverlay } from "@/components/PipOverlay";
 import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
 import { SlippageSettings } from "./SlippageSettings";
@@ -471,6 +472,11 @@ export function SwapCard() {
       </p>
 
       <PostResult state={post} />
+
+      <PipOverlay
+        show={post.kind === "posting"}
+        title="Tucking your order into the next batch…"
+      />
     </div>
   );
 }
@@ -514,17 +520,6 @@ function PostResult({ state }: { state: PostState }) {
         >
           {truncate(state.hash, 10, 8)} ↗
         </a>
-      </div>
-    );
-  }
-  if (state.kind === "posting") {
-    return (
-      <div className="k-note k-note-info mt-3 text-xs">
-        <div className="flex items-center gap-2">
-          <Pip size={26} mood="thinking" float />
-          <div className="font-bold">Pip’s tucking your order into the next batch…</div>
-        </div>
-        <p className="mt-1 text-muted">Confirm the transaction in your wallet.</p>
       </div>
     );
   }

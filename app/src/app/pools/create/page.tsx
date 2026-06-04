@@ -26,6 +26,7 @@ import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
 import { truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { PipOverlay } from "@/components/PipOverlay";
 import { Confetti } from "@/components/Confetti";
 import { CollateralNote } from "@/components/CollateralNote";
 
@@ -334,6 +335,8 @@ export default function CreatePoolPage() {
           </div>
         )}
       </div>
+
+      <PipOverlay show={state.kind === "busy"} title="Creating your pool…" />
     </div>
   );
 }
