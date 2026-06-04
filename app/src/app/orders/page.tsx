@@ -49,16 +49,14 @@ const STATUS_LABEL: Record<RowStatus, string> = {
 };
 
 /**
- * How long a just-submitted reclaim is trusted optimistically before we verify it actually
- * confirmed on-chain. A simple reclaim spend confirms within ~one block, and a mempool race
- * against a settlement resolves in a block or two — but the clear is also liveness-gated
- * (only when the order has left the live set), so this window mainly bounds how long a
- * lost-race reclaim shows a false "reclaimed ✓" before the passive re-arm self-corrects it.
- * 5 min is comfortably past confirmation + Blockfrost indexer lag while still tidying up
- * promptly. A genuinely-successful reclaim is never cleared (its order leaves the live set
- * only once its own tx is indexed, so the verify sees it confirmed).
+ * Grace window before the Orders view reconciles a logged entry against the chain — used
+ * for BOTH an optimistic reclaim (verify its tx landed) and a "pending" post we never saw
+ * live (verify the post landed). It's measured from the relevant tx's submit time and is
+ * comfortably past confirmation + Blockfrost indexer lag, so we never act inside the brief
+ * window where a tx is in a block but its effects aren't yet reflected in the address-UTXO
+ * set. 5 min tidies up promptly without flickering a still-confirming tx.
  */
-const RECLAIM_VERIFY_GRACE_MS = 5 * 60 * 1000;
+const RECONCILE_GRACE_MS = 5 * 60 * 1000;
 
 type ReclaimState =
   | { kind: "idle" }
@@ -145,27 +143,26 @@ export default function OrdersPage() {
     return () => clearTimeout(id);
   }, [ownerAddr, orders]);
 
-  // A locally-recorded reclaim is only TRUE once its tx confirms on-chain. A reclaim and a
-  // solver settlement both spend the order UTXO, so a reclaim can lose a mempool race
-  // (double-spend) and never land — leaving the row falsely showing "reclaimed ✓ / funds
-  // back". This pass verifies any optimistic reclaim past the grace window and clears the
-  // stale ones, with three rules that keep it honest AND safe:
+  // Reconcile logged entries against the chain — once on mount/Refresh, and via a single
+  // re-armed one-shot timer so an idle tab self-corrects without a manual Refresh (bounded,
+  // not interval polling). Two flows, both gated by RECONCILE_GRACE_MS (anchored on the tx's
+  // submit time, `reclaimTs ?? ts`, so legacy entries with no reclaimTs still qualify):
   //
-  //   • Clear ONLY when the tx is unconfirmed AND the order has LEFT the live set — the
-  //     genuine lost-race signal (a settlement spent the order). If the order is still
-  //     live, the reclaim is merely pending in the mempool: keep it optimistic rather than
-  //     flip the row back to a clickable "open" that invites a doomed second reclaim.
-  //     (Blockfrost only drops the order from the live set once it has indexed the spending
-  //     block, at which point a WINNING reclaim's own tx is queryable too — so liveness
-  //     gating also stops us from clearing a genuine reclaim during indexer lag.)
-  //   • Anchor the grace window on `reclaimTs ?? ts` so a legacy entry recorded before this
-  //     code shipped (no reclaimTs) is still eligible — not stuck "reclaimed" for 24h.
-  //   • Re-arm a single one-shot timer at the soonest not-yet-due grace boundary, so an
-  //     idle tab self-corrects without a manual Refresh — bounded (one timer per pending
-  //     reclaim), not interval polling.
+  //   • Optimistic reclaim: a reclaim and a settlement both spend the order UTXO, so a
+  //     reclaim can lose a mempool race and never land, leaving a false "reclaimed ✓". Clear
+  //     it ONLY when its tx is unconfirmed AND the order has LEFT the live set (the lost-race
+  //     signal) — never flip a still-live order back to a clickable "open" that invites a
+  //     doomed second reclaim. (Blockfrost drops the order from the live set only once it has
+  //     indexed the spending block, when a WINNING reclaim's own tx is queryable too — so
+  //     liveness gating also stops us clearing a genuine reclaim during indexer lag.)
   //
-  // Confirmed reclaims are cached in-session so we don't re-query them; a transient provider
-  // error never clears. Deferred per the project's effect convention.
+  //   • Stuck "pending" post: an order can be settled by a solver before we ever refresh
+  //     while it's live, so it's never stamped seenLive and sits "pending" until the 30-min
+  //     OBSERVE_FALLBACK. If its post tx IS on-chain yet the order is gone from the live set,
+  //     it landed and has since been spent → stamp seenLive so the row reads "completed" now.
+  //
+  // Transient provider errors never act (leave the row, retry next pass); confirmed reclaims
+  // are cached in-session so we don't re-query them. Deferred per the effect convention.
   const reclaimVerified = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!ownerAddr) return;
@@ -173,42 +170,54 @@ export default function OrdersPage() {
     let rearm: ReturnType<typeof setTimeout> | undefined;
     const ac = new AbortController();
 
-    const optimisticReclaims = () =>
+    // Entries still needing a chain check: an unconfirmed optimistic reclaim, or a pending
+    // post we've never seen live (no seenLive, no reclaim).
+    const needsWork = () =>
       getRecent(ownerAddr, nowMs()).filter(
-        (o) => o.reclaimTx !== undefined && !reclaimVerified.current.has(o.reclaimTx),
+        (o) =>
+          (o.reclaimTx !== undefined && !reclaimVerified.current.has(o.reclaimTx)) ||
+          (o.reclaimTx === undefined && o.seenLive === undefined),
       );
-    // A reclaim's grace window elapses this far in the future (≤0 ⇒ already due).
+    // The entry's grace window elapses this far in the future (≤0 ⇒ already due).
     const dueIn = (o: RecentOrder) =>
-      (o.reclaimTs ?? o.ts) + RECLAIM_VERIFY_GRACE_MS - nowMs();
+      (o.reclaimTs ?? o.ts) + RECONCILE_GRACE_MS - nowMs();
+    const isLive = (ref: string) => orders.some((p) => p.ref === ref);
 
     const runVerify = async () => {
       if (cancelled) return;
-      const due = optimisticReclaims().filter((o) => dueIn(o) <= 0);
       let changed = false;
-      for (const o of due) {
+      for (const o of needsWork().filter((e) => dueIn(e) <= 0)) {
         if (cancelled) return;
         try {
-          if (await fetchTxConfirmed(o.reclaimTx!, ac.signal)) {
-            reclaimVerified.current.add(o.reclaimTx!); // genuine reclaim — keep "reclaimed ✓"
-          } else if (!orders.some((p) => p.ref === o.ref)) {
-            // Unconfirmed AND the order is gone → it lost the race. Clear so the row reads
-            // the honest "completed", never a false "reclaimed ✓".
-            clearReclaim(ownerAddr, o.ref, nowMs());
+          if (o.reclaimTx !== undefined) {
+            if (await fetchTxConfirmed(o.reclaimTx, ac.signal)) {
+              reclaimVerified.current.add(o.reclaimTx); // genuine reclaim — keep "reclaimed ✓"
+            } else if (!isLive(o.ref)) {
+              clearReclaim(ownerAddr, o.ref, nowMs()); // lost the race → honest "completed"
+              changed = true;
+            }
+            // else: unconfirmed but still live → pending in the mempool; keep optimistic.
+          } else if (
+            !isLive(o.ref) &&
+            (await fetchTxConfirmed(o.ref.split("#")[0], ac.signal))
+          ) {
+            // Pending post, gone from the live set, but its post tx IS on-chain → it landed
+            // and was settled/spent before we saw it live. Stamp seenLive → "completed".
+            markSeen(ownerAddr, [o.ref], nowMs());
             changed = true;
           }
-          // else: unconfirmed but still live → pending in the mempool; keep optimistic.
         } catch {
-          // transient provider error / aborted — keep the optimistic state, retry later
+          // transient provider error / aborted — leave the row as-is, retry next pass
         }
       }
       if (changed && !cancelled) {
         setRecent(getRecent(ownerAddr, nowMs()));
         setNow(nowMs());
       }
-      // Self-correct an idle tab: fire once when the soonest still-pending reclaim crosses
-      // its grace window (a bounded one-shot, re-scheduled each pass — not a poll).
+      // Self-correct an idle tab: fire once when the soonest not-yet-due item crosses its
+      // grace window (a bounded one-shot, re-scheduled each pass — not interval polling).
       if (!cancelled) {
-        const waits = optimisticReclaims().map(dueIn).filter((ms) => ms > 0);
+        const waits = needsWork().map(dueIn).filter((ms) => ms > 0);
         if (waits.length > 0) rearm = setTimeout(runVerify, Math.min(...waits));
       }
     };
