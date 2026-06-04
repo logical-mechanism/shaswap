@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@meshsdk/react";
 import { useOrders } from "@/hooks/useOrders";
 import { useWriteGate } from "@/hooks/useWriteGate";
-import { reclaimOrder } from "@/lib/client/tx";
 import {
   getRecent,
   markSeen,
@@ -147,6 +146,9 @@ export default function OrdersPage() {
     reclaiming.current = true;
     setReclaim({ kind: "busy", ref: row.ref });
     try {
+      // Dynamically imported so @meshsdk/core (tx-building + WASM) stays out of the
+      // initial bundle — only pulled in when the user actually reclaims.
+      const { reclaimOrder } = await import("@/lib/client/tx");
       const hash = await reclaimOrder(wallet, row.ref);
       // Upsert a reclaimed entry (recordPost dedups by ref) so the row shows
       // "reclaimed" — and isn't offered for a doomed second reclaim — even while the

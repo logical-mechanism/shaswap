@@ -15,7 +15,6 @@ import { orderFunding } from "@/lib/chain/orderFunding";
 import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
-import { postOrder } from "@/lib/client/tx";
 import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
@@ -234,6 +233,9 @@ export function SwapCard() {
     submitting.current = true;
     setPost({ kind: "posting" });
     try {
+      // Dynamically imported so @meshsdk/core (MeshTxBuilder + WASM serialization) stays
+      // out of the initial bundle — it's only needed once the user actually posts.
+      const { postOrder } = await import("@/lib/client/tx");
       const res = await postOrder(wallet, {
         pool,
         sellUnit: fromToken.unit,
