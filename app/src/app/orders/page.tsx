@@ -24,6 +24,7 @@ import { formatUnits, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
 import { PipOverlay } from "@/components/PipOverlay";
+import { RefreshIcon } from "@/components/RefreshIcon";
 import { CollateralNote } from "@/components/CollateralNote";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
@@ -309,29 +310,10 @@ export default function OrdersPage() {
             aria-busy={loading}
             className="k-btn-ghost shrink-0 px-3 py-1.5 text-xs disabled:opacity-70"
           >
-            {loading ? (
-              <span className="flex items-center gap-1.5">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  className="animate-spin"
-                  aria-hidden
-                >
-                  <path
-                    d="M13.5 8a5.5 5.5 0 10-1.6 3.9M13.5 12.5V9h-3.5"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Refreshing…
-              </span>
-            ) : (
-              "Refresh"
-            )}
+            <span className="flex items-center gap-1.5">
+              <RefreshIcon busy={loading} />
+              {loading ? "Refreshing…" : "Refresh"}
+            </span>
           </button>
         )}
       </header>

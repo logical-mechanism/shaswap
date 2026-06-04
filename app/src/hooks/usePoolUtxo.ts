@@ -31,9 +31,12 @@ export function usePoolUtxo(poolId: string | undefined) {
   const loadedFor = useRef<string | undefined>(undefined);
 
   const reload = useCallback(() => {
+    // Nothing to refresh until a pool is selected — and setting `refreshing` here when the
+    // effect would early-return on `!poolId` (before its `.finally`) would strand the spin.
+    if (!poolId) return;
     setRefreshing(true);
     setNonce((n) => n + 1);
-  }, []);
+  }, [poolId]);
 
   // All state is set from the async callbacks only (never synchronously in the effect
   // body) — the project's effect convention (cf. the Orders page). On reload the data

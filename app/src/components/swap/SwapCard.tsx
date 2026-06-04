@@ -582,8 +582,9 @@ function Advanced({
               inputMode="decimal"
               value={tip}
               onChange={(e) => {
+                // Tip is ADA (6 decimals) — mask to its precision like the amount fields.
                 const v = e.target.value;
-                if (v === "" || /^\d*\.?\d*$/.test(v)) onTip(v);
+                if (withinDecimals(v, 6)) onTip(v);
               }}
               className={`k-input-box w-24 px-2 py-1.5 text-right tabular-nums ${
                 tipValid ? "" : "border-danger"
