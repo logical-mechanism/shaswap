@@ -81,6 +81,19 @@ export interface DataProvider {
   resolveUtxo(txHash: string, index: number): Promise<UTxO | null>;
 
   /**
+   * Whether a transaction is CONFIRMED on-chain (in a block), not merely submitted.
+   *
+   * The Orders view reconciles an optimistic reclaim with this: a reclaim and a solver
+   * settlement BOTH spend the order UTXO, so the order disappearing can't reveal which
+   * one won — only the reclaim tx hash being on-chain proves the reclaim actually landed
+   * (vs. losing a mempool race to a settlement — a double-spend that never confirms).
+   * `false` means not-yet/never confirmed; a transient provider failure throws (so the
+   * caller can retry rather than wrongly conclude "not confirmed"). Served via
+   * `/api/tx/status`.
+   */
+  transactionConfirmed(txHash: string): Promise<boolean>;
+
+  /**
    * Resolve the live pool UTXO (value + inline `PoolDatum`) for a pool, by its NFT
    * unit (`policy+name`, the pool id). Used by the LP deposit/withdraw builders to
    * spend the pool on the `LpAction` path. Served via `/api/tx/pool-utxo`. Returns

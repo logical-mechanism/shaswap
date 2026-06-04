@@ -57,6 +57,25 @@ export async function fetchOrders(
 }
 
 /**
+ * Whether a tx has CONFIRMED on-chain (in a block) — via the seam. The Orders view uses
+ * this to verify an optimistic reclaim actually landed before trusting it (a reclaim can
+ * lose a mempool race to a solver settlement and never confirm). A 502 (transient provider
+ * error) throws — the caller should keep the optimistic state and retry, never read the
+ * failure as "didn't land".
+ */
+export async function fetchTxConfirmed(
+  txHash: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const qs = new URLSearchParams({ tx: txHash });
+  const { confirmed } = await getJson<{ confirmed: boolean }>(
+    `/api/tx/status?${qs.toString()}`,
+    signal,
+  );
+  return confirmed;
+}
+
+/**
  * Resolve the live pool UTXO (value + inline `PoolDatum` CBOR) for a pool, by its NFT
  * unit. Used by the LP manage page to read current reserves / circulating LP for the
  * deposit/withdraw previews. Returns null if no live pool UTXO holds that NFT.

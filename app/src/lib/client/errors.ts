@@ -45,7 +45,7 @@ const RULES: { match: RegExp; message: string }[] = [
   {
     match: /badinputsutxo|input.*(not\s*found|does\s*not\s*exist|already|spent)|valuenotconserved/i,
     message:
-      "An input was already spent — the order may have just settled or been reclaimed. Refresh and try again.",
+      "An input was already spent. The order may have just settled or been reclaimed. Refresh and try again.",
   },
   {
     match: /insufficient|not\s*enough|balance.*insufficient|min(imum)?\s*ada|outputtoosmall/i,
@@ -71,14 +71,14 @@ const RULES: { match: RegExp; message: string }[] = [
   {
     match: /script.*(fail|error)|evaluat|phase-?2|ex\s*units|redeemer/i,
     message:
-      "The transaction failed validation. The order may have changed on-chain — refresh and try again.",
+      "The transaction failed validation. The order may have changed on-chain. Refresh and try again.",
   },
   {
     // Provider/indexer unavailable or lagging (Blockfrost 5xx/429, timeouts, fetch fails).
     // Distinct from a tx error — the chain is fine, the read path is momentarily down.
     match: /\b(429|50[234])\b|too\s*many\s*requests|rate\s*limit|service\s*unavailable|bad\s*gateway|gateway\s*time|timed?\s*out|timeout|network\s*request\s*failed|fetch\s*failed|econnrefused|enotfound/i,
     message:
-      "Pip can’t reach the data service right now — give it a moment and refresh.",
+      "Pip can’t reach the data service right now. Give it a moment and refresh.",
   },
 ];
 
@@ -89,6 +89,6 @@ export function toUserMessage(e: unknown): string {
   for (const { match, message } of RULES) {
     if (match.test(text)) return message;
   }
-  if (!text) return "Pip’s not sure what happened there — give it another go.";
+  if (!text) return "Pip’s not sure what happened there. Give it another go.";
   return text.length > 180 ? `${text.slice(0, 180)}…` : text;
 }

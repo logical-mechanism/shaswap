@@ -24,8 +24,9 @@ import { usePools } from "@/hooks/usePools";
 import { useWriteGate } from "@/hooks/useWriteGate";
 import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
-import { truncate } from "@/lib/format";
+import { truncate, withinDecimals } from "@/lib/format";
 import { Pip } from "@/components/Pip";
+import { PipOverlay } from "@/components/PipOverlay";
 import { Confetti } from "@/components/Confetti";
 import { CollateralNote } from "@/components/CollateralNote";
 
@@ -93,7 +94,7 @@ export default function CreatePoolPage() {
 
   const [tokenA, setTokenA] = useState<TokenInfo | undefined>(undefined);
   const [tokenB, setTokenB] = useState<TokenInfo | undefined>(ADA_TOKEN);
-  const [bpsInput, setBpsInput] = useState("30");
+  const [feePct, setFeePct] = useState("0.3");
   const [state, setState] = useState<TxState>({ kind: "idle" });
   // Guard a synchronous double-click: both clicks see canSubmit=true before React
   // re-renders to "busy", which would build + submit two txs spending the SAME seed
@@ -110,9 +111,14 @@ export default function CreatePoolPage() {
     return [...byUnit.values()];
   }, [assets]);
 
-  const bps = /^\d+$/.test(bpsInput.trim()) ? Number(bpsInput.trim()) : NaN;
-  const validBps = Number.isInteger(bps) && bps >= 0 && bps < 10_000;
-  const fee = validBps ? bpsToFee(bps) : null;
+  // The user enters a plain percentage (0.3 = 0.30%). Under the hood it's stored on-chain
+  // as integer basis points (0.3% → 30 bps → fee 3/1000), but we never surface that.
+  const pct = feePct.trim();
+  const pctNum =
+    pct !== "" && pct !== "." && withinDecimals(pct, 2) ? Number(pct) : NaN;
+  const validFee = Number.isFinite(pctNum) && pctNum >= 0 && pctNum < 100;
+  const bps = validFee ? Math.round(pctNum * 100) : NaN;
+  const fee = validFee ? bpsToFee(bps) : null;
 
   const samePair = !!tokenA && !!tokenB && tokenA.unit === tokenB.unit;
 
@@ -120,21 +126,21 @@ export default function CreatePoolPage() {
   // non-blocking warning — duplicates are valid (the chain allows them), but usually a
   // mistake, and the existing pool is the better place to add liquidity.
   const duplicate = useMemo(() => {
-    if (!tokenA || !tokenB || samePair || !validBps) return undefined;
+    if (!tokenA || !tokenB || samePair || !validFee) return undefined;
     return pools.find(
       (p) =>
         p.feeBps === bps &&
         ((p.tokenA.unit === tokenA.unit && p.tokenB.unit === tokenB.unit) ||
           (p.tokenA.unit === tokenB.unit && p.tokenB.unit === tokenA.unit)),
     );
-  }, [pools, tokenA, tokenB, samePair, validBps, bps]);
+  }, [pools, tokenA, tokenB, samePair, validFee, bps]);
   const canSubmit =
     networkReady &&
     collateralReady &&
     !!tokenA &&
     !!tokenB &&
     !samePair &&
-    validBps &&
+    validFee &&
     // Only from idle/error — disable after a success so a second click can't mint a
     // DUPLICATE pool (same pair/fee, new seed) while the form is still populated.
     // Changing any input resets state to idle (below), which re-enables a fresh create.
@@ -176,8 +182,8 @@ export default function CreatePoolPage() {
       ? "Select both tokens"
       : samePair
         ? "Tokens must differ"
-        : !validBps
-          ? "Enter a fee (0–9999 bps)"
+        : !validFee
+          ? "Enter a fee"
           : state.kind === "busy"
             ? "Creating pool…"
             : state.kind === "success"
@@ -196,12 +202,12 @@ export default function CreatePoolPage() {
       <header className="mb-4">
         <h1 className="font-display text-2xl font-extrabold text-ink">Create pool</h1>
         <p className="mt-1 text-sm text-muted">
-          Open a new pool for any pair you hold — anyone can. It starts empty, then you
+          Open a new pool for any pair you hold (anyone can). It starts empty, then you
           add the first liquidity right after.
         </p>
         <p className="mt-1 text-xs text-muted">
           Creating an empty pool locks a ~2 ₳ seed (plus network fees). As the creator you
-          can close it and reclaim that seed any time — until someone seeds it with
+          can close it and reclaim that seed any time, until someone seeds it with
           liquidity, after which it’s permanent.
         </p>
       </header>
@@ -210,7 +216,7 @@ export default function CreatePoolPage() {
         <div className="mb-2 px-1 text-xs text-muted">
           {connected
             ? "Tokens to choose from: ADA + the assets held in your wallet."
-            : "Connect a wallet to choose tokens — the list is ADA + your held assets."}
+            : "Connect a wallet to choose tokens. The list is ADA + your held assets."}
         </div>
 
         <TokenRow
@@ -238,34 +244,27 @@ export default function CreatePoolPage() {
         />
 
         <div className="k-field mt-3 p-3.5">
-          <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted">
-            <span>Trading fee</span>
-            <span className="tabular-nums text-foreground/80">
-              {fee ? `${(bps / 100).toFixed(2)}%` : "—"}
-            </span>
-          </div>
+          <div className="mb-2 px-1 text-xs text-muted">Trading fee</div>
           <div className="flex items-center gap-3">
             <input
-              inputMode="numeric"
-              value={bpsInput}
-              placeholder="30"
+              inputMode="decimal"
+              value={feePct}
+              placeholder="0.3"
               onChange={(e) => {
                 const v = e.target.value;
-                if (v === "" || /^\d*$/.test(v)) {
-                  setBpsInput(v);
+                if (withinDecimals(v, 2)) {
+                  setFeePct(v);
                   if (state.kind !== "idle") setState({ kind: "idle" });
                 }
               }}
               className="k-input text-2xl font-extrabold tabular-nums text-ink"
             />
             <span className="k-pill shrink-0 px-2.5 py-1 text-sm font-medium">
-              bps
+              %
             </span>
           </div>
           <div className="mt-1.5 px-1 text-xs text-muted">
-            {fee
-              ? `${(bps / 100).toFixed(2)}% per trade — stored on-chain as ${fee.num}/${fee.den}.`
-              : "Enter the fee in basis points (30 bps = 0.30%, range 0–9999)."}
+            Taken from each trade and paid to liquidity providers. 0.3% is typical.
           </div>
         </div>
 
@@ -286,8 +285,7 @@ export default function CreatePoolPage() {
 
         {needsCollateral && (
           <CollateralNote onRecheck={recheckCollateral}>
-            Creating a pool spends a script, so your wallet needs a collateral UTXO. Set
-            one in your wallet, then re-check.
+            Creating a pool needs a collateral set in your wallet. Add one, then re-check.
           </CollateralNote>
         )}
 
@@ -301,25 +299,25 @@ export default function CreatePoolPage() {
               <div className="font-bold text-success">Pool created ✓</div>
             </div>
             <p className="mt-1 text-muted">
-              Confirming on-chain (~20–40s). Add the first liquidity to start trading — on
+              Confirming on-chain (~20–40s). Add the first liquidity to start trading. On
               the next screen, hit ↻ Refresh once it’s confirmed (it won’t show in the
               pools list until then).
             </p>
-            <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="mt-2 flex flex-col gap-2">
+              <Link
+                href={`/pools/${encodeURIComponent(state.poolId)}`}
+                className="k-btn-ghost w-full px-3 py-2 text-center text-sm font-semibold"
+              >
+                Add initial liquidity →
+              </Link>
               <a
                 href={explorerTxUrl(state.hash)}
                 target="_blank"
                 rel="noreferrer"
-                className="font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
+                className="text-center font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
               >
                 {truncate(state.hash, 10, 8)} ↗
               </a>
-              <Link
-                href={`/pools/${encodeURIComponent(state.poolId)}`}
-                className="k-btn-ghost px-3 py-1.5 text-sm font-semibold"
-              >
-                Add initial liquidity →
-              </Link>
             </div>
           </div>
         )}
@@ -334,6 +332,8 @@ export default function CreatePoolPage() {
           </div>
         )}
       </div>
+
+      <PipOverlay show={state.kind === "busy"} title="Creating your pool…" />
     </div>
   );
 }

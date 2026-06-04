@@ -21,12 +21,13 @@ import { toUserMessage } from "@/lib/client/errors";
 import {
   formatPercent,
   formatUnits,
-  formatUnitsPlain,
   toBaseUnits,
   truncate,
+  withinDecimals,
 } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
+import { PipOverlay } from "@/components/PipOverlay";
 import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
 import { SlippageSettings } from "./SlippageSettings";
@@ -77,8 +78,9 @@ export function SwapCard() {
     [tokens],
   );
   const fromToken: TokenInfo | undefined = byUnit.get(fromUnit) ?? tokens[0];
-  const toToken: TokenInfo | undefined =
-    byUnit.get(toUnit) ?? tokens.find((t) => t.unit !== fromToken?.unit);
+  // The "To" side stays UNSELECTED until the user picks it (the chip reads "Select") —
+  // don't auto-pick the first non-ADA token, which surfaced TEST as a misleading default.
+  const toToken: TokenInfo | undefined = byUnit.get(toUnit);
 
   const baseAmountIn =
     fromToken && amount ? toBaseUnits(amount, fromToken.decimals) : "";
@@ -173,7 +175,6 @@ export function SwapCard() {
     tip: BigInt(tipLovelace || "0"),
     amount: amountBig,
   });
-  const spendable = funding.spendable;
   const overBalance = connected && funding.overBalance;
   const overSpendable = connected && funding.overSpendable;
   const insufficientAda = connected && funding.insufficientAda;
@@ -204,10 +205,11 @@ export function SwapCard() {
     post.kind !== "posting";
 
   function flip() {
-    const f = fromToken?.unit ?? "";
-    const t = toToken?.unit ?? "";
-    setFromUnit(t);
-    setToUnit(f);
+    // Nothing to flip until both sides are chosen — and flipping a half-empty pair would
+    // leave "From" unselected (or duplicate ADA on both sides).
+    if (!fromToken || !toToken) return;
+    setFromUnit(toToken.unit);
+    setToUnit(fromToken.unit);
     setAmount("");
     setPost({ kind: "idle" });
   }
@@ -218,14 +220,6 @@ export function SwapCard() {
   function refreshPrice() {
     reloadPools();
     reloadQuote();
-  }
-
-  function setFromAmount(base: bigint) {
-    if (!fromToken || base <= 0n) return;
-    // Plain (non-grouped) so the value round-trips back through toBaseUnits and stays
-    // editable — a comma-grouped "1,000" would be rejected and dead-end the button.
-    setAmount(formatUnitsPlain(base.toString(), fromToken.decimals));
-    if (post.kind !== "idle") setPost({ kind: "idle" });
   }
 
   async function handlePost() {
@@ -275,6 +269,8 @@ export function SwapCard() {
       ? { label: "Wrong network", disabled: true }
       : !networkReady
         ? { label: "Checking network…", disabled: true }
+        : !toToken
+          ? { label: "Select a token", disabled: true }
         : !hasAmount
           ? { label: "Enter an amount", disabled: true }
           : overBalance
@@ -306,7 +302,7 @@ export function SwapCard() {
             <h1 className="font-display text-xl font-extrabold text-ink">Swap</h1>
           </div>
           <p className="mt-1 text-[11px] leading-snug text-muted">
-            Drop off an order and the batch settles at one fair price — never below the
+            Drop off an order and the batch settles at one fair price, never below the
             floor you set, or grab it back anytime.
           </p>
         </div>
@@ -315,7 +311,7 @@ export function SwapCard() {
 
       {tokensError && (
         <div className="k-note k-note-danger mb-3 text-xs">
-          Pip couldn’t load the token list — check your connection and refresh the page.
+          Pip couldn’t load the token list. Check your connection and refresh the page.
         </div>
       )}
 
@@ -327,6 +323,7 @@ export function SwapCard() {
         exclude={toToken?.unit}
         amount={amount}
         editable
+        decimals={fromToken?.decimals ?? 0}
         loading={tokensLoading}
         onAmount={(v) => {
           setAmount(v);
@@ -341,8 +338,6 @@ export function SwapCard() {
             ? {
                 display: formatUnits(fromBalance.toString(), fromToken.decimals),
                 insufficient: overBalance || overSpendable,
-                onHalf: () => setFromAmount(spendable / 2n),
-                onMax: () => setFromAmount(spendable),
               }
             : undefined
         }
@@ -425,7 +420,7 @@ export function SwapCard() {
           >
             {quote.priceImpact >= 0.15 ? "Very high" : "High"} price impact (
             {formatPercent(quote.priceImpact)}). This pool is shallow for that
-            size — consider a smaller amount or expect a worse fill.
+            size. Consider a smaller amount or expect a worse fill.
           </div>
         )}
 
@@ -433,7 +428,7 @@ export function SwapCard() {
         <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-2">
             <Pip size={22} mood="worried" />
-            Pip couldn’t get a price just now — try again in a sec.
+            Pip couldn’t get a price just now. Try again in a sec.
           </span>
           <button
             type="button"
@@ -450,7 +445,7 @@ export function SwapCard() {
           <Pip size={22} mood="sleepy" />
           <span>
             No pool trades {fromToken?.ticker}/{toToken?.ticker} yet, so Pip can’t route
-            this pair. Try another token — or be the first to{" "}
+            this pair. Try another token, or be the first to{" "}
             <Link href="/pools/create" className="k-link">
               open a pool
             </Link>
@@ -477,6 +472,11 @@ export function SwapCard() {
       </p>
 
       <PostResult state={post} />
+
+      <PipOverlay
+        show={post.kind === "posting"}
+        title="Tucking your order into the next batch…"
+      />
     </div>
   );
 }
@@ -509,7 +509,7 @@ function PostResult({ state }: { state: PostState }) {
             Orders
           </a>{" "}
           once the network confirms (~20–40s). From there the batch settles at one fair
-          price (never below your floor) — or you can grab it back anytime, which returns
+          price (never below your floor), or you can grab it back anytime, which returns
           your input plus the small ADA deposit and tip.
         </p>
         <a
@@ -520,17 +520,6 @@ function PostResult({ state }: { state: PostState }) {
         >
           {truncate(state.hash, 10, 8)} ↗
         </a>
-      </div>
-    );
-  }
-  if (state.kind === "posting") {
-    return (
-      <div className="k-note k-note-info mt-3 text-xs">
-        <div className="flex items-center gap-2">
-          <Pip size={26} mood="thinking" float />
-          <div className="font-bold">Pip’s tucking your order into the next batch…</div>
-        </div>
-        <p className="mt-1 text-muted">Confirm the transaction in your wallet.</p>
       </div>
     );
   }
@@ -585,7 +574,7 @@ function Advanced({
             <span className="text-muted">
               Solver tip (ADA)
               <span className="block text-[11px] text-muted">
-                the only solver reward — required; a 0-tip order won’t be picked up.
+                the only solver reward. Required: a 0-tip order won’t be picked up.
                 Higher tips settle sooner.
               </span>
             </span>
@@ -593,8 +582,9 @@ function Advanced({
               inputMode="decimal"
               value={tip}
               onChange={(e) => {
+                // Tip is ADA (6 decimals) — mask to its precision like the amount fields.
                 const v = e.target.value;
-                if (v === "" || /^\d*\.?\d*$/.test(v)) onTip(v);
+                if (withinDecimals(v, 6)) onTip(v);
               }}
               className={`k-input-box w-24 px-2 py-1.5 text-right tabular-nums ${
                 tipValid ? "" : "border-danger"
@@ -647,6 +637,7 @@ function TokenField({
   exclude,
   amount,
   editable,
+  decimals = 0,
   loading,
   skeleton,
   placeholder = "0",
@@ -660,8 +651,10 @@ function TokenField({
   exclude?: string;
   amount: string;
   editable: boolean;
+  /** Max fractional digits accepted while typing (the token's precision; 0 if unknown). */
+  decimals?: number;
   loading?: boolean;
-  /** Show an animate-pulse skeleton in place of the value (the To field, mid-quote). */
+  /** Show the "Pip’s thinking" dots in place of the value (the To field, mid-quote). */
   skeleton?: boolean;
   placeholder?: string;
   onAmount?: (v: string) => void;
@@ -669,8 +662,6 @@ function TokenField({
   balance?: {
     display: string;
     insufficient?: boolean;
-    onMax: () => void;
-    onHalf: () => void;
   };
 }) {
   return (
@@ -678,15 +669,16 @@ function TokenField({
       <div className="mb-2 px-1 text-xs font-semibold text-muted">{label}</div>
       <div className="flex items-center gap-3">
         {skeleton ? (
-          // Match LiquidityPanel's Skeleton (animate-pulse / bordered sunk well) so the
-          // estimated-output value pulses instead of sitting empty mid-quote — now with a
-          // thinking Pip so even the quote wait stays in Pip's world.
-          <div className="flex flex-1 items-center gap-2">
+          // Pip works out the estimate: a little bouncing-dots "thinking" indicator in
+          // place of the value — reads as intentional, instead of the old empty bordered
+          // box that looked like a second, broken input.
+          <div className="flex h-9 flex-1 items-center gap-2">
             <Pip size={24} mood="thinking" />
-            <div
-              className="h-9 w-24 max-w-full animate-pulse rounded-xl border border-border bg-surface-sunk"
-              aria-hidden
-            />
+            <span className="flex items-center gap-1" aria-hidden>
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60 [animation-delay:-0.32s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60 [animation-delay:-0.16s]" />
+              <span className="h-2 w-2 animate-bounce rounded-full bg-accent/60" />
+            </span>
             <span className="sr-only">Pip’s working out your estimate…</span>
           </div>
         ) : (
@@ -697,7 +689,7 @@ function TokenField({
             placeholder={placeholder}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === "" || /^\d*\.?\d*$/.test(v)) onAmount?.(v);
+              if (withinDecimals(v, decimals)) onAmount?.(v);
             }}
             className={`k-input text-3xl font-extrabold tabular-nums ${
               editable ? "text-ink" : "text-muted"
@@ -712,26 +704,10 @@ function TokenField({
         />
       </div>
       {balance && (
-        <div className="mt-2 flex items-center justify-between px-1 text-[11px]">
+        <div className="mt-2 px-1 text-[11px]">
           <span className={balance.insufficient ? "font-semibold text-danger" : "text-muted"}>
             Balance:{" "}
             <span className="tabular-nums">{balance.display}</span> {token?.ticker}
-          </span>
-          <span className="flex gap-1">
-            <button
-              type="button"
-              onClick={balance.onHalf}
-              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
-            >
-              Half
-            </button>
-            <button
-              type="button"
-              onClick={balance.onMax}
-              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/12"
-            >
-              Max
-            </button>
           </span>
         </div>
       )}

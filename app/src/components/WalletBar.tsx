@@ -65,8 +65,8 @@ function ConnectMenu() {
           </div>
           {wallets.length === 0 ? (
             <p className="px-2 py-2 text-xs leading-relaxed text-muted">
-              Pip can’t find a Cardano wallet. Install one — like Eternl, Lace, or
-              Nami — then refresh the page.
+              Pip can’t find a Cardano wallet. Install one (like Eternl, Lace, or
+              Nami), then refresh the page.
             </p>
           ) : (
             <div className="mt-1 space-y-1">
@@ -165,15 +165,6 @@ function ConnectedMenu() {
             <span>Balance</span>
             <span className="tabular-nums">{formatAda(lovelace)} ₳</span>
           </div>
-          {/* CIP-30 reports every testnet as the same network id (0), so we can't tell
-              preprod from preview programmatically — surface a clear reminder instead of
-              a false "all good". On mainnet this isn't shown. */}
-          {APP_CONFIG.networkId === 0 && !mismatch && (
-            <p className="px-2 pb-2 text-[11px] leading-snug text-muted">
-              ShaSwap runs on <b className="text-foreground">{networkLabel()}</b>. Wallets
-              report all testnets alike, so make sure yours is on {networkLabel()} too.
-            </p>
-          )}
           <button
             type="button"
             onClick={() => {
