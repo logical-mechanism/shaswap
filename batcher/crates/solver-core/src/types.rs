@@ -104,6 +104,41 @@ pub struct PoolDatum {
     pub creator: Credential,
 }
 
+/// `lp_intent_types.LpIntentAction` — which LP action the intent requests.
+/// Encoded as a nullary constructor: `LpDeposit` = `Constr 0 []`, `LpWithdraw` =
+/// `Constr 1 []` (the Aiken declaration order).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LpIntentAction {
+    LpDeposit,
+    LpWithdraw,
+}
+
+/// `lp_intent_types.LpIntentDatum` (BLUEPRINT §5.1 Rev 22) — a batcher-fulfilled
+/// deposit/withdraw intent. Flat shape (mirrors `OrderDatum`): a withdraw uses
+/// `min_a`/`min_b` (the released-reserve floor) and ignores `min_shares`; a deposit
+/// uses `min_shares` (the minted-share floor) and ignores `min_a`/`min_b`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LpIntentDatum {
+    /// Owner credential — a VK in v1 (spends + reclaims by signature, non-custodial).
+    pub owner: Credential,
+    /// Payout stake half (as `OrderDatum.owner_stake`): `Some(c)` → base address,
+    /// `None` → enterprise. Read FROM the datum, so the batcher can't redirect it.
+    pub owner_stake: Option<Credential>,
+    /// The pool this intent consents to, bound by its unique NFT.
+    pub pool_nft: AssetId,
+    pub action: LpIntentAction,
+    /// Withdraw floor: released `asset_a` ≥ `min_a` (0 / ignored for deposit).
+    pub min_a: i128,
+    /// Withdraw floor: released `asset_b` ≥ `min_b` (0 / ignored for deposit).
+    pub min_b: i128,
+    /// Deposit floor: minted `shares` ≥ `min_shares` (0 / ignored for withdraw).
+    pub min_shares: i128,
+    /// Solver reward (lovelace) — the ONLY value the batcher keeps.
+    pub tip: i128,
+    /// Optional fulfillment deadline (POSIX ms); the tx's finite upper bound ≤ this.
+    pub deadline: Option<i64>,
+}
+
 /// `types.BoundDatum` — the injective binding key on each owner output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundDatum {

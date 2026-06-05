@@ -5,7 +5,8 @@
 
 use pallas_primitives::{BigInt, PlutusData};
 use solver_core::types::{
-    AssetId, BoundDatum, Credential, OrderDatum, OutputReference, PoolDatum, SettlementRedeemer,
+    AssetId, BoundDatum, Credential, LpIntentAction, LpIntentDatum, OrderDatum, OutputReference,
+    PoolDatum, SettlementRedeemer,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,6 +210,38 @@ pub fn bound_datum(d: &PlutusData) -> Result<BoundDatum, DecodeError> {
     })
 }
 
+fn lp_intent_action(d: &PlutusData) -> Result<LpIntentAction, DecodeError> {
+    let (index, _) = constr(d, "LpIntentAction")?;
+    match index {
+        0 => Ok(LpIntentAction::LpDeposit),
+        1 => Ok(LpIntentAction::LpWithdraw),
+        i => Err(DecodeError::BadConstructor {
+            ty: "LpIntentAction",
+            index: i,
+        }),
+    }
+}
+
+pub fn lp_intent_datum(d: &PlutusData) -> Result<LpIntentDatum, DecodeError> {
+    let f = fields_n(d, "LpIntentDatum", 0, 9)?;
+    Ok(LpIntentDatum {
+        owner: credential(&f[0])?,
+        owner_stake: as_option_credential(&f[1])?,
+        pool_nft: asset_id(&f[2])?,
+        action: lp_intent_action(&f[3])?,
+        min_a: as_int(&f[4])?,
+        min_b: as_int(&f[5])?,
+        min_shares: as_int(&f[6])?,
+        tip: as_int(&f[7])?,
+        deadline: as_option_int(&f[8])?,
+    })
+}
+
+/// Convenience: decode an LP-intent datum directly from inline-datum CBOR bytes.
+pub fn lp_intent_datum_cbor(bytes: &[u8]) -> Result<LpIntentDatum, DecodeError> {
+    lp_intent_datum(&from_cbor(bytes)?)
+}
+
 pub fn settlement_redeemer(d: &PlutusData) -> Result<SettlementRedeemer, DecodeError> {
     let f = fields_n(d, "SettlementRedeemer", 0, 6)?;
     let fills = match &f[5] {
@@ -265,11 +298,44 @@ mod tests {
         }
     }
 
+    fn lp_intent(action: LpIntentAction) -> LpIntentDatum {
+        LpIntentDatum {
+            owner: Credential::VerificationKey(vec![0xb1; 28]),
+            owner_stake: Some(Credential::VerificationKey(vec![0xe1; 28])),
+            pool_nft: AssetId::new(vec![0x44; 28], vec![0x4e, 0x46, 0x54]),
+            action,
+            min_a: 19_000_000,
+            min_b: 9_000_000,
+            min_shares: 90_000,
+            tip: 1_000_000,
+            deadline: Some(1700000000000),
+        }
+    }
+
     #[test]
     fn order_datum_round_trips() {
         let o = order();
         let cbor = plutus::to_cbor(&plutus::order_datum(&o));
         assert_eq!(order_datum_cbor(&cbor).unwrap(), o);
+    }
+
+    #[test]
+    fn lp_intent_datum_round_trips() {
+        for action in [LpIntentAction::LpDeposit, LpIntentAction::LpWithdraw] {
+            let d = lp_intent(action);
+            let cbor = plutus::to_cbor(&plutus::lp_intent_datum(&d));
+            assert_eq!(lp_intent_datum_cbor(&cbor).unwrap(), d);
+        }
+    }
+
+    #[test]
+    fn lp_intent_enterprise_owner_stake_round_trips() {
+        let d = LpIntentDatum {
+            owner_stake: None,
+            ..lp_intent(LpIntentAction::LpWithdraw)
+        };
+        let cbor = plutus::to_cbor(&plutus::lp_intent_datum(&d));
+        assert_eq!(lp_intent_datum_cbor(&cbor).unwrap(), d);
     }
 
     #[test]

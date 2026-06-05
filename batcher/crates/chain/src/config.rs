@@ -53,6 +53,9 @@ pub struct Config {
     pub order_script_hash: String,
     pub pool_script_hash: String,
     pub pool_mint_policy: String,
+    /// The unparameterised `lp_intent` validator hash (BLUEPRINT §5.1 Rev 22). Its
+    /// UTXOs sit at an enterprise address (payment = this hash, stake = `None`).
+    pub lp_intent_script_hash: String,
 
     /// Pool NFT name (hex) and LP name (hex) — must equal `constants.ak`.
     pub nft_name: String,
@@ -158,6 +161,7 @@ impl Config {
             settlement_cred,
             order_script_hash: hash28(&self.order_script_hash, "order_script_hash")?,
             pool_script_hash: hash28(&self.pool_script_hash, "pool_script_hash")?,
+            lp_intent_script_hash: hash28(&self.lp_intent_script_hash, "lp_intent_script_hash")?,
             pool_mint_policy,
             pool_nft,
             kupo_url: self.kupo_url.clone(),
@@ -206,6 +210,7 @@ pub struct ValidatedConfig {
     pub settlement_cred: Credential,
     pub order_script_hash: Vec<u8>,
     pub pool_script_hash: Vec<u8>,
+    pub lp_intent_script_hash: Vec<u8>,
     pub pool_mint_policy: Vec<u8>,
     pub pool_nft: AssetId,
     pub kupo_url: String,
@@ -228,6 +233,7 @@ mod tests {
               "kupo_url": "http://localhost:1442", "ogmios_url": "http://localhost:1337",
               "settlement_hash": "{s}", "order_script_hash": "{s}",
               "pool_script_hash": "{s}", "pool_mint_policy": "{s}",
+              "lp_intent_script_hash": "{s}",
               "nft_name": "4e4654", "lp_name": "4c50",
               "total_lp": 9223372036854775807, "min_liq": 1000,
               "pool_min_ada": 2000000, "order_min_ada": 2000000,
