@@ -90,9 +90,16 @@ function editableInput(): HTMLInputElement {
   return el;
 }
 
+/** Switch to the Direct (advanced) LP mode — the default is the batcher intent path now
+ *  that LP_INTENTS_LIVE is true on the preprod test config. */
+function useDirect() {
+  fireEvent.click(screen.getByRole("button", { name: /Direct/ }));
+}
+
 describe("LiquidityPanel — add", () => {
   it("wires the deposit preview math (LP received + min after slippage)", () => {
     render(<LiquidityPanel pool={POOL} />);
+    useDirect();
     // amountA = ADA side (decimals 6). 100 ADA at the 1000/2e9 ratio → 100,000 LP.
     fireEvent.change(editableInput(), { target: { value: "100" } });
 
@@ -110,22 +117,25 @@ describe("LiquidityPanel — add", () => {
 });
 
 describe("LiquidityPanel — mode toggle", () => {
-  it("defaults to Direct when the batcher path isn't live, and Batcher shows the rollout note", () => {
+  it("defaults to the Batcher intent path when live, with Direct one click away", () => {
     render(<LiquidityPanel pool={POOL} />);
-    // Both modes are offered; Direct is the default here (LP_INTENTS_LIVE false in test config),
-    // so the direct add form (an editable amount input) is present.
+    // LP_INTENTS_LIVE is true on the preprod test config, so the default is the batcher path:
+    // the deposit form's submit reads "Add liquidity (batcher)".
     expect(screen.getByRole("button", { name: /Batcher/ })).toBeInTheDocument();
-    expect(editableInput()).toBeTruthy();
+    fireEvent.change(editableInput(), { target: { value: "100" } });
+    expect(screen.getByRole("button", { name: "Add liquidity (batcher)" })).toBeEnabled();
 
-    // Switching to Batcher surfaces the honest "rolling out" note (no dead-end form).
-    fireEvent.click(screen.getByRole("button", { name: /Batcher/ }));
-    expect(screen.getByText(/Batcher LP is rolling out/i)).toBeInTheDocument();
+    // Switching to Direct shows the direct on-chain form (submit reads "Add liquidity").
+    useDirect();
+    fireEvent.change(editableInput(), { target: { value: "100" } });
+    expect(screen.getByRole("button", { name: "Add liquidity" })).toBeEnabled();
   });
 });
 
 describe("LiquidityPanel — remove", () => {
   function gotoRemove() {
     render(<LiquidityPanel pool={POOL} />);
+    useDirect(); // these assert the DIRECT withdraw preview; intent is the default mode
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
   }
 

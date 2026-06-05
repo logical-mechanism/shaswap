@@ -14,14 +14,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { lpIntentAddress, lpIntentScriptHash } from "./lpIntentScript.ts";
 
-// Golden values computed from the CURRENT deployment `S` (preprod a57de7a9…). These move at
-// the Phase-4 redeploy exactly as ORDER_ADDR/POOL_ADDR do — the pin is a drift guard, not a
-// permanent identity.
-const GOLDEN_HASH = "99713f9230e0ef80d3f1d2c8fb8d25ba93d5d70c8d76eb2ffd8a580b";
+// Golden values for the deployed (post-audit Rev 24) `S = a305a3cf…`. They move with `S` at
+// any future redeploy, exactly as ORDER_ADDR/POOL_ADDR do — the pin is a drift guard, not a
+// permanent identity. Cross-checked against `cardano-cli` at the preprod deploy.
+const GOLDEN_HASH = "83c38b9816b01794f9336948e3e1ca38b1ff6928e174c8fa9aa360e4";
 const GOLDEN_PREPROD =
-  "addr_test1wzvhz0ujxrswlqxn78fv37udykaf84whpjxhd6e0lk99szc69ex52";
+  "addr_test1wzpu8zucz6cp098exd553clpegutrlmf9rshfj86n23kpeq023lj0";
 const GOLDEN_MAINNET =
-  "addr1wxvhz0ujxrswlqxn78fv37udykaf84whpjxhd6e0lk99szcpdd6m0";
+  "addr1wxpu8zucz6cp098exd553clpegutrlmf9rshfj86n23kpeq5z9ra2";
 
 test("lp_intent script hash derives to the golden", () => {
   assert.equal(lpIntentScriptHash(), GOLDEN_HASH);
