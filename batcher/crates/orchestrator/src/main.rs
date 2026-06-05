@@ -956,6 +956,22 @@ fn fulfill_pool(
     let mut count = 0usize;
 
     for &intent in intents {
+        // Cheap pre-gate (anti-spam / efficiency): unlike batched orders, each LP intent
+        // is its own tx, so an under-tipped intent would otherwise cost a full EvaluateTx
+        // round-trip before the post-build tip>=fee gate rejects it. A tip below the fee's
+        // constant component (`min_fee_b`) can NEVER cover the real fee (which always adds
+        // size+exec+ref on top), so skip it here without building — this never drops a
+        // viable intent, and makes free 0-tip spam at the public lp_intent address O(0)
+        // instead of one gate call per junk UTXO per block.
+        if intent.datum.tip < params.min_fee_b as i128 + FEE_COVER_MARGIN as i128 {
+            debug!(
+                nft,
+                tip = intent.datum.tip,
+                "skip lp intent: tip below the minimum possible fee"
+            );
+            continue;
+        }
+
         // The intent's deadline bounds the tx: passed as the validator's `tx_upper`
         // (so `deadline_ok` is checked identically off-chain) AND lowered to the tx's
         // slot TTL, so the on-chain finite upper bound never exceeds the deadline.
