@@ -1,0 +1,13 @@
+ShaSwap
+Copyright 2026 Logical Mechanism
+
+This product includes software developed by Logical Mechanism
+(https://logicalmechanism.io).
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+ShaSwap is a fully-decentralized, non-custodial, MEV-resistant batch-auction
+DEX on Cardano (eUTXO), published as a hyperstructure: it has no admin keys, no
+governance token, no privileged operator, and no upgrade authority. The
+solver ("batcher") role is permissionless — anyone may run their own under the
+terms of this License.

@@ -12,6 +12,8 @@ import {
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
 import { orderFunding } from "@/lib/chain/orderFunding";
+import { HIGH_FEE_BPS, RECOMMENDED_MIN_TIP } from "@/lib/chain/deployment";
+import { isVerifiedPool } from "@/lib/chain/verifiedPools";
 import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
 import { useQuote } from "@/hooks/useQuote";
@@ -155,6 +157,15 @@ export function SwapCard() {
   // The tip is the ONLY solver reward — a 0-tip order can never be picked up, so require
   // a positive tip (mirrors the buildOrder guard) rather than post an un-settleable order.
   const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") > 0n;
+  // Advisory (not blocking): a positive-but-low tip may still be skipped by solvers — a
+  // single-order settlement pays the whole tx fee. Surface a caution, don't disable.
+  const tipLow = tipValid && BigInt(tipLovelace || "0") < RECOMMENDED_MIN_TIP;
+
+  // Pool trust cues for the selected pool (display-only; not trust-critical to settlement,
+  // which is enforced on-chain). A high fee on an immutable, permissionlessly-created pool
+  // warrants a heads-up; a verified pool gets a positive badge.
+  const feeHigh = pool?.feeBps !== undefined && pool.feeBps >= HIGH_FEE_BPS;
+  const poolVerified = isVerifiedPool(pool?.id);
 
   // Wallet balance of the FROM token (ADA via useLovelace; other tokens via useAssets).
   // The spendable amount + the funding blockers (over-balance / over-spendable / not-enough
@@ -390,6 +401,7 @@ export function SwapCard() {
         floorDisplay={floorDisplay}
         poolCount={poolCount}
         feeBps={pool?.feeBps}
+        verified={poolVerified}
         tip={tip}
         onRefresh={refreshPrice}
       />
@@ -401,6 +413,7 @@ export function SwapCard() {
         tip={tip}
         onTip={setTip}
         tipValid={tipValid}
+        tipLow={tipLow}
         partial={partial}
         onPartial={setPartial}
         expiry={expiry}
@@ -423,6 +436,18 @@ export function SwapCard() {
             size. Consider a smaller amount or expect a worse fill.
           </div>
         )}
+
+      {/* High pool-fee caution — pools are permissionless and immutable, so a steep fee is
+          permanent. Verified pools skip the nudge (they're known-good). */}
+      {feeHigh && !poolVerified && pool && post.kind !== "posting" && (
+        <div className="k-note k-note-warn mt-3 flex items-center gap-2 text-xs">
+          <Pip size={22} mood="worried" />
+          <span>
+            This pool charges a high fee ({((pool.feeBps ?? 0) / 100).toFixed(2)}%). It’s
+            not on Pip’s verified list — double-check before you trade.
+          </span>
+        </div>
+      )}
 
       {quoteFailed && (
         <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
@@ -543,6 +568,7 @@ function Advanced({
   tip,
   onTip,
   tipValid,
+  tipLow,
   partial,
   onPartial,
   expiry,
@@ -553,6 +579,8 @@ function Advanced({
   tip: string;
   onTip: (v: string) => void;
   tipValid: boolean;
+  /** Tip is positive but below the recommended floor — advisory caution, not blocking. */
+  tipLow: boolean;
   partial: boolean;
   onPartial: (v: boolean) => void;
   expiry: string;
@@ -587,10 +615,16 @@ function Advanced({
                 if (withinDecimals(v, 6)) onTip(v);
               }}
               className={`k-input-box w-24 px-2 py-1.5 text-right tabular-nums ${
-                tipValid ? "" : "border-danger"
+                tipValid && !tipLow ? "" : "border-danger"
               }`}
             />
           </label>
+          {tipLow && (
+            <p className="-mt-1 text-[11px] text-warning">
+              That tip is on the low side — a solver may skip it (a small batch pays the
+              whole network fee). 1–2 ADA settles reliably.
+            </p>
+          )}
           <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
             <span className="text-muted">
               Allow partial fills
@@ -726,6 +760,7 @@ function RateLine({
   floorDisplay,
   poolCount,
   feeBps,
+  verified,
   tip,
   onRefresh,
 }: {
@@ -738,6 +773,8 @@ function RateLine({
   floorDisplay: string;
   poolCount: number;
   feeBps: number | undefined;
+  /** Pool is on the verified allowlist — a positive trust badge (display-only). */
+  verified: boolean;
   tip: string;
   /** Re-scan reserves + re-quote on demand (no background polling). */
   onRefresh: () => void;
@@ -831,6 +868,11 @@ function RateLine({
           <DetailRow label="Pool fee">
             {feeBps !== undefined ? `${(feeBps / 100).toFixed(2)}%` : "—"}
           </DetailRow>
+          {verified && (
+            <DetailRow label="Pool">
+              <span className="font-semibold text-success">✓ Verified</span>
+            </DetailRow>
+          )}
           <DetailRow label="Solver tip">
             {Number.isFinite(tipNum) && tipNum > 0 ? `${tip} ADA` : "—"}
           </DetailRow>

@@ -40,6 +40,13 @@ SHASWAP_STRATEGY=round-robin   # drain order: round-robin | profit-greedy
 RUST_LOG=debug            # verbosity (default info); tracing w/ timestamps + levels
 ```
 
+**Mainnet.** Start from [`config/deployment.mainnet.example.json`](config/deployment.mainnet.example.json)
+(`network_id=1`, `network_magic=764824073`, your own Kupo/Ogmios, a `0600` skey). The
+startup banner prints `network=MAINNET` and, with `SHASWAP_SUBMIT=1`, logs an explicit
+live-funds warning — confirm the network before going live. Full operator runbook
+(systemd, monitoring, alerts, recovery, key management):
+[`../documentation/launch/batcher-operations.md`](../documentation/launch/batcher-operations.md).
+
 ```sh
 SHASWAP_DEPLOYMENT=../contracts/happy_path/deployment.json \
 SHASWAP_SUBMIT=1 \

@@ -1,5 +1,7 @@
 name = "logicalmechanism/contracts"
-version = "0.1.0"
+version = "1.0.0-rc.1"
+# Minimum compiler. The exact reproducible build is `v1.1.22+39d6b04` (see plutus.json
+# `preamble.compiler.version` and `.tool-versions`); CI fails on any plutus.json hash drift.
 compiler = "v1.1.22"
 plutus = "v3"
 license = "Apache-2.0"
