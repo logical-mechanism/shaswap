@@ -54,12 +54,13 @@ use chain::assemble::{self, AssembleInputs};
 use chain::backend::{ChainBackend, Snapshot, Utxo};
 use chain::config::{Config, ValidatedConfig};
 use chain::fees;
+use chain::fulfill::{self, FulfillInputs};
 use chain::kupo_ogmios::KupoOgmios;
 use pallas_addresses::{Network, ShelleyAddress, ShelleyDelegationPart, ShelleyPaymentPart};
 use pallas_crypto::hash::Hasher;
 use pallas_crypto::key::ed25519::SecretKey;
-use solver_core::output::{OrderInput, PoolInput};
-use solver_core::types::OutputReference;
+use solver_core::output::{LpIntentInput, OrderInput, PoolInput};
+use solver_core::types::{LpIntentAction, OutputReference};
 use solver_core::value::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,9 +68,56 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-/// preprod genesis: system start 2022-06-01T00:00:00Z, 1s slots.
-const SYSTEM_START_MS: i64 = 1_654_041_600_000;
-const SLOT_LENGTH_MS: i64 = 1_000;
+/// A network's Shelley-era time anchor for converting a POSIX-ms order/intent
+/// deadline into the tx's slot TTL: `slot = shelley_slot + (deadline_ms −
+/// shelley_ms) / slot_length_ms`. Slots are 1s from the Shelley hard fork on every
+/// network, and every deadline is post-Shelley, so a single anchor is exact (Byron's
+/// 20s slots on mainnet predate any deadline and never enter the calculation).
+#[derive(Clone, Copy)]
+struct EraAnchor {
+    /// First slot of the Shelley era (0 on Shelley-from-genesis testnets).
+    shelley_slot: u64,
+    /// POSIX-ms of that slot's start (the Shelley hard-fork instant).
+    shelley_ms: i64,
+    slot_length_ms: i64,
+}
+
+impl EraAnchor {
+    /// POSIX-ms deadline → the slot whose start is at or before it (floored), so the
+    /// tx's upper time bound never exceeds the deadline the validator checks.
+    fn deadline_slot(&self, posix_ms: i64) -> u64 {
+        self.shelley_slot + fees::posix_to_slot(posix_ms, self.shelley_ms, self.slot_length_ms)
+    }
+}
+
+/// The [`EraAnchor`] for the active network. Mainnet anchors at the Shelley hard fork
+/// (slot 4_492_800, 2020-07-29T21:44:51Z) so the Byron era's 20s slots never distort
+/// the conversion. Preprod/preview are Shelley-from-genesis (slot 0); **preprod's
+/// value is the one validated on-chain — do not change it without re-verifying.**
+fn era_anchor(network_id: u8, network_magic: u64) -> EraAnchor {
+    match (network_id, network_magic) {
+        // mainnet (id 1 is mainnet regardless of magic).
+        (1, _) => EraAnchor {
+            shelley_slot: 4_492_800,
+            shelley_ms: 1_596_059_091_000,
+            slot_length_ms: 1_000,
+        },
+        // preview testnet: Shelley from genesis 2022-10-25T00:00:00Z.
+        (0, 2) => EraAnchor {
+            shelley_slot: 0,
+            shelley_ms: 1_666_656_000_000,
+            slot_length_ms: 1_000,
+        },
+        // preprod (magic 1) and any other testnet: Shelley from genesis
+        // 2022-06-01T00:00:00Z, 1s slots (the on-chain-validated value).
+        _ => EraAnchor {
+            shelley_slot: 0,
+            shelley_ms: 1_654_041_600_000,
+            slot_length_ms: 1_000,
+        },
+    }
+}
+
 /// The dedicated collateral UTXO size the batcher provisions/uses (lovelace).
 /// 5 ADA exceeds the worst-case requirement (max-fee × collateralPercentage) for
 /// any tx on this network, since fee is bounded by max ex-units + max tx size.
@@ -227,6 +275,44 @@ fn run() -> Result<(), Err> {
         .ref_script_total_bytes()
         .map_err(|e| format!("ref script sizes: {e:?}"))?;
 
+    // LP-intent fulfillment (BLUEPRINT §5.4): on by default, but gated on the
+    // `lp_intent` reference script being deployed (Phase 4 — a pre-Phase-4 config
+    // omits `lp_intent_ref`). `SHASWAP_LP_INTENTS=0` force-disables it. Disabling
+    // never affects settlements. Sizes are fetched once (fixed per deployment).
+    let lp_enabled = std::env::var("SHASWAP_LP_INTENTS").as_deref() != Ok("0");
+    let lp_refs: Option<LpRefs> = if !lp_enabled {
+        info!("LP-intent fulfillment disabled (SHASWAP_LP_INTENTS=0)");
+        None
+    } else {
+        match &cfg.lp_intent_ref {
+            None => {
+                info!("LP-intent fulfillment disabled (no lp_intent_ref in config; deployed at Phase 4)");
+                None
+            }
+            Some(r) => match backend.lp_fulfillment_ref_bytes() {
+                Ok(bytes) => {
+                    info!(
+                        lp_intent_ref =
+                            %format!("{}#{}", hex::encode(&r.transaction_id), r.output_index),
+                        "LP-intent fulfillment enabled"
+                    );
+                    Some(LpRefs {
+                        lp_intent_ref: r.clone(),
+                        ref_bytes: bytes,
+                    })
+                }
+                Err(e) => {
+                    warn!("LP-intent fulfillment disabled (cannot size lp_intent reference script: {e:?})");
+                    None
+                }
+            },
+        }
+    };
+    let lp = lp_refs.as_ref();
+
+    // The Shelley-era anchor for deadline → slot TTL conversion (network-specific).
+    let anchor = era_anchor(network_id, raw.network_magic);
+
     // Turnkey bootstrap: a settlement needs a funding input AND a distinct
     // collateral input (≥2 wallet UTXOs). If the operator funded the address as a
     // single lump, self-provision a dedicated collateral UTXO once. After that the
@@ -244,6 +330,8 @@ fn run() -> Result<(), Err> {
             &skey,
             &solver_addr,
             ref_bytes,
+            lp,
+            anchor,
             submit,
             strategy,
             &mut state,
@@ -274,6 +362,8 @@ fn run() -> Result<(), Err> {
                     &skey,
                     &solver_addr,
                     ref_bytes,
+                    lp,
+                    anchor,
                     submit,
                     strategy,
                     &mut state,
@@ -344,7 +434,10 @@ enum PassError {
     AbortPass(Err),
 }
 
-/// One discover → group-by-pool → drain-the-chain pass.
+/// One discover → group-by-pool → drain-the-chain pass. When `lp` is `Some`, each
+/// pool's LP intents are fulfilled in the SAME per-block pool-spend sequence as its
+/// settlements: withdrawals first (honor exits promptly), then swap settlements,
+/// then deposits — all chained on the one rolling pool UTXO.
 #[allow(clippy::too_many_arguments)]
 fn settle_once(
     backend: &KupoOgmios,
@@ -352,6 +445,8 @@ fn settle_once(
     skey: &SecretKey,
     solver_addr: &str,
     ref_bytes: u64,
+    lp: Option<&LpRefs>,
+    anchor: EraAnchor,
     submit: bool,
     strategy: Strategy,
     state: &mut LoopState,
@@ -363,18 +458,29 @@ fn settle_once(
     let Snapshot {
         orders: all_orders,
         pools,
+        lp_intents: all_lp_intents,
         wallet,
     } = backend
         .discover(&cfg.settlement_cred, solver_addr)
         .map_err(|e| format!("discover: {e:?}"))?;
 
     // Expire stale pending entries (failed/never-confirmed txs → retry), then
-    // exclude still-pending orders so an in-flight chain is never double-spent.
+    // exclude still-pending orders/intents so an in-flight chain is never
+    // double-spent before it confirms.
     state.expire_pending(tip.slot);
     let orders: Vec<OrderInput> = all_orders
         .into_iter()
         .filter(|o| !state.pending.contains_key(&key(&o.output_reference)))
         .collect();
+    // LP intents (only when fulfillment is enabled) likewise drop the still-pending.
+    let lp_intents: Vec<LpIntentInput> = if lp.is_some() {
+        all_lp_intents
+            .into_iter()
+            .filter(|i| !state.pending.contains_key(&key(&i.output_reference)))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     // Running P&L readout: total confirmed wallet ADA + its drift since the first
     // pass. Settlements move the solver's ADA only by tips − fee (owner/pool
@@ -388,6 +494,7 @@ fn settle_once(
         slot = tip.slot,
         pools = pools.len(),
         orders = orders.len(),
+        lp_intents = lp_intents.len(),
         pending = state.pending.len(),
         wallet = wallet.len(),
         balance_ada = balance,
@@ -403,20 +510,37 @@ fn settle_once(
             .or_default()
             .push(o);
     }
+    // Group LP intents by their target pool NFT (empty unless fulfillment enabled).
+    let mut lp_by_pool: HashMap<NftKey, Vec<LpIntentInput>> = HashMap::new();
+    for i in lp_intents {
+        lp_by_pool
+            .entry(nft_key(&i.datum.pool_nft))
+            .or_default()
+            .push(i);
+    }
     let pool_nfts: Vec<NftKey> = pools.iter().map(|p| nft_key(&p.datum.nft)).collect();
-    let order_nfts: Vec<NftKey> = by_pool.keys().cloned().collect();
-    // Σ posted tips per pool — the profit-greedy ordering key (a proxy for the
-    // tip the solver would take; exact for v1 full fills). Cheap to compute here.
-    let tips_by_nft: HashMap<NftKey, i128> = by_pool
-        .iter()
-        .map(|(k, ords)| (k.clone(), ords.iter().map(|o| o.datum.tip).sum()))
-        .collect();
+    // A pool is "active" if it has at least one settleable order OR one LP intent.
+    let mut active_nfts: Vec<NftKey> = by_pool.keys().cloned().collect();
+    active_nfts.extend(lp_by_pool.keys().cloned());
+    active_nfts.sort();
+    active_nfts.dedup();
+    // Σ posted tips per pool (orders + LP intents) — the profit-greedy ordering key
+    // (a proxy for the tip the solver would take; exact for v1 full fills/intents).
+    let mut tips_by_nft: HashMap<NftKey, i128> = HashMap::new();
+    for (k, ords) in &by_pool {
+        *tips_by_nft.entry(k.clone()).or_default() +=
+            ords.iter().map(|o| o.datum.tip).sum::<i128>();
+    }
+    for (k, ints) in &lp_by_pool {
+        *tips_by_nft.entry(k.clone()).or_default() +=
+            ints.iter().map(|i| i.datum.tip).sum::<i128>();
+    }
 
     // Decide which pools to attempt and in what order (per the chosen strategy),
-    // and which orders are orphans (target a pool we don't see).
+    // and which active NFTs are orphans (target a pool we don't see).
     let (attempt, orphans) = settlement_plan(
         &pool_nfts,
-        &order_nfts,
+        &active_nfts,
         state.cursor,
         strategy,
         &tips_by_nft,
@@ -424,7 +548,7 @@ fn settle_once(
     for nft in &orphans {
         warn!(
             nft = hex::encode(&nft.0),
-            "orders target a pool not found on-chain; skipping"
+            "orders/intents target a pool not found on-chain; skipping"
         );
     }
     if attempt.is_empty() {
@@ -458,47 +582,100 @@ fn settle_once(
     };
 
     let mut settled = 0usize;
-    for pi in attempt {
+    let no_orders: Vec<OrderInput> = Vec::new();
+    'pools: for pi in attempt {
         let pool = &pools[pi];
-        let ords = &by_pool[&pool_nfts[pi]];
-        match settle_pool(
+        let nft = &pool_nfts[pi];
+        let nft_hex = hex::encode(&pool.datum.nft.policy);
+        // The rolling pool UTXO every link of THIS pool's chain spends in turn
+        // (the on-chain pool for the first link, then each tx's pool-continuation).
+        let mut rolling = pool.clone();
+        let ords = by_pool.get(nft).unwrap_or(&no_orders);
+        // Split this pool's intents: withdrawals (honor exits promptly — run before
+        // swaps so a long settlement chain can't push an exit past the tx budget)
+        // and deposits (not liveness-critical — run after swaps).
+        let (withdraws, deposits): (Vec<&LpIntentInput>, Vec<&LpIntentInput>) = lp_by_pool
+            .get(nft)
+            .map(|v| {
+                v.iter()
+                    .partition(|i| matches!(i.datum.action, LpIntentAction::LpWithdraw))
+            })
+            .unwrap_or_default();
+
+        // Run one phase on the rolling pool; a `SkipPool` moves to the next pool, an
+        // `AbortPass` stops the whole pass (a submit failed → funding is ambiguous).
+        macro_rules! run_phase {
+            ($result:expr) => {
+                match $result {
+                    Ok(n) => settled += n,
+                    Err(PassError::SkipPool(e)) => {
+                        warn!(nft = nft_hex, "skipped: {e}");
+                        continue 'pools;
+                    }
+                    Err(PassError::AbortPass(e)) => {
+                        warn!(nft = nft_hex, "submit failed, aborting pass: {e}");
+                        break 'pools;
+                    }
+                }
+            };
+        }
+
+        if let Some(lp) = lp {
+            run_phase!(fulfill_pool(
+                backend,
+                cfg,
+                skey,
+                solver_addr,
+                lp,
+                &params,
+                anchor,
+                &mut rolling,
+                &withdraws,
+                submit,
+                tip.slot,
+                &mut chain,
+                &mut state.pending,
+            ));
+        }
+        run_phase!(settle_pool(
             backend,
             cfg,
             skey,
             solver_addr,
             ref_bytes,
             &params,
-            pool,
+            anchor,
+            &mut rolling,
             ords,
             submit,
             tip.slot,
             &mut chain,
             &mut state.pending,
-        ) {
-            Ok(n) => settled += n,
-            Err(PassError::SkipPool(e)) => {
-                // Nothing was submitted for this pool; the rolling funding is
-                // untouched, so the next pool safely retries from the same UTXO.
-                warn!(
-                    nft = hex::encode(&pool.datum.nft.policy),
-                    "settle skipped: {e}"
-                );
-                continue;
-            }
-            Err(PassError::AbortPass(e)) => {
-                // A submit failed: the rolling funding is now ambiguous (the tx may
-                // be in the mempool). Stop the pass; next pass re-discovers state.
-                warn!(
-                    nft = hex::encode(&pool.datum.nft.policy),
-                    "submit failed, aborting pass: {e}"
-                );
-                break;
-            }
+        ));
+        if let Some(lp) = lp {
+            run_phase!(fulfill_pool(
+                backend,
+                cfg,
+                skey,
+                solver_addr,
+                lp,
+                &params,
+                anchor,
+                &mut rolling,
+                &deposits,
+                submit,
+                tip.slot,
+                &mut chain,
+                &mut state.pending,
+            ));
         }
     }
-    // If we submitted anything, the first link consumed the wallet funding UTXO —
-    // mark it pending so a follow-up pass can't re-spend it before it confirms.
-    if submit && settled > 0 {
+    // If any tx was actually submitted this pass, the first link consumed the wallet
+    // funding UTXO — mark it pending so a follow-up pass can't re-spend it before it
+    // confirms. `chain.funding` advances away from `funding0` exactly when a tx is
+    // built+submitted (in submit mode the advance follows a successful submit), so
+    // this is more robust than a count (a mid-chain skip can't lose the guard).
+    if submit && chain.funding.0 != funding0.output_reference {
         state.pending.insert(funding0_key, tip.slot);
     }
     // Rotate the lead pool each pass so a persistently-unsolvable pool can't pin
@@ -510,6 +687,20 @@ fn settle_once(
         info!(settled, "chained settlement txs this pass");
     }
     Ok(())
+}
+
+/// The reference-script context for fulfilling LP intents. `Some` only when
+/// LP-intent fulfillment is enabled (`SHASWAP_LP_INTENTS != 0`) AND configured (the
+/// deployment carries an `lp_intent_ref` — deployed at Phase 4); `None` disables it
+/// (settlements run regardless). Held for the whole run since the reference-script
+/// sizes don't change for a fixed deployment.
+struct LpRefs {
+    /// The deployed `lp_intent` reference-script UTXO (the validator is referenced,
+    /// not attached inline).
+    lp_intent_ref: OutputReference,
+    /// Total byte size of the 2 scripts a fulfillment references (pool + lp_intent),
+    /// for the reference-script fee.
+    ref_bytes: u64,
 }
 
 /// Rolling state for a chain of settlement txs built within one pass. `funding`
@@ -528,27 +719,28 @@ fn nft_key(a: &solver_core::types::AssetId) -> NftKey {
 }
 
 /// Decide the per-pass settlement plan (pure policy, no IO): which pools to attempt
-/// and in what order, plus which order NFTs are orphans.
+/// and in what order, plus which active NFTs are orphans.
 ///
-/// Returns `(attempt, orphans)` where `attempt` is indices into `pool_nfts` for the
-/// pools that have at least one settleable order, ordered per `strategy`:
+/// `active_nfts` is the set of pool NFTs with at least one settleable order OR one
+/// fulfillable LP intent. Returns `(attempt, orphans)` where `attempt` is indices
+/// into `pool_nfts` for the active pools, ordered per `strategy`:
 /// - [`Strategy::RoundRobin`] — sorted by NFT then rotated by `cursor`, so no pool
 ///   is starved across passes;
 /// - [`Strategy::ProfitGreedy`] — highest `tips_by_nft` first (NFT tie-break), so
 ///   the most valuable pools clear soonest (`cursor` unused).
 ///
-/// `orphans` is the order NFTs that match no known pool (deduped, sorted; logged,
-/// never settled). Ordering is the only thing a strategy controls — every pool with
-/// a settleable batch is still attempted; what actually settles is the per-pool
-/// solve + fee-cover gate, independent of strategy.
+/// `orphans` is the active NFTs that match no known pool (deduped, sorted; logged,
+/// never settled). Ordering is the only thing a strategy controls — every active pool
+/// is still attempted; what actually settles/fulfills is the per-pool solve + the
+/// fee-cover gate, independent of strategy.
 fn settlement_plan(
     pool_nfts: &[NftKey],
-    order_nfts: &[NftKey],
+    active_nfts: &[NftKey],
     cursor: usize,
     strategy: Strategy,
     tips_by_nft: &HashMap<NftKey, i128>,
 ) -> (Vec<usize>, Vec<NftKey>) {
-    let have: HashSet<&NftKey> = order_nfts.iter().collect();
+    let have: HashSet<&NftKey> = active_nfts.iter().collect();
     let mut attempt: Vec<usize> = (0..pool_nfts.len())
         .filter(|&i| have.contains(&pool_nfts[i]))
         .collect();
@@ -572,7 +764,7 @@ fn settlement_plan(
     }
 
     let pool_set: HashSet<&NftKey> = pool_nfts.iter().collect();
-    let mut orphans: Vec<NftKey> = order_nfts
+    let mut orphans: Vec<NftKey> = active_nfts
         .iter()
         .filter(|n| !pool_set.contains(n))
         .cloned()
@@ -592,6 +784,11 @@ fn settlement_plan(
 /// settled order refs are recorded in `pending` (keyed by submit slot). Returns
 /// the number of settlement txs produced, or a [`PassError`] distinguishing a
 /// recoverable skip (nothing submitted) from a pass-fatal submit failure.
+///
+/// `pool` is the **rolling** pool UTXO (advanced in place across this pool's chain),
+/// shared with the LP-intent phases so withdrawals/settlements/deposits all chain on
+/// one UTXO — it starts wherever a prior phase left it and ends at the last batch's
+/// pool-continuation output.
 #[allow(clippy::too_many_arguments)]
 fn settle_pool(
     backend: &KupoOgmios,
@@ -600,7 +797,8 @@ fn settle_pool(
     solver_addr: &str,
     ref_bytes: u64,
     params: &chain::backend::ProtocolParams,
-    pool: &PoolInput,
+    anchor: EraAnchor,
+    pool: &mut PoolInput,
     orders: &[OrderInput],
     submit: bool,
     submit_slot: u64,
@@ -608,15 +806,14 @@ fn settle_pool(
     pending: &mut HashMap<Key, u64>,
 ) -> Result<usize, PassError> {
     let nft = hex::encode(&pool.datum.nft.policy);
-    // Orders not yet placed in a batch, and the rolling pool state (the on-chain
-    // pool for batch 1, then each batch's pool-continuation output).
+    // Orders not yet placed in a batch; `pool` is the rolling pool state (whatever a
+    // prior phase left it at, then each batch's pool-continuation output).
     let mut remaining: Vec<OrderInput> = orders.to_vec();
-    let mut pool_input: PoolInput = pool.clone();
     let mut batches = 0usize;
 
     loop {
         let Some(solved) =
-            solver_core::solve::solve_capped(&remaining, &pool_input, cfg.max_orders_per_tx)
+            solver_core::solve::solve_capped(&remaining, &*pool, cfg.max_orders_per_tx)
         else {
             if batches == 0 {
                 debug!(nft, orders = remaining.len(), "no valid clearing");
@@ -639,13 +836,13 @@ fn settle_pool(
             .iter()
             .filter_map(|o| o.datum.deadline)
             .min()
-            .map(|d| fees::posix_to_slot(d, SYSTEM_START_MS, SLOT_LENGTH_MS));
+            .map(|d| anchor.deadline_slot(d));
         // Fund this link from the rolling chain funding; spend the rolling pool.
         let funding_pairs: Vec<(_, Value)> = vec![chain.funding.clone()];
         let inp = AssembleInputs {
             settlement: &solved.settlement,
             orders: &solved.orders,
-            pool: &pool_input,
+            pool: &*pool,
             funding: &funding_pairs,
             collateral: &chain.collateral,
             solver_addr_bech32: solver_addr,
@@ -709,7 +906,7 @@ fn settle_pool(
             built.change.output_reference.clone(),
             built.change.value.clone(),
         );
-        pool_input = built.next_pool;
+        *pool = built.next_pool;
         chain.resolved = vec![built.change, built.pool_out];
         batches += 1;
 
@@ -725,6 +922,130 @@ fn settle_pool(
         }
     }
     Ok(batches)
+}
+
+/// Fulfil a phase of ONE pool's LP intents (withdraws OR deposits), each as its own
+/// tx chained onto the rolling `pool` UTXO (BLUEPRINT §5.4 — chained, not folded; one
+/// intent per tx in v1). For each intent: pin the exact fulfillment, assemble + gate
+/// it, fulfil only when the tip covers the marginal fee, submit, then advance the
+/// chain (its change funds the next tx; its change + pool-continuation are the next
+/// gate's `additionalUtxo` ancestors). On submit, the intent's ref is recorded in
+/// `pending`. Returns the number of fulfillments produced.
+///
+/// Unlike a settlement batch (where a build failure means stop draining), each intent
+/// is independent: a not-fulfillable or build-failed intent is **skipped** (the chain
+/// is untouched) so it never blocks the others. Only a submit failure is fatal
+/// ([`PassError::AbortPass`]) — after a submit the rolling funding is ambiguous.
+#[allow(clippy::too_many_arguments)]
+fn fulfill_pool(
+    backend: &KupoOgmios,
+    cfg: &ValidatedConfig,
+    skey: &SecretKey,
+    solver_addr: &str,
+    lp: &LpRefs,
+    params: &chain::backend::ProtocolParams,
+    anchor: EraAnchor,
+    pool: &mut PoolInput,
+    intents: &[&LpIntentInput],
+    submit: bool,
+    submit_slot: u64,
+    chain: &mut ChainCtx,
+    pending: &mut HashMap<Key, u64>,
+) -> Result<usize, PassError> {
+    let nft = hex::encode(&pool.datum.nft.policy);
+    let mut count = 0usize;
+
+    for &intent in intents {
+        // The intent's deadline bounds the tx: passed as the validator's `tx_upper`
+        // (so `deadline_ok` is checked identically off-chain) AND lowered to the tx's
+        // slot TTL, so the on-chain finite upper bound never exceeds the deadline.
+        let tx_upper = intent.datum.deadline;
+        let invalid_after_slot = intent.datum.deadline.map(|d| anchor.deadline_slot(d));
+
+        // Pin the exact fulfillment against the rolling pool, or skip this intent if
+        // it isn't fulfillable (floor breach, first deposit, deadline unhonorable, …).
+        let fulfillment = match solver_core::lp::build_fulfillment(intent, &*pool, tx_upper) {
+            Ok(f) => f,
+            Err(e) => {
+                debug!(nft, "lp intent not fulfillable: {e:?}");
+                continue;
+            }
+        };
+
+        // Fund this link from the rolling chain funding; spend the rolling pool.
+        let funding_pairs: Vec<(_, Value)> = vec![chain.funding.clone()];
+        let inp = FulfillInputs {
+            fulfillment: &fulfillment,
+            intent,
+            pool: &*pool,
+            funding: &funding_pairs,
+            collateral: &chain.collateral,
+            solver_addr_bech32: solver_addr,
+            config: cfg,
+            params,
+            lp_intent_ref: &lp.lp_intent_ref,
+            ref_script_total_bytes: lp.ref_bytes,
+            invalid_after_slot,
+        };
+        // A build/gate failure submits nothing → skip THIS intent (chain untouched);
+        // it never aborts the pool's other intents.
+        let built = match fulfill::build_fulfillment_signed(&inp, backend, skey, &chain.resolved) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(nft, "lp fulfillment build failed, skipping intent: {e:?}");
+                continue;
+            }
+        };
+
+        // Economically rational: only fulfil when the tip covers the marginal fee.
+        // A skipped intent leaves the chain untouched (the next intent retries from
+        // the same rolling funding/pool).
+        if fulfillment.tip < built.fee as i128 + FEE_COVER_MARGIN as i128 {
+            info!(
+                nft,
+                tip = fulfillment.tip,
+                fee = built.fee,
+                "skip lp intent: tip does not cover fee (+margin)"
+            );
+            continue;
+        }
+        info!(
+            nft,
+            action = ?intent.datum.action,
+            tx = hex::encode(built.signed.tx_hash.0),
+            fee = built.fee,
+            mem = built.total_ex_units.mem,
+            steps = built.total_ex_units.steps,
+            "lp fulfillment built + evaluated OK (gate passed)"
+        );
+
+        if submit {
+            // A submit failure is pass-fatal: the tx may already be in the mempool
+            // (spending this link's funding), so no later link may reuse it.
+            let txid = backend
+                .submit(&built.signed.tx_bytes.0)
+                .map_err(|e| PassError::AbortPass(format!("lp submit: {e:?}").into()))?;
+            pending.insert(key(&intent.output_reference), submit_slot);
+            info!(nft, tx = hex::encode(&txid), "LP FULFILLED");
+        } else {
+            info!(
+                nft,
+                bytes = built.signed.tx_bytes.0.len(),
+                "lp dry run (set SHASWAP_SUBMIT=1 to submit)"
+            );
+        }
+
+        // Advance the chain + rolling pool (done in dry-run too, so a full chain is
+        // built + gated without submitting). Pruned to the just-created outputs.
+        chain.funding = (
+            built.change.output_reference.clone(),
+            built.change.value.clone(),
+        );
+        *pool = built.next_pool;
+        chain.resolved = vec![built.change, built.pool_out];
+        count += 1;
+    }
+    Ok(count)
 }
 
 /// Pick the solver's funding + collateral UTXOs. Collateral must be pure-ADA (no
@@ -888,6 +1209,29 @@ mod tests {
         assert_eq!(network_label(0, 1), "preprod");
         assert_eq!(network_label(0, 2), "preview");
         assert_eq!(network_label(0, 42), "testnet(id=0, magic=42)");
+    }
+
+    #[test]
+    fn era_anchor_deadline_slot_is_network_aware() {
+        // preprod: Shelley from genesis (slot 0 @ 1654041600000). The value validated
+        // on-chain — a deadline 100s after genesis is slot 100.
+        let pp = era_anchor(0, 1);
+        assert_eq!(pp.deadline_slot(1_654_041_600_000), 0);
+        assert_eq!(pp.deadline_slot(1_654_041_700_000), 100);
+        // preview anchors at its own (later) genesis, so the same instant maps lower.
+        let pv = era_anchor(0, 2);
+        assert_eq!(pv.deadline_slot(1_666_656_000_000), 0);
+        assert_ne!(
+            pv.deadline_slot(1_700_000_000_000),
+            pp.deadline_slot(1_700_000_000_000)
+        );
+        // mainnet anchors at the Shelley hard fork (slot 4_492_800 @ 1596059091000),
+        // so Byron's 20s slots never enter the conversion: 100s past the HF = HF + 100.
+        let mn = era_anchor(1, 764_824_073);
+        assert_eq!(mn.deadline_slot(1_596_059_091_000), 4_492_800);
+        assert_eq!(mn.deadline_slot(1_596_059_191_000), 4_492_900);
+        // id==1 is mainnet regardless of magic.
+        assert_eq!(era_anchor(1, 0).shelley_slot, 4_492_800);
     }
 
     fn nft(b: u8) -> NftKey {

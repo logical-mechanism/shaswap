@@ -35,10 +35,10 @@ use txbuild::{address as txaddr, plutus};
 
 /// A fee safety margin (lovelace). The solver overpays a touch out of its own
 /// change rather than risk a just-under-minimum fee; harmless for a reference solver.
-const FEE_MARGIN: u64 = 50_000;
+pub(crate) const FEE_MARGIN: u64 = 50_000;
 /// Bytes a single vkey witness adds to the encoded tx (vkey 32 + sig 64 + CBOR
 /// overhead), used to size the fee before signing.
-const WITNESS_OVERHEAD: u64 = 128;
+pub(crate) const WITNESS_OVERHEAD: u64 = 128;
 
 /// Per-script-input ex-units, keyed by `(tx_id, output_index)`.
 type SpendExUnits = BTreeMap<(Vec<u8>, u64), BkExUnits>;
@@ -63,34 +63,34 @@ pub struct AssembleInputs<'a> {
     pub invalid_after_slot: Option<u64>,
 }
 
-fn core_exu(e: BkExUnits) -> ExUnits {
+pub(crate) fn core_exu(e: BkExUnits) -> ExUnits {
     ExUnits {
         mem: e.mem,
         steps: e.steps,
     }
 }
 
-fn hash28(bytes: &[u8]) -> Result<Hash<28>, ChainError> {
+pub(crate) fn hash28(bytes: &[u8]) -> Result<Hash<28>, ChainError> {
     let arr: [u8; 28] = bytes
         .try_into()
         .map_err(|_| ChainError::Shape(format!("expected 28-byte hash, got {}", bytes.len())))?;
     Ok(Hash::from(arr))
 }
 
-fn hash32(bytes: &[u8]) -> Result<Hash<32>, ChainError> {
+pub(crate) fn hash32(bytes: &[u8]) -> Result<Hash<32>, ChainError> {
     let arr: [u8; 32] = bytes
         .try_into()
         .map_err(|_| ChainError::Shape(format!("expected 32-byte id, got {}", bytes.len())))?;
     Ok(Hash::from(arr))
 }
 
-fn input_of(r: &OutputReference) -> Result<Input, ChainError> {
+pub(crate) fn input_of(r: &OutputReference) -> Result<Input, ChainError> {
     Ok(Input::new(hash32(&r.transaction_id)?, r.output_index))
 }
 
 /// Apply a solver-core [`Value`]'s native assets onto a builder [`Output`] (ADA is
 /// already set via `Output::new`).
-fn apply_assets(mut o: Output, v: &Value) -> Result<Output, ChainError> {
+pub(crate) fn apply_assets(mut o: Output, v: &Value) -> Result<Output, ChainError> {
     for (policy, name, qty) in v.flatten() {
         if policy.is_empty() && name.is_empty() {
             continue; // ADA
@@ -106,7 +106,7 @@ fn apply_assets(mut o: Output, v: &Value) -> Result<Output, ChainError> {
 
 /// Lower a settlement [`CoreOutput`] (owner/pool/remainder) into a builder output,
 /// preserving its inline datum.
-fn lower_output(net: Network, o: &CoreOutput) -> Result<Output, ChainError> {
+pub(crate) fn lower_output(net: Network, o: &CoreOutput) -> Result<Output, ChainError> {
     let addr_bytes = txaddr::shelley_bytes(net, &o.address)
         .map_err(|e| ChainError::Address(format!("{e:?}")))?;
     let addr = PallasAddress::from_bytes(&addr_bytes)
@@ -133,7 +133,7 @@ fn total_in(inp: &AssembleInputs) -> Value {
     bal
 }
 
-fn add_value(bal: &mut Value, v: &Value, sign: i128) {
+pub(crate) fn add_value(bal: &mut Value, v: &Value, sign: i128) {
     for (p, n, q) in v.flatten() {
         bal.add_mut(p, n, sign * q);
     }

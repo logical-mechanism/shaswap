@@ -7,7 +7,7 @@
 //! types (datums already decoded via [`crate::decode`]); evaluation/submission take
 //! and return raw tx CBOR.
 
-use solver_core::output::{OrderInput, PoolInput};
+use solver_core::output::{LpIntentInput, OrderInput, PoolInput};
 use solver_core::types::{AssetId, Credential, OutputReference};
 use solver_core::value::Value;
 
@@ -106,12 +106,17 @@ pub enum Purpose {
 
 /// An atomic discovery snapshot: every order to settle, every pool (one per
 /// `(asset_a, asset_b)` pair — there can be arbitrarily many under the same
-/// anchor `S`), and the solver's own UTXOs (for funding/collateral) — ideally read
-/// from a single chain view so they can't drift between separate queries.
+/// anchor `S`), every LP intent awaiting fulfillment, and the solver's own UTXOs
+/// (for funding/collateral) — ideally read from a single chain view so they can't
+/// drift between separate queries.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     pub orders: Vec<OrderInput>,
     pub pools: Vec<PoolInput>,
+    /// LP-intent UTXOs at the (enterprise, non-`S`-tagged) lp_intent address,
+    /// decoded. Empty unless the chain indexer is configured to index that address
+    /// (Phase 4) — never affects settlement discovery.
+    pub lp_intents: Vec<LpIntentInput>,
     pub wallet: Vec<Utxo>,
 }
 
@@ -133,6 +138,15 @@ pub trait ChainBackend {
     /// self-describe via their `PoolDatum`, so no per-pool config is needed.
     fn find_pools(&self) -> Result<Vec<PoolInput>, Self::Error>;
 
+    /// Every LP-intent UTXO at the lp_intent address, decoded. Takes NO `S` param —
+    /// unlike orders/pools, the intent UTXO sits at an **enterprise** address
+    /// (payment = the lp_intent script hash, **stake = `None`**, never `S`-tagged),
+    /// so the settlement anchor never enumerates it. The default returns empty so a
+    /// backend without LP-intent indexing (or LP intents disabled) is unaffected.
+    fn find_lp_intents(&self) -> Result<Vec<LpIntentInput>, Self::Error> {
+        Ok(Vec::new())
+    }
+
     /// The single pool carrying `nft`, if present (a convenience over
     /// [`find_pools`](Self::find_pools)).
     fn find_pool(&self, nft: &AssetId) -> Result<Option<PoolInput>, Self::Error> {
@@ -151,6 +165,7 @@ pub trait ChainBackend {
         Ok(Snapshot {
             orders: self.find_orders(s)?,
             pools: self.find_pools()?,
+            lp_intents: self.find_lp_intents()?,
             wallet: self.find_wallet_utxos(wallet_addr)?,
         })
     }

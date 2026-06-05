@@ -191,6 +191,20 @@ fn conservation_holds_over_random_settlements() {
         let expected_take = tip * f / sell;
         assert_eq!(st.tip_taken_total, expected_take);
 
+        // H-01 (audit 060426): every partial-fill remainder must consent to the SAME
+        // pool it came from (`consume_remainder` now asserts `ro.pool_nft ==
+        // order.pool_nft`). All orders here target `pool().datum.nft`, so every
+        // remainder's `pool_nft` must equal it — else the rollover is rejected on-chain.
+        for r in &st.remainders {
+            let solver_core::output::Datum::Order(rd) = &r.datum else {
+                panic!("remainder must carry an OrderDatum");
+            };
+            assert_eq!(
+                rd.pool_nft, pool.datum.nft,
+                "remainder pool_nft drifted from the consumed order's pool"
+            );
+        }
+
         if is_partial {
             partial += 1;
         } else {
