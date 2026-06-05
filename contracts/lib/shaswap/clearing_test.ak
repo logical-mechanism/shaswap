@@ -8,6 +8,10 @@ use aiken/fuzz
 use aiken/interval.{Interval}
 use cardano/address.{Address, Credential, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
+use cardano/certificate.{
+  AlwaysAbstain, DelegateCredential, DelegateVote, RegisterCredential,
+  UnregisterCredential,
+}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
@@ -355,10 +359,40 @@ test neg_floor_breach() fail {
   clearing.run(s(), redeemer([sell]), tx)
 }
 
-// NB: `clearing.allow_registration` (settlement `publish` handler — S authorizes
-// ONLY its own registration, never dereg/deleg) is verified on-chain by the live
-// preprod bootstrap rather than here: the `RegisterCredential.deposit: Never` field
-// is impractical to construct in a unit test. See contracts/happy_path.
+// ---- settlement `publish` authority (audit I-06) --------------------------
+// `clearing.allow_registration` IS the settlement `publish` handler. S authorizes
+// ONLY its own registration — never de-registration or delegation — keeping the
+// withdraw-0 anchor immortal and undelegatable (§5.4). The prior note claimed the
+// `RegisterCredential.deposit: Never` field was impractical to construct; it is not
+// (`Never` is a prelude constructor), so the authority is unit-tested here directly.
+// (The `settlement.publish` entrypoint wiring — a 1-line delegation to this — is
+// driven through the real validator in `validators/settlement.test.ak`.)
+
+// accepts registration of S (the only path that brings the anchor into existence).
+test allow_registration_accepts_register() {
+  clearing.allow_registration(
+    RegisterCredential { credential: s(), deposit: Never },
+  )
+}
+
+// rejects de-registration: a griefer must never un-register S and brick every
+// settlement.
+test allow_registration_rejects_unregister() fail {
+  clearing.allow_registration(
+    UnregisterCredential { credential: s(), refund: Never },
+  )
+}
+
+// rejects delegation: S must stay undelegatable so its (always-zero) rewards can
+// never be captured.
+test allow_registration_rejects_delegate() fail {
+  clearing.allow_registration(
+    DelegateCredential {
+      credential: s(),
+      delegate: DelegateVote { delegate_representative: AlwaysAbstain },
+    },
+  )
+}
 
 // ---- order validator logic ------------------------------------------------
 
@@ -756,6 +790,73 @@ test partial_remainder_bad_limit() fail {
       owner_output(0, 2_200_000),
       pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
       remainder_output(False, 600_000, 3_200_000, 600_000, 100_000, 1_200_000),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// (H-01) the token-seller partial remainder (600_000 unsold token + min + leftover
+// tip 1_200_000), but with a caller-chosen `pool_nft` so we can prove the rollover
+// is re-bound to the original order's pool.
+fn partial_remainder_with_pool_nft(pn: AssetId) -> Output {
+  Output {
+    address: tagged(Script(o_hash)),
+    value: tok_val(3_200_000, 600_000),
+    datum: InlineDatum(
+      OrderDatum {
+        owner: VerificationKey(owner_vkh),
+        owner_stake: None,
+        pool_nft: pn,
+        sell_a: True,
+        sell_amount: 600_000,
+        limit: 240_000,
+        tip: 1_200_000,
+        partial: False,
+        deadline: None,
+      },
+    ),
+    reference_script: None,
+  }
+}
+
+// (H-01) the remainder re-points the unsold portion at an ATTACKER pool (`pool_nft`
+// = Q with a worthless asset_b). Before the `expect ro.pool_nft == order.pool_nft`
+// pin this passed (the bug): the solver could later settle the remainder against Q
+// and satisfy the bare-int floor with junk, rugging the unsold balance. Must be
+// rejected now.
+test partial_remainder_wrong_pool_nft() fail {
+  let attacker_nft = AssetId {
+    policy: #"7777777777777777777777777777777777777777777777777777777f",
+    name: #"4e4654",
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      partial_remainder_with_pool_nft(attacker_nft),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// PROPERTY (H-01): any remainder `pool_nft` other than the original order's is
+// rejected — fuzz the remainder's target NFT policy across the whole non-matching
+// space (mirrors `prop_reject_order_wrong_pool` for the rollover site).
+test prop_partial_remainder_wrong_pool_nft(pol via nonempty_policy()) fail {
+  let other = AssetId { policy: pol, name: #"4e4654" }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      partial_remainder_with_pool_nft(other),
       solver_output(800_000),
     ],
     withdrawals: [Pair(s(), 0)],

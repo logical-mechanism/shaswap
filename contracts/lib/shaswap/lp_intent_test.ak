@@ -6,7 +6,6 @@
 //// over-release/over-mint) and `lp_intent.fulfill` (pins the owner payout). A few
 //// fulfill-only checks call `fulfill` in isolation.
 
-use aiken/collection/list
 use aiken/fuzz
 use aiken/interval.{Interval}
 use cardano/address.{Address, Credential, Inline, Script, VerificationKey}
@@ -1027,4 +1026,18 @@ fn deposit_bench_tx(_n: Int) -> Fuzzer<Transaction> {
 
 bench lp_intent__fulfill__deposit(tx via deposit_bench_tx) {
   lp_intent.fulfill(tx, intent_ref(), dep_datum(0, None), s())
+}
+
+// cold path: owner-signature reclaim (audit I-08 — the one redeemer that lacked a
+// bench, completing per-redeemer coverage). The cost is action-independent (reclaim is
+// a single `extra_signatories` membership check on the owner VK, ignoring the intent's
+// value/action), so one scenario covers both the withdraw- and deposit-intent reclaim.
+fn reclaim_bench_tx(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(
+    Transaction { ..transaction.placeholder, extra_signatories: [owner_vkh] },
+  )
+}
+
+bench lp_intent__reclaim(tx via reclaim_bench_tx) {
+  lp_intent.reclaim(owner(), tx)
 }

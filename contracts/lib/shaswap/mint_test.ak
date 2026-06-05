@@ -152,6 +152,22 @@ test create_script_creator() fail {
   mint.create(seed(), policy, tx)
 }
 
+// (L-03) the pool output holds less than the carved-out min-ADA overhead, so its
+// ADA reserve (`lovelace − pool_min_ada`) would be negative and the pool could never
+// be settled or deposited into: rejected at create.
+test create_below_min_ada() fail {
+  let pool_v = assets.from_lovelace(1_500_000)
+    |> assets.add(policy, nft_name, 1)
+    |> assets.add(policy, lp_name, total_lp)
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [seed_input()],
+    outputs: [pool_seed_output(pool_v)],
+    mint: mint_val(1, total_lp),
+  }
+  mint.create(seed(), policy, tx)
+}
+
 // NFT and LP do not land together in one output: rejected.
 test create_split_output() fail {
   let pool_v = assets.from_lovelace(2_000_000)

@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 22 — 2026-06-04. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 23 — 2026-06-04. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -205,6 +205,47 @@
 > `documentation/spec/lp-intents.md`. Mirrored in the batcher (decode/discovery/LP-math/
 > fulfillment tx/chaining) and the app (intent builders + LP UI; intent default with the
 > direct path as advanced fallback).**
+>
+> **Rev 23: external audit remediation (audit-machine 2026-06-04,
+> `contracts/audit/audit_report_060426.md`) — closes H-01 / M-01 / L-02 / L-03 +
+> I-01/I-03/I-06/I-08.** An independent multi-agent audit of the post-Rev-22 tree (incl.
+> the new `lp_intent` subsystem) surfaced one **High** and one **Medium** path that
+> re-hash the anchor before mainnet:
+> - **H-01 (High, settlement/clearing):** the partial-fill **remainder rollover** pinned
+> every field of the solver-authored remainder datum *except* `pool_nft`, reopening the
+> C-02 bought-asset substitution for the *unsold* portion — a solver could re-point a
+> remainder at an attacker pool with a worthless `asset_b` and meet the bare-int floor
+> with junk. **Closed** by `expect ro.pool_nft == order.pool_nft` in `consume_remainder`
+> (mirrors `check_one`'s order binding). +2 tests (negative + fuzz over the NFT space).
+> - **M-01 (Medium) / L-02 (Low) (pool/spend):** the standalone `LpAction` path pinned
+> only the pool's NFT/reserves/held-LP, not its **full value**, so a no-op LP action
+> could pile foreign dust into the shared pool (bloat toward `maxValueSize`) or skim a
+> token/token pool's overhead lovelace. **Closed** by the same `expect out.value ==
+> pool_exp` full-value pin the settlement anchor and `lp_intent` already use — all three
+> pool-mutation paths are now uniform. +4 tests.
+> - **L-03 (Low, pool_mint):** `mint.create` never asserted the created pool holds the
+> carved-out min-ADA overhead (a sub-min-ADA pool has a negative ADA reserve and
+> self-bricks). **Closed** by `expect lovelace_of(pool.value) >= pool_min_ada`; the
+> residual address-placement invariant stays an off-chain-builder responsibility (the
+> policy is seed-only and cannot see `S`; the one-shot NFT + post-creation continuity
+> make a mis-placement a creator self-grief, never third-party theft) and is documented.
+> - **Informational:** README `OrderDatum` field count 8→9 (**I-01**); `mint.close`
+> self-harm-only doc note (**I-03**); the anchor's `publish`/`allow_registration`
+> certificate authority and the `pool.LpAction` wrapper guard + `expect Some(datum)` are
+> now driven through the real validator entrypoints in
+> `validators/{settlement,pool}.test.ak` (**I-06**); the missing `lp_intent.ReclaimLp`
+> bench added (**I-08**). **I-02** (missing blueprint/spec) was a false positive — the
+> audit ran on a stripped copy; the docs exist here. **L-01** (a `Script`-owner
+> order/intent is settle-able but not reclaimable) has no on-chain creation gate (no
+> order/intent mint) and is documented as a hard builder precondition (VK owner).
+> **I-04/I-05/I-07** are safe-as-written defense-in-depth notes (no change). **O-01/O-02/
+> O-03** (cold-path `assets.tokens`; hot-path fold-fusion) are deferred to an
+> optimization pass with before/after benches, to keep this remediation correctness-only.
+> **Hash impact (pre-mainnet, expected):** the `settlement`, `pool`, and `pool_mint`
+> hashes change (the three files carrying the fixes); `order` and `lp_intent` are
+> **byte-identical**. Nothing is on mainnet (`deployed: false`), so this is the correct
+> pre-freeze time — downstream `deployment.ts`/batcher config + any preprod instances
+> must regenerate the three new hashes. 152 tests green (137 unit + 15 property).**
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50

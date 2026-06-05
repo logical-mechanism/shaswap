@@ -113,6 +113,14 @@ fn consume_remainder(
   // the remainder is a continuing order that will itself pay out later, so it must
   // carry the SAME payout stake credential (the solver can't swap it on the rollover)
   expect ro.owner_stake == order.owner_stake
+  // (H-01) the remainder must consent to the SAME pool as the original order. The
+  // floor `limit` is a bare count of the *bought* asset whose identity is resolved
+  // only at settlement time from the spent pool's pair (the C-02 binding). Without
+  // pinning `pool_nft` here the solver could re-point the unsold portion at an
+  // attacker pool with a worthless `asset_b` and satisfy the floor with junk — an
+  // asset-substitution rug of the remainder. This restores the C-02 binding across
+  // the partial-fill rollover (mirrors `check_one`'s `order.pool_nft == r.pool_nft`).
+  expect ro.pool_nft == order.pool_nft
   expect ro.sell_a == order.sell_a
   expect ro.sell_amount == new_sell
   expect ro.tip == tip_rem

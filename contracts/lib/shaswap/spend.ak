@@ -184,6 +184,23 @@ pub fn lp_action(tx: Transaction, utxo: OutputReference, d: PoolDatum) -> Bool {
   expect held_out >= 0
   expect held_out <= total_lp
 
+  // (M-01/L-02) pin the pool output's FULL value: `own` shifted by exactly the
+  // reserve delta on each side and the held-LP delta — and NOTHING else. This is the
+  // same discipline the settlement anchor (`clearing.ak`) and the `lp_intent` path
+  // already use; adopting it here makes all three pool-mutation paths uniform.
+  //  - M-01: no foreign-policy dust can ride into the shared pool output, so an
+  //    attacker can't bloat it toward `maxValueSize` via no-op `LpAction`s.
+  //  - L-02: on a token/token pool neither reserve delta touches lovelace, so the
+  //    pin holds the pool's overhead lovelace fixed — closing the one-time skim.
+  // The reserve/LP components match `out` by construction (they're read from it), so
+  // the teeth are on the NFT (kept), incidentals (frozen), and the token/token
+  // overhead lovelace.
+  let pool_exp = own.output.value
+    |> assets.add(d.asset_a.policy, d.asset_a.name, res_a_out - res_a_in)
+    |> assets.add(d.asset_b.policy, d.asset_b.name, res_b_out - res_b_in)
+    |> assets.add(lp.policy, lp.name, held_out - held_in)
+  expect out.value == pool_exp
+
   if circ_in == 0 {
     // first deposit: total shares minted == floor(sqrt(reserveA·reserveB))
     expect res_a_out > 0
