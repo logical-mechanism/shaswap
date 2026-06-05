@@ -35,6 +35,9 @@ Core guarantees enforced on-chain (BLUEPRINT §5.2):
   reject at creation, since spend scripts don't run when a UTXO is created — would be
   settle-able/fulfillable but never reclaimable, i.e. lockable if never settled (audit
   L-01). The off-chain builders **must** set `owner` to the wallet's payment key hash.
+  Relatedly, an order's `owner_stake` must not equal the settlement credential `S` (it
+  would tag the payout and self-brick the settle path) — this one the anchor now rejects
+  on-chain in `check_one`, so it is a clean rejection rather than a silent lock.
 
 ## Layout
 

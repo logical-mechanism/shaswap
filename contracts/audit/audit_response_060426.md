@@ -5,9 +5,9 @@ validators. Worked on branch `contracts/lp-intents`. All fixes are **pre-mainnet
 (`deployed: false`), so re-hashing the affected validators is the correct, expected step
 (consistent with the project's prior audit cycles — see BLUEPRINT Rev 14–16).
 
-**Result:** `aiken check -D` → **1637 checks, 0 errors, 0 warnings**; `aiken fmt --check`
-clean; `aiken build` reproducible. **152 tests** (137 unit + 15 property), **+16 vs the
-audited tree**.
+**Result:** `aiken check -D` → **1639 checks, 0 errors, 0 warnings**; `aiken fmt --check`
+clean; `aiken build` reproducible. **154 tests** (139 unit + 15 property), **+18 vs the
+audited tree** (incl. 2 from the self-initiated post-fix re-review, below).
 
 ## Validator hash impact (verified against `git HEAD:contracts/plutus.json`)
 
@@ -15,11 +15,11 @@ audited tree**.
 |---|---|---|
 | `order` | **unchanged** | `spend.order_*` untouched |
 | `lp_intent` | **unchanged** | `lp_intent.ak` logic untouched |
-| `settlement` | **CHANGED** | H-01 fix in `clearing.consume_remainder` |
+| `settlement` | **CHANGED** | H-01 fix in `clearing.consume_remainder` + the `owner_stake != S` guard in `check_one` (re-review, below) |
 | `pool` | **CHANGED** | M-01/L-02 full-value pin in `spend.lp_action` |
 | `pool_mint` | **CHANGED** | L-03 min-ADA check in `mint.create` |
 
-New hashes (`plutus.json`): `settlement 51bfa35d…`, `pool 899b4542…`, `pool_mint
+New hashes (`plutus.json`): `settlement a305a3cf…`, `pool 899b4542…`, `pool_mint
 f558dfb2…`. **Downstream propagation required** (see end).
 
 ## Finding-by-finding
@@ -41,6 +41,24 @@ f558dfb2…`. **Downstream propagation required** (see end).
 | **I-08** | Info | **Fixed** | Added `bench lp_intent__reclaim` ([lp_intent_test.ak](../lib/shaswap/lp_intent_test.ak)); cost is signature-only (action-independent), so one bench covers withdraw+deposit reclaim — completing per-redeemer bench coverage. |
 | **O-01** | Opt | **Deferred** | `assets.tokens` vs `flatten(restricted_to())` — cold path, negligible saving; deferred to an optimization pass to keep this diff correctness-only. |
 | **O-02 / O-03** | Opt | **Deferred** | Fold-fusion of the multi-pass traversals in `clearing.run` / `lp_intent.fulfill` — the audit itself rates these Low–Medium risk ("must not alter binding"); deferred with before/after benches rather than risk the hot-path binding logic in a security-remediation change. |
+
+## Self-initiated post-fix adversarial re-review
+
+After applying the fixes above, an in-house adversarial re-review (6 independent finder
+lenses → double adversarial verification per finding) was run over the *post-fix* tree,
+with the heaviest scrutiny on the freshly-added code now in the immutable anchor. It
+**independently re-derived and confirmed** that H-01, M-01/L-02, and L-03 are correct,
+complete, and introduce no liveness regression (several agents wrote throwaway compiled
+probes to prove it). Two new items surfaced, both minor; both are now closed:
+
+| ID | Sev | Status | Resolution |
+|---|---|---|---|
+| **RR-1** `owner_stake == S` | Low (self-inflicted liveness) | **Fixed on-chain** | An order whose datum pins `owner_stake` to the settlement credential `S` makes its own payout `is_tagged(S)`, so it is mis-classified as a phantom remainder and the settlement aborts at `expect [] = remainders` — the order becomes un-settleable (but always reclaimable; attacker-uncontrollable). Closed by an **additive** guard `expect order.owner_stake != Some(account)` in `clearing.check_one` (verify-don't-trust; cannot weaken conservation). Test `settlement_base_payout_stake_eq_s_rejected` (trace confirms it trips the guard). Also documented as a builder precondition. |
+| **RR-2** `mint == 0` untested | Medium (test gap, not a bug) | **Fixed (test)** | The settlement keystone `assets.is_zero(tx.mint)` had no negative test — a regression of that one line would silently re-enable an unbacked LP mint/burn folded into a settlement and pass CI. Closed by `settlement_stray_mint` (trace confirms it trips `expect assets.is_zero(tx.mint)`). |
+
+The re-review found **no** Critical/High/theft/unbacked-mint/lock path in the post-fix
+contracts. (It also confirmed the conservation core, injective binding, NFT uniqueness,
+fold guards, role classification, deadline handling, and `publish` authority all hold.)
 
 ## Required downstream follow-up (out of scope for the contract fixes)
 

@@ -1370,6 +1370,37 @@ test settlement_base_payout_dropped_stake() fail {
   )
 }
 
+// (self-inflicted liveness guard) an owner who pins `owner_stake == S` (the
+// settlement credential) would make their OWN payout `is_tagged(S)`, so it is
+// mis-classified as a phantom remainder and the settlement is rejected. The anchor
+// now rejects this explicitly in `check_one` (`order.owner_stake != Some(account)`)
+// rather than via the confusing `expect [] = remainders` failure. Attacker-
+// uncontrollable (owner_stake is the order's own datum); the order stays reclaimable.
+test settlement_base_payout_stake_eq_s_rejected() fail {
+  let stake = s()
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    build_payout(
+      Some(stake),
+      payout_at(base_addr(VerificationKey(owner_vkh), stake)),
+    ),
+  )
+}
+
+// (coverage, audit-machine M) the settlement keystone `assets.is_zero(tx.mint)` had
+// no negative test — a regression of that single line would silently re-enable an
+// unbacked LP mint/burn folded into a settlement. Pin it: a happy 1-order settlement
+// carrying ANY mint is rejected (the order/payout/pool all pass first, so this
+// isolates the mint guard).
+test settlement_stray_mint() fail {
+  let tx = Transaction {
+    ..build_payout(None, payout_at(plain(VerificationKey(owner_vkh)))),
+    mint: assets.from_asset(nft.policy, lp_name, 5),
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
 // PROPERTY (a): with the datum pinning a KEY stake, ANY script-stake payout (over
 // the whole hash space) is rejected — a Script cred can never equal the pinned VK
 // cred, so the pin bites for every sample (no need to dodge a hash collision).

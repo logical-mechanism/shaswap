@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 23 — 2026-06-04. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 24 — 2026-06-05. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -246,6 +246,21 @@
 > **byte-identical**. Nothing is on mainnet (`deployed: false`), so this is the correct
 > pre-freeze time — downstream `deployment.ts`/batcher config + any preprod instances
 > must regenerate the three new hashes. 152 tests green (137 unit + 15 property).**
+>
+> **Rev 24: post-fix adversarial self-review hardening (§5.2.1).** After Rev 23 an
+> in-house adversarial re-review (6 finder lenses → double verification) over the
+> *post-fix* tree independently confirmed H-01/M-01/L-02/L-03 correct with no liveness
+> regression, and surfaced two minor items, now closed: (RR-1, Low self-inflicted
+> liveness) an order pinning `owner_stake == S` makes its own payout `is_tagged(S)`, so
+> it is mis-classified as a phantom remainder and the settlement aborts at `expect [] =
+> remainders` — un-settleable but always reclaimable, and attacker-uncontrollable. Closed
+> by an **additive** guard `expect order.owner_stake != Some(account)` in
+> `clearing.check_one` (verify-don't-trust; purely additive, cannot weaken conservation),
+> + `settlement_base_payout_stake_eq_s_rejected`. (RR-2, Medium *test gap*) the settlement
+> keystone `assets.is_zero(tx.mint)` had no negative test; added `settlement_stray_mint`.
+> Only the **settlement** hash changes again (the guard is in `clearing.ak`); pool/
+> pool_mint/order/lp_intent unchanged from Rev 23. 154 tests green (139 unit + 15
+> property). No Critical/High/theft/unbacked-mint/lock path found in the re-review.**
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
