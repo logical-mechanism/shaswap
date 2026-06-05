@@ -66,6 +66,12 @@ vi.mock("@/lib/client/tx", () => ({
   withdrawLiquidity: (...a: unknown[]) => h.withdraw(...a),
   closePool: (...a: unknown[]) => h.close(...a),
 }));
+// The panel renders the per-pool LP-intent surface; mock its hook so it doesn't hit the network.
+// (LP_INTENTS_LIVE is false under the test config — preprod default, no lp_intent ref — so the
+// panel defaults to the Direct mode the existing add/remove tests exercise.)
+vi.mock("@/hooks/useLpIntents", () => ({
+  useLpIntents: () => ({ intents: [], loading: false, error: null, reload: () => {} }),
+}));
 
 import { LiquidityPanel } from "./LiquidityPanel";
 
@@ -100,6 +106,20 @@ describe("LiquidityPanel — add", () => {
     ).toBeInTheDocument();
     // an all-clear gate (baseReason null) falls through to the flow-specific label
     expect(screen.getByRole("button", { name: "Add liquidity" })).toBeEnabled();
+  });
+});
+
+describe("LiquidityPanel — mode toggle", () => {
+  it("defaults to Direct when the batcher path isn't live, and Batcher shows the rollout note", () => {
+    render(<LiquidityPanel pool={POOL} />);
+    // Both modes are offered; Direct is the default here (LP_INTENTS_LIVE false in test config),
+    // so the direct add form (an editable amount input) is present.
+    expect(screen.getByRole("button", { name: /Batcher/ })).toBeInTheDocument();
+    expect(editableInput()).toBeTruthy();
+
+    // Switching to Batcher surfaces the honest "rolling out" note (no dead-end form).
+    fireEvent.click(screen.getByRole("button", { name: /Batcher/ }));
+    expect(screen.getByText(/Batcher LP is rolling out/i)).toBeInTheDocument();
   });
 });
 

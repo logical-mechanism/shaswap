@@ -94,3 +94,38 @@ export interface WalletPosition {
   /** Whether the order allows partial fills (a partial leaves a reclaimable remainder). */
   partial: boolean;
 }
+
+/** Which LP action an intent requests. Mirrors `LpIntentAction` on-chain. */
+export type LpIntentKind = "deposit" | "withdraw";
+
+/**
+ * A user's open batcher-fulfilled LP intent (BLUEPRINT §5.1 Rev 22), decoded from a live
+ * UTXO at the `lp_intent` address. The amounts are display-ready (the ADA triple-role on a
+ * deposit is already disambiguated against the pool pair); the row layer derives pending/
+ * completed/reclaimed by merging this with the local activity log, like orders.
+ */
+export interface LpIntentPosition {
+  /** The intent's unique OutputReference, `${txHash}#${index}`. */
+  ref: string;
+  /** Pool NFT unit (policy+name) the intent binds. */
+  poolNft: string;
+  action: LpIntentKind;
+  /** The pool's pair (placeholders for an orphan intent whose pool isn't on-chain). */
+  tokenA: TokenInfo;
+  tokenB: TokenInfo;
+  /** Deposit: `asset_a` / `asset_b` being added (base units). Absent on a withdraw. */
+  depositA?: string;
+  depositB?: string;
+  /** Withdraw: LP tokens being redeemed (base units). Absent on a deposit. */
+  lp?: string;
+  /** Owner floor: min released `asset_a` (withdraw); 0 on a deposit. Base units. */
+  minA: string;
+  /** Owner floor: min released `asset_b` (withdraw); 0 on a deposit. */
+  minB: string;
+  /** Owner floor: min LP minted (deposit); 0 on a withdraw. */
+  minShares: string;
+  /** Solver tip (lovelace) — the only value the batcher keeps. */
+  tip: string;
+  /** Optional fulfillment deadline (POSIX ms), or null. */
+  deadline: string | null;
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { deserializeAddress } from "@meshsdk/core";
 import { useAddress, useWallet } from "@meshsdk/react";
@@ -16,8 +16,15 @@ import {
   type PoolStats,
   type PoolView,
 } from "@/lib/chain/lp";
+import { quoteLpDeposit, quoteLpWithdraw } from "@/lib/chain/lpQuote";
 import { toUserMessage } from "@/lib/client/errors";
-import { MIN_LIQ } from "@/lib/chain/deployment";
+import {
+  LP_INTENTS_LIVE,
+  MIN_LIQ,
+  RECOMMENDED_MIN_TIP,
+} from "@/lib/chain/deployment";
+import { recordLpIntent } from "@/lib/client/lpIntentActivity";
+import { nowMs } from "@/lib/client/now";
 import { formatUnits, toBaseUnits, truncate, withinDecimals } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
@@ -26,8 +33,11 @@ import { RefreshIcon } from "@/components/RefreshIcon";
 import { Confetti } from "@/components/Confetti";
 import { CollateralNote } from "@/components/CollateralNote";
 import { SlippageSettings } from "@/components/swap/SlippageSettings";
+import { PendingLpIntents } from "./PendingLpIntents";
 
 type Tab = "add" | "remove";
+/** LP write mode: batcher-fulfilled intent (default) or the direct, no-trust pool spend. */
+type Mode = "intent" | "direct";
 
 type TxState =
   | { kind: "idle" }
@@ -67,6 +77,13 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { view, stats, loading, refreshing, error, reload } = usePoolUtxo(pool.id);
 
   const [tab, setTab] = useState<Tab>("add");
+  // Default to the batcher-fulfilled INTENT path once it's live (it wins the per-block pool race
+  // on hot pools); until the path ships (pre-Phase-4) default to Direct so the default action is
+  // never a dead-end. Direct stays a one-click fallback for cold pools / no-trust mode either way.
+  const [mode, setMode] = useState<Mode>(LP_INTENTS_LIVE ? "intent" : "direct");
+  // Bumped after a successful post/reclaim so the per-pool intent surface reloads.
+  const [intentNonce, setIntentNonce] = useState(0);
+  const onPosted = useCallback(() => setIntentNonce((n) => n + 1), []);
   const [slippage, setSlippage] = useState(0.5);
   // A terminal "pool closed" outcome, lifted ABOVE the stats/view gate so the success
   // persists: closing burns the pool UTXO, so onDone()→reload() then resolves to null and
@@ -132,6 +149,16 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   }, [connected, wallet, stats]);
   const position = stats ? lpPositionValue(stats, lpBalance) : { a: 0n, b: 0n };
 
+  // Posting an LP intent is a plain payment (no script, no collateral) — so it gates on
+  // network only, NOT the collateral step in `baseReason` (which the direct/reclaim paths need).
+  const postReason = !connected
+    ? "Connect wallet"
+    : wrongNetwork
+      ? "Wrong network"
+      : !networkReady
+        ? "Checking network…"
+        : null;
+
   // Terminal: the pool was closed. Persist the success above everything else.
   if (closedTxHash) {
     return (
@@ -165,6 +192,8 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
 
   return (
     <div className="k-card w-full max-w-md p-5 sm:p-6">
+      <ModeToggle mode={mode} setMode={setMode} />
+
       <div className="mb-3 flex items-center justify-between px-1">
         <div className="flex rounded-full border border-border bg-surface-sunk p-1 text-sm">
           <TabButton active={tab === "add"} onClick={() => setTab("add")}>
@@ -214,7 +243,32 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
             firstDeposit={stats.firstDeposit}
           />
 
-          {tab === "add" ? (
+          {mode === "intent" ? (
+            tab === "add" ? (
+              <AddIntentForm
+                pool={pool}
+                stats={stats}
+                slippage={slippage}
+                wallet={wallet}
+                networkReady={networkReady}
+                postReason={postReason}
+                onSwitchToDirect={() => setMode("direct")}
+                onPosted={onPosted}
+              />
+            ) : (
+              <RemoveIntentForm
+                pool={pool}
+                stats={stats}
+                slippage={slippage}
+                lpBalance={lpBalance}
+                wallet={wallet}
+                networkReady={networkReady}
+                postReason={postReason}
+                onSwitchToDirect={() => setMode("direct")}
+                onPosted={onPosted}
+              />
+            )
+          ) : tab === "add" ? (
             <AddForm
               pool={pool}
               view={view}
@@ -242,6 +296,8 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
               onRecheckCollateral={recheckCollateral}
             />
           )}
+
+          <PendingLpIntents pool={pool} refreshKey={intentNonce} />
 
           {stats.firstDeposit && isCreator && (
             <CloseEmptyPool
@@ -712,6 +768,578 @@ function RemoveForm({
   );
 }
 
+// ---- LP mode toggle (batcher-fulfilled intent vs the direct pool spend) ----
+
+function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+  return (
+    <div className="mb-3">
+      <div className="flex rounded-2xl border border-border bg-surface-sunk p-1 text-xs">
+        <ModeButton active={mode === "intent"} onClick={() => setMode("intent")}>
+          <span className="font-bold">Batcher</span>
+          <span className="ml-1 text-[10px] opacity-70">recommended</span>
+        </ModeButton>
+        <ModeButton active={mode === "direct"} onClick={() => setMode("direct")}>
+          <span className="font-bold">Direct</span>
+          <span className="ml-1 text-[10px] opacity-70">advanced</span>
+        </ModeButton>
+      </div>
+      <p className="mt-1.5 px-1 text-[11px] text-muted">
+        {mode === "intent"
+          ? "A batcher fulfils your deposit/withdraw like an order, so it never loses the per-block race for the pool on a busy market. You post a tip; it’s the only thing the batcher keeps."
+          : "You spend the pool yourself in one tx (no batcher, no trust). Best on a quiet pool — on a busy one your tx can keep losing the pool to the batcher."}
+      </p>
+    </div>
+  );
+}
+
+function ModeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex-1 rounded-xl px-3 py-2 transition-colors ${
+        active ? "k-toggle-active" : "text-muted hover:text-accent"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ---- shared intent controls (tip + deadline) ----
+
+const DEADLINE_OPTIONS: { label: string; hours: number }[] = [
+  { label: "No deadline", hours: 0 },
+  { label: "1 hour", hours: 1 },
+  { label: "6 hours", hours: 6 },
+  { label: "24 hours", hours: 24 },
+];
+
+function IntentControls({
+  tipAda,
+  onTipChange,
+  tipLovelace,
+  deadlineHours,
+  onDeadlineChange,
+}: {
+  tipAda: string;
+  onTipChange: (v: string) => void;
+  tipLovelace: bigint;
+  deadlineHours: number;
+  onDeadlineChange: (h: number) => void;
+}) {
+  const lowTip = tipLovelace > 0n && tipLovelace < RECOMMENDED_MIN_TIP;
+  return (
+    <div className="mt-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="k-field p-3">
+          <div className="mb-1 px-1 text-xs text-muted">Batcher tip (₳)</div>
+          <input
+            inputMode="decimal"
+            value={tipAda}
+            placeholder="1.0"
+            onChange={(e) => {
+              if (withinDecimals(e.target.value, 6)) onTipChange(e.target.value);
+            }}
+            className="k-input text-lg font-bold tabular-nums text-ink"
+          />
+        </div>
+        <div className="k-field p-3">
+          <div className="mb-1 px-1 text-xs text-muted">Expires</div>
+          <select
+            value={deadlineHours}
+            onChange={(e) => onDeadlineChange(Number(e.target.value))}
+            className="k-input w-full bg-transparent text-sm font-medium text-ink"
+          >
+            {DEADLINE_OPTIONS.map((o) => (
+              <option key={o.hours} value={o.hours}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {lowTip && (
+        <p className="mt-1 px-1 text-[11px] text-warn">
+          A low tip may not be picked up — a batcher only fulfils intents whose tip covers its
+          fee. ~1 ₳ is a safe floor.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Convert a human ADA tip string to lovelace (0n if blank/invalid). */
+function tipToLovelace(tipAda: string): bigint {
+  const s = toBaseUnits(tipAda, 6);
+  return s ? toBig(s) : 0n;
+}
+
+/** Shown for the first deposit on the intent path — it must be seeded directly. */
+function FirstDepositIntentNote({ onSwitchToDirect }: { onSwitchToDirect: () => void }) {
+  return (
+    <div className="mt-3 k-note k-note-info text-xs">
+      <div className="flex items-center gap-2">
+        <Pip size={22} mood="thinking" />
+        <span className="font-bold">This pool needs its first deposit</span>
+      </div>
+      <p className="mt-1">
+        Seeding a brand-new pool sets its opening price, so it’s done directly (a batcher can’t
+        fulfil the very first deposit). Switch to Direct to seed it; once it has liquidity,
+        batcher deposits work here.
+      </p>
+      <button
+        type="button"
+        onClick={onSwitchToDirect}
+        className="k-btn-ghost mt-2 px-3 py-1.5 text-xs"
+      >
+        Switch to Direct to seed →
+      </button>
+    </div>
+  );
+}
+
+/** A small banner when the batcher LP path isn't live on this network yet (pre-Phase-4). */
+function NotLiveNote({ onSwitchToDirect }: { onSwitchToDirect: () => void }) {
+  return (
+    <div className="mt-3 k-note k-note-warn text-xs">
+      <div className="flex items-center gap-2">
+        <Pip size={22} mood="sleepy" />
+        <span className="font-bold">Batcher LP is rolling out</span>
+      </div>
+      <p className="mt-1">
+        Batcher-processed deposits/withdrawals launch with the next contract deploy. For now,
+        use the Direct path — it works on every pool.
+      </p>
+      <button
+        type="button"
+        onClick={onSwitchToDirect}
+        className="k-btn-ghost mt-2 px-3 py-1.5 text-xs"
+      >
+        Use Direct →
+      </button>
+    </div>
+  );
+}
+
+// ---- Add liquidity (intent / batcher) ----
+
+function AddIntentForm({
+  pool,
+  stats,
+  slippage,
+  wallet,
+  networkReady,
+  postReason,
+  onSwitchToDirect,
+  onPosted,
+}: {
+  pool: Pool;
+  stats: PoolStats;
+  slippage: number;
+  wallet: ReturnType<typeof useWallet>["wallet"];
+  networkReady: boolean;
+  postReason: string | null;
+  onSwitchToDirect: () => void;
+  onPosted: () => void;
+}) {
+  const [amountA, setAmountA] = useState("");
+  const [tipAda, setTipAda] = useState("1");
+  const [deadlineHours, setDeadlineHours] = useState(0);
+  const [state, setState] = useState<TxState>({ kind: "idle" });
+  const submitting = useRef(false);
+
+  const first = stats.firstDeposit;
+
+  // Pair Δb from Δa at the pool ratio (rounded up), exactly like the direct AddForm — a
+  // balanced deposit minimises the excess the batcher would ride back to the owner.
+  const sA = toBaseUnits(amountA, pool.tokenA.decimals);
+  const deltaA = sA ? toBig(sA) : 0n;
+  let deltaB = 0n;
+  if (!first && deltaA > 0n) {
+    try {
+      deltaB = pairDeltaB(stats, deltaA);
+    } catch {
+      deltaB = 0n;
+    }
+  }
+
+  const tipLovelace = tipToLovelace(tipAda);
+
+  let preview: { fairShares: bigint; minShares: bigint; error: string | null } | null = null;
+  if (!first && deltaA > 0n && deltaB > 0n) {
+    try {
+      const q = quoteLpDeposit(stats, deltaA, deltaB, slippage);
+      preview = { fairShares: q.fairShares, minShares: q.minShares, error: null };
+    } catch (e) {
+      preview = { fairShares: 0n, minShares: 0n, error: (e as Error).message };
+    }
+  }
+
+  const canSubmit =
+    LP_INTENTS_LIVE &&
+    networkReady &&
+    !first &&
+    !!preview &&
+    preview.error === null &&
+    preview.fairShares > 0n &&
+    tipLovelace > 0n &&
+    state.kind !== "busy";
+
+  async function submit() {
+    if (!canSubmit || submitting.current || !preview) return;
+    submitting.current = true;
+    setState({ kind: "busy" });
+    try {
+      const { postLpIntentDeposit } = await import("@/lib/client/tx");
+      const deadline =
+        deadlineHours > 0 ? BigInt(nowMs() + deadlineHours * 3_600_000) : null;
+      const res = await postLpIntentDeposit(wallet, {
+        pool,
+        amountA: deltaA,
+        amountB: deltaB,
+        minShares: preview.minShares,
+        tip: tipLovelace,
+        deadline,
+      });
+      recordLpIntent(res.owner, {
+        ref: res.ref,
+        txHash: res.txHash,
+        poolNft: pool.id,
+        action: "deposit",
+        aTicker: pool.tokenA.ticker,
+        aDecimals: pool.tokenA.decimals,
+        bTicker: pool.tokenB.ticker,
+        bDecimals: pool.tokenB.decimals,
+        depositA: deltaA.toString(),
+        depositB: deltaB.toString(),
+        tip: tipLovelace.toString(),
+        ts: nowMs(),
+      });
+      setState({ kind: "success", hash: res.txHash });
+      setAmountA("");
+      onPosted();
+    } catch (e) {
+      setState({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
+    }
+  }
+
+  if (first) return <FirstDepositIntentNote onSwitchToDirect={onSwitchToDirect} />;
+  if (!LP_INTENTS_LIVE) return <NotLiveNote onSwitchToDirect={onSwitchToDirect} />;
+
+  const label =
+    postReason ??
+    (deltaA <= 0n
+      ? "Enter an amount"
+      : tipLovelace <= 0n
+        ? "Set a batcher tip"
+        : preview?.error
+          ? "Can’t add that amount"
+          : state.kind === "busy"
+            ? "Posting…"
+            : "Add liquidity (batcher)");
+
+  return (
+    <div className="mt-3">
+      <AmountField
+        label={`${pool.tokenA.ticker} to add`}
+        ticker={pool.tokenA.ticker}
+        value={amountA}
+        editable
+        decimals={pool.tokenA.decimals}
+        onChange={(v) => {
+          setAmountA(v);
+          if (state.kind !== "idle") setState({ kind: "idle" });
+        }}
+      />
+
+      <div className="my-2 text-center text-muted">+</div>
+
+      <AmountField
+        label={`${pool.tokenB.ticker} (paired at pool ratio)`}
+        ticker={pool.tokenB.ticker}
+        value={deltaB > 0n ? formatUnits(deltaB.toString(), pool.tokenB.decimals) : ""}
+        editable={false}
+        decimals={pool.tokenB.decimals}
+        onChange={() => {}}
+      />
+
+      <IntentControls
+        tipAda={tipAda}
+        onTipChange={(v) => {
+          setTipAda(v);
+          if (state.kind !== "idle") setState({ kind: "idle" });
+        }}
+        tipLovelace={tipLovelace}
+        deadlineHours={deadlineHours}
+        onDeadlineChange={setDeadlineHours}
+      />
+
+      <div className="mt-3 space-y-1.5 px-1 text-xs text-muted">
+        <Row label="LP you receive">
+          <span className="tabular-nums">
+            {preview && preview.error === null && preview.fairShares > 0n
+              ? `≈ ${preview.fairShares.toLocaleString()} LP`
+              : "—"}
+          </span>
+        </Row>
+        <Row label="At least (slippage floor)">
+          <span className="tabular-nums">
+            {preview && preview.error === null && preview.minShares > 0n
+              ? `${preview.minShares.toLocaleString()} LP`
+              : "—"}
+          </span>
+        </Row>
+        <Row label="Max slippage">
+          <span className="tabular-nums">{slippage.toFixed(1)}%</span>
+        </Row>
+      </div>
+
+      <p aria-live="polite" className="sr-only">
+        {preview && preview.error === null && preview.fairShares > 0n
+          ? `LP you receive ≈ ${preview.fairShares.toLocaleString()}; floor ${preview.minShares.toLocaleString()} LP.`
+          : ""}
+      </p>
+
+      {deltaA > 0n && deltaB > 0n && preview?.error && (
+        <div className="k-note k-note-warn mt-3 text-xs">
+          {depositErrorMessage(preview.error)}
+        </div>
+      )}
+
+      <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
+      <ResultBanner state={state} verb="Deposit intent posted" intent />
+
+      <PipOverlay show={state.kind === "busy"} title="Posting your deposit intent…" />
+    </div>
+  );
+}
+
+// ---- Remove liquidity (intent / batcher) ----
+
+function RemoveIntentForm({
+  pool,
+  stats,
+  slippage,
+  lpBalance,
+  wallet,
+  networkReady,
+  postReason,
+  onSwitchToDirect,
+  onPosted,
+}: {
+  pool: Pool;
+  stats: PoolStats;
+  slippage: number;
+  lpBalance: bigint;
+  wallet: ReturnType<typeof useWallet>["wallet"];
+  networkReady: boolean;
+  postReason: string | null;
+  onSwitchToDirect: () => void;
+  onPosted: () => void;
+}) {
+  const [lpInput, setLpInput] = useState("");
+  const [tipAda, setTipAda] = useState("1");
+  const [deadlineHours, setDeadlineHours] = useState(0);
+  const [state, setState] = useState<TxState>({ kind: "idle" });
+  const submitting = useRef(false);
+
+  // Max LP: your balance, capped so circulating never drops below the locked min_liq.
+  const maxBurnable =
+    stats.circ > MIN_LIQ
+      ? lpBalance < stats.circ - MIN_LIQ
+        ? lpBalance
+        : stats.circ - MIN_LIQ
+      : 0n;
+
+  const lpToBurn = /^\d+$/.test(lpInput.trim()) ? toBig(lpInput.trim()) : 0n;
+  const tipLovelace = tipToLovelace(tipAda);
+
+  let preview: {
+    fairA: bigint;
+    fairB: bigint;
+    minA: bigint;
+    minB: bigint;
+    error: string | null;
+  } | null = null;
+  if (lpToBurn > 0n) {
+    try {
+      const q = quoteLpWithdraw(stats, lpToBurn, slippage);
+      preview = { ...q, error: null };
+    } catch (e) {
+      preview = { fairA: 0n, fairB: 0n, minA: 0n, minB: 0n, error: (e as Error).message };
+    }
+  }
+
+  const overBalance = lpToBurn > lpBalance;
+  const canSubmit =
+    LP_INTENTS_LIVE &&
+    networkReady &&
+    !!preview &&
+    preview.error === null &&
+    !overBalance &&
+    tipLovelace > 0n &&
+    state.kind !== "busy";
+
+  async function submit() {
+    if (!canSubmit || submitting.current || !preview) return;
+    submitting.current = true;
+    setState({ kind: "busy" });
+    try {
+      const { postLpIntentWithdraw } = await import("@/lib/client/tx");
+      const deadline =
+        deadlineHours > 0 ? BigInt(nowMs() + deadlineHours * 3_600_000) : null;
+      const res = await postLpIntentWithdraw(wallet, {
+        pool,
+        lpAmount: lpToBurn,
+        minA: preview.minA,
+        minB: preview.minB,
+        tip: tipLovelace,
+        deadline,
+      });
+      recordLpIntent(res.owner, {
+        ref: res.ref,
+        txHash: res.txHash,
+        poolNft: pool.id,
+        action: "withdraw",
+        aTicker: pool.tokenA.ticker,
+        aDecimals: pool.tokenA.decimals,
+        bTicker: pool.tokenB.ticker,
+        bDecimals: pool.tokenB.decimals,
+        lp: lpToBurn.toString(),
+        tip: tipLovelace.toString(),
+        ts: nowMs(),
+      });
+      setState({ kind: "success", hash: res.txHash });
+      setLpInput("");
+      onPosted();
+    } catch (e) {
+      setState({ kind: "error", message: toUserMessage(e) });
+    } finally {
+      submitting.current = false;
+    }
+  }
+
+  if (!LP_INTENTS_LIVE) return <NotLiveNote onSwitchToDirect={onSwitchToDirect} />;
+
+  const label =
+    postReason ??
+    (lpToBurn <= 0n
+      ? "Enter LP amount"
+      : overBalance
+        ? "More than your LP"
+        : tipLovelace <= 0n
+          ? "Set a batcher tip"
+          : preview?.error
+            ? "Can’t withdraw that amount"
+            : state.kind === "busy"
+              ? "Posting…"
+              : "Remove liquidity (batcher)");
+
+  return (
+    <div className="mt-3">
+      <div className="k-field p-3.5">
+        <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted">
+          <span>LP to redeem</span>
+          <button
+            type="button"
+            onClick={() => setLpInput(maxBurnable.toString())}
+            className="text-accent hover:underline"
+          >
+            Max {maxBurnable.toLocaleString()}
+          </button>
+        </div>
+        <input
+          inputMode="numeric"
+          value={lpInput}
+          placeholder="0"
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "" || /^\d*$/.test(v)) {
+              setLpInput(v);
+              if (state.kind !== "idle") setState({ kind: "idle" });
+            }
+          }}
+          className="k-input text-3xl font-extrabold tabular-nums text-ink"
+        />
+      </div>
+
+      <IntentControls
+        tipAda={tipAda}
+        onTipChange={(v) => {
+          setTipAda(v);
+          if (state.kind !== "idle") setState({ kind: "idle" });
+        }}
+        tipLovelace={tipLovelace}
+        deadlineHours={deadlineHours}
+        onDeadlineChange={setDeadlineHours}
+      />
+
+      <div className="mt-3 space-y-1.5 px-1 text-xs text-muted">
+        <Row label={`${pool.tokenA.ticker} you receive`}>
+          <span className="tabular-nums">
+            {preview && preview.error === null
+              ? `≈ ${formatUnits(preview.fairA.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker}`
+              : "—"}
+          </span>
+        </Row>
+        <Row label={`${pool.tokenB.ticker} you receive`}>
+          <span className="tabular-nums">
+            {preview && preview.error === null
+              ? `≈ ${formatUnits(preview.fairB.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker}`
+              : "—"}
+          </span>
+        </Row>
+        <Row label="At least (slippage floor)">
+          <span className="tabular-nums">
+            {preview && preview.error === null
+              ? `${formatUnits(preview.minA.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} + ${formatUnits(preview.minB.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker}`
+              : "—"}
+          </span>
+        </Row>
+        <Row label="Max slippage">
+          <span className="tabular-nums">{slippage.toFixed(1)}%</span>
+        </Row>
+      </div>
+
+      <p aria-live="polite" className="sr-only">
+        {preview && preview.error === null
+          ? `You receive ≈ ${formatUnits(preview.fairA.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} plus ${formatUnits(preview.fairB.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker}; floor ${formatUnits(preview.minA.toString(), pool.tokenA.decimals)} ${pool.tokenA.ticker} and ${formatUnits(preview.minB.toString(), pool.tokenB.decimals)} ${pool.tokenB.ticker}.`
+          : ""}
+      </p>
+
+      {lpToBurn > 0n && !overBalance && preview?.error && (
+        <div className="k-note k-note-warn mt-3 text-xs">
+          {withdrawErrorMessage(preview.error)}
+        </div>
+      )}
+
+      {/* UX honesty (§13): a withdraw intent has no reclaim-to-underlying backstop. */}
+      <div className="k-note k-note-info mt-3 text-[11px]">
+        If no batcher fulfils it, you can reclaim the intent anytime — but a withdraw reclaim
+        returns your <strong>LP tokens</strong>, not the underlying (converting LP back to
+        reserves is itself a pool spend). On a quiet pool, Direct withdraws to underlying in one tx.
+      </div>
+
+      <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
+      <ResultBanner state={state} verb="Withdraw intent posted" intent />
+
+      <PipOverlay show={state.kind === "busy"} title="Posting your withdraw intent…" />
+    </div>
+  );
+}
+
 // ---- Close empty pool (creator-only, never-seeded) ----
 
 function CloseEmptyPool({
@@ -1009,7 +1637,16 @@ function SubmitButton({
   );
 }
 
-function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
+function ResultBanner({
+  state,
+  verb,
+  intent,
+}: {
+  state: TxState;
+  verb: string;
+  /** An intent post (vs a direct on-chain action) — different follow-up copy. */
+  intent?: boolean;
+}) {
   if (state.kind === "success") {
     return (
       <div className="k-note k-note-success relative mt-3 text-xs">
@@ -1019,7 +1656,9 @@ function ResultBanner({ state, verb }: { state: TxState; verb: string }) {
           <div className="font-bold text-success">{verb} ✓</div>
         </div>
         <p className="mt-0.5 text-muted">
-          Settling in (~20–40s). Hit ↻ above to refresh your position once it lands.
+          {intent
+            ? "A batcher will fulfil it shortly. It appears under “Your LP intents” below — you can reclaim it anytime until then."
+            : "Settling in (~20–40s). Hit ↻ above to refresh your position once it lands."}
         </p>
         <a
           href={explorerTxUrl(state.hash)}
