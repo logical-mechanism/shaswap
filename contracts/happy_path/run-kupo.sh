@@ -8,6 +8,9 @@
 #     are both stake-tagged with S (BLUEPRINT §5.4), so this one pattern finds
 #     both. Owner payouts now carry the owner's chosen stake credential (a base
 #     address, Rev 21) — intentionally NOT matched (they're not protocol UTXOs).
+#   - LP_INTENT_ADDR — the lp_intent ENTERPRISE address (stake = None, NEVER S-tagged,
+#     so `*/<S>` can't see it; Rev 22). The batcher needs this to discover + fulfil LP
+#     deposit/withdraw intents. Required for the LP-intent path to work operationally.
 #   - SOLVER_ADDR   — the solver's own wallet, for funding/collateral selection.
 #
 # Stale-index auto-cleanup (the redeploy problem): Kupo refuses to reuse a workdir
@@ -65,5 +68,6 @@ exec "$KUPO" \
   --workdir "$KUPO_WORKDIR" \
   --since "$KUPO_SINCE" \
   --match "*/$S_HASH" \
+  --match "$LP_INTENT_ADDR" \
   --match "$SOLVER_ADDR" \
   --defer-db-indexes
