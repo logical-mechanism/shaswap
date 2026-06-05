@@ -33,6 +33,29 @@ fn pos(x: Int) -> Int {
   }
 }
 
+/// Uniswap-v2 fee-on-input swap output (BLUEPRINT §5.2.7, Rev 25): the MAXIMUM
+/// `asset_out` the pool may pay for `dx` of `asset_in`, i.e. the amount that lands the
+/// reserves exactly on the constant-product `k`-edge.
+///
+/// `dy = floor( res_out · dx · γ / (res_in · fee_den + dx · γ) )`, `γ = fee_den − fee_num`.
+///
+/// Integer floor division (no floats, Principle 4); `num ≥ 0` and (for `dx > 0`,
+/// `res_in > 0`, `fee_den > 0`) `den > 0`, so `/` is exact floor. Bit-exact with the
+/// batcher's `curve.swap_out` and with the `k`-check edge (paying `dy` passes
+/// `pool_settle`'s `k`-check, `dy + 1` fails). This is the fair amount the price pin
+/// forces the pool to pay **down to** (within the §`pool_settle` dust band).
+/// Public so tests and the off-chain↔on-chain parity harness can call the exact curve.
+pub fn get_amount_out(
+  dx: Int,
+  res_in: Int,
+  res_out: Int,
+  fee_num: Int,
+  fee_den: Int,
+) -> Int {
+  let g = fee_den - fee_num
+  res_out * dx * g / ( res_in * fee_den + dx * g )
+}
+
 /// Order `Settle`: defer to settlement, but self-enforce that our own input is
 /// tagged with `s` so we can only ride in a settlement that will enumerate us
 /// (closes the input-smuggle path, §8).
@@ -97,13 +120,48 @@ pub fn pool_settle(
   expect d.fee_den > 0
   expect d.fee_num >= 0
   expect d.fee_num < d.fee_den
-  let in_a = pos(res_a_out - res_a_in)
-  let in_b = pos(res_b_out - res_b_in)
+  let net_a = res_a_out - res_a_in
+  let net_b = res_b_out - res_b_in
+  let in_a = pos(net_a)
+  let in_b = pos(net_b)
   // effective reserve on each side, ×fee_den: subtract the fee on its net input.
   let eff_a = res_a_out * d.fee_den - d.fee_num * in_a
   let eff_b = res_b_out * d.fee_den - d.fee_num * in_b
-  // (eff_a · eff_b) ≥ k_in, scaled by fee_den² to stay integer-exact (no floats).
-  eff_a * eff_b >= res_a_in * res_b_in * d.fee_den * d.fee_den
+  // (eff_a · eff_b) ≥ k_in, scaled by fee_den² to stay integer-exact (no floats). This
+  // caps the price interval from ABOVE — the pool can never pay out so much that k drops.
+  let k_ok = eff_a * eff_b >= res_a_in * res_b_in * d.fee_den * d.fee_den
+
+  // (Rev 25) Two-sided price pin — close the floor→fair corridor (§5.2.7,
+  // `spec/clearing-price-pin.md`). The `k`-check alone is one-sided: underpaying a trader
+  // RAISES k, so it never blocks a low price. Here we add the missing LOWER edge — the pool
+  // must release the FULL constant-product curve amount for the net residual it absorbed.
+  // Because the residual trades at the single uniform price (`net_b = −net_a·p`, clearing.ak),
+  // pinning the pool's payout to the curve forces `p` to the fair curve-execution price for
+  // EVERY order in the batch (recovers the §5.2.4 best-response for directional flow).
+  //
+  // Dust band: the anchor floors each order's `received = floor(f·num/den)`, so the
+  // aggregate payout lands up to `n_orders` sub-units below the single-floored
+  // `get_amount_out`. `eps = n_orders` (S-tagged inputs minus the pool) is an ABSOLUTE,
+  // batch-size-derived bound — never a fraction of k — so any residual underpayment is
+  // ≤ n_orders sub-units of the paid asset (vs the unbounded corridor it closes). A solver
+  // can always pick `p = get_amount_out(net_a)/net_a` and clear within the band (liveness).
+  let n_orders =
+    list.length(list.filter(tx.inputs, fn(i) { utils.is_tagged(i.output, s) })) - 1
+  let pin_ok =
+    if net_a > 0 && net_b < 0 {
+      // pool took asset_a, paid asset_b: paid-out ≥ fair − dust
+      -net_b >= get_amount_out(net_a, res_a_in, res_b_in, d.fee_num, d.fee_den) - n_orders
+    } else if net_b > 0 && net_a < 0 {
+      // pool took asset_b, paid asset_a (symmetric)
+      -net_a >= get_amount_out(net_b, res_b_in, res_a_in, d.fee_num, d.fee_den) - n_orders
+    } else {
+      // No residual paid out: a perfectly-netted batch (net = 0 — the documented
+      // trader↔trader residue, spec §5) or a donation (both sides ≥ 0, only raises k —
+      // `k_ok` allows it). A both-negative drain (pool pays both with no input) is rejected
+      // by `k_ok`. Nothing to pin in these cases.
+      True
+    }
+  k_ok? && pin_ok?
 }
 
 /// Pool `ClosePool`: tear down a created-but-never-seeded pool. Only valid when
