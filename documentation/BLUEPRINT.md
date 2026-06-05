@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 21 — 2026-06-01. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 22 — 2026-06-04. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -177,6 +177,34 @@
 > `a57de7a9…`, order `801c7a4c…`, pool `4427ef84…`, pool_mint `3d36f796…`); a live settlement
 > paid the owner at a **base** address that the owner key then spent. Resolves the
 > pre-release enterprise-payout limitation.**
+> **Rev 22: batcher-fulfilled LP intents (§5.1/§5.4/§13) — LP exit under pool contention.**
+> Adds an **LP-intent** path so deposits/withdrawals can be fulfilled by the permissionless
+> batcher *like orders*, fixing the structural gap that the direct `LpAction` path is
+> mutually exclusive with a settlement and so must **win a race for the pool UTXO every
+> block** on a hot pool (a human-built withdraw is `BadInputsUTxO` and rebuilds forever).
+> A new **`S`-parameterised `lp_intent` validator** (a fifth, additive immutable hash) pins
+> the owner payout **and the full pool output** exactly — released reserves (withdraw) or
+> minted shares (deposit) go to the owner, the batcher keeps **only the tip** — while the
+> **unchanged** pool `LpAction` validator still caps over-release/over-mint (existing-LP
+> protection). Fulfillment is a **separate, self-contained tx, never folded into a
+> settlement** (principle: chained, not folded), enforced by a `!withdrawal_present(S)`
+> guard (so the pool-spend can only be `LpAction` — which is why the validator is
+> parameterised by `S`); LP-intent UTXOs sit at a **non-`S` (enterprise) address** so the
+> anchor never enumerates them. **A pre-lock adversarial review (7-lens multi-agent sweep)
+> found and we fixed a CRITICAL settlement-fold over-mint** — a non-`S`-tagged pool spent
+> via `PoolSettle` (which the anchor never enumerates, and whose `k`-check doesn't pin held
+> LP) bypassed per-share backing, letting a deposit fulfill mint unbacked shares — **closed
+> by the `!withdrawal_present(S)` guard**; plus a low-severity overhead/incidental-asset
+> sweep, **closed by the full pool-output pin** (+4 regression tests). The
+> settlement/order/pool/pool_mint hashes are **byte-identical** (verified via the
+> plutus.json reproducibility guard); only a new `lp_intent` hash appears. The direct path
+> is kept as the cold-pool/no-trust fallback. **Honest residual
+> (§13.11):** a withdraw-intent reclaim returns **LP tokens, not underlying** — hot-pool LP
+> exit has the same tipped-solver liveness as orders, strictly weaker than order reclaim,
+> and inherent (withdrawal mutates shared pool state). Spec:
+> `documentation/spec/lp-intents.md`. Mirrored in the batcher (decode/discovery/LP-math/
+> fulfillment tx/chaining) and the app (intent builders + LP UI; intent default with the
+> direct path as advanced fallback).**
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -354,6 +382,31 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
 4. **Settlement transaction** — spends one Pool UTXO + a set of Order UTXOs;
    produces the new Pool UTXO, one **uniquely-bound** owner-output per filled order,
    remainder UTXOs for partial fills, and the solver's ADA reward output.
+
+5. **LP-intent UTXO** — a deposit or withdrawal *intent*, fulfilled by the permissionless
+   batcher like an order (Rev 22, [`spec/lp-intents.md`](spec/lp-intents.md)). It addresses
+   the structural gap that the direct LP path (Pool UTXO path (b)) is a pool-spend
+   *mutually exclusive* with a settlement, so on a hot pool it must win a race for the pool
+   UTXO every block.
+   - *Datum (`LpIntentDatum`):* `owner` (VK) + `owner_stake` (payout stake half, as for
+     orders), the target `pool_nft` (consent, bound by NFT), `action` (`LpDeposit` |
+     `LpWithdraw`), the owner floors `min_a`/`min_b` (withdraw) / `min_shares` (deposit),
+     the ADA `tip`, and an optional `deadline`.
+   - *Address:* payment credential = the new **`S`-parameterised `lp_intent` validator**;
+     **stake credential = `None`** (enterprise) — deliberately **NOT** the settlement tag
+     `S`, so the once-per-tx anchor never enumerates it (it is fulfilled in its own tx, not
+     inside a settlement — §5.4). (The validator is parameterised by `S` only so `Fulfill`
+     can assert `!withdrawal_present(S)`; the UTXO's stake credential is still `None`.)
+   - *Spend paths:* (a) **owner reclaim** on signature alone (returns the intent — LP
+     tokens for a withdraw, A+B for a deposit); (b) **batcher fulfillment** (`Fulfill`) — a
+     mini-settlement for one LP action: the pool is spent via `LpAction` (caps
+     over-release/over-mint, protecting existing LPs) and the `lp_intent` validator pins
+     the owner payout exactly (released reserves / minted shares to the owner, **tip only**
+     to the batcher). The **first deposit is not** intent-fulfillable (the creator seeds
+     directly via the direct path).
+   - **Honest residual (§13.11):** withdraw-reclaim returns **LP tokens, not underlying** —
+     converting LP to liquidity mutates shared pool state, so hot-pool LP *exit* has the
+     same tipped-solver liveness as orders, strictly weaker than order reclaim.
 
 ### 5.2 The settlement validation rules
 
@@ -572,6 +625,18 @@ witness — the validator checks algebra, never solves (Principle 4).
   and accounts for each** (exactly one pool by NFT; all others as orders). Otherwise
   an unvalidated order could ride along inside a settlement. This is a hard invariant
   of the design, and the stake-tag enumeration is how it is met.
+- **LP-intents are verified in their own tx, never via the anchor (Rev 22, §5.1).** A
+  batcher-fulfilled deposit/withdraw is a self-contained tx: the pool is spent via
+  `LpAction` and the **`S`-parameterised `lp_intent` validator** pins the owner payout (and
+  the full pool output), so the batcher keeps only the tip. It is **never folded into a
+  settlement** (chained, not folded), enforced by a `!withdrawal_present(S)` guard that
+  forces the pool-spend to be `LpAction` — closing a settlement-fold (found in pre-lock
+  review) where a non-`S`-tagged pool spent via `PoolSettle` (which the anchor never
+  enumerates, and whose `k`-check doesn't pin held LP) would let a deposit mint unbacked
+  shares. `lp_intent` thus needs `S` but not the pool hash, and its UTXOs sit at a non-`S`
+  (enterprise) address the anchor never enumerates. This keeps the anchor's clean
+  conservation and `k`-direction invariant untouched while routing LP exit around pool
+  contention. Spec: [`spec/lp-intents.md`](spec/lp-intents.md).
 
 ### 5.5 Sharding (SAMM) — scaling lever (and its price-dispersion cost)
 
@@ -846,6 +911,20 @@ strictly rejected (no `True` branch).
     external pair (`asset_a ≠ asset_b`, neither side under `policy_id`), and a valid fee
     (`0 ≤ fee_num < fee_den`, `fee_den > 0`) — so a misconfigured pool can't be created
     rather than silently bricking later. (+1 test, 73 green.)
+11. **Hot-pool LP exit has no reclaim-to-underlying backstop (Rev 22).** The new LP-intent
+    path ([`spec/lp-intents.md`](spec/lp-intents.md)) lets the permissionless batcher fulfil
+    deposits/withdrawals so LPs are not stuck racing the batcher for the pool UTXO every
+    block. But unlike an order — whose reclaim returns the exact asset locked, since an
+    order never mutates shared state — a **withdraw-intent reclaim can only return the LP
+    tokens, not the underlying liquidity**, because converting LP to underlying *is* a pool
+    mutation. So hot-pool LP exit reduces to the **same tipped-permissionless-solver
+    liveness as orders** (you always get your LP back on signature; converting it still
+    needs some solver to fulfil the intent, or the direct path to win a quiet block) —
+    consistent with the design but **strictly weaker than order reclaim**, and **inherent**
+    (not an implementation gap). Mitigations: a tight `min_a`/`min_b` floor, the standing
+    tip incentive (the batcher's take is **tip-only**, so it gains nothing by
+    under-/non-fulfilling), and the always-available direct path. Documented, not
+    engineered away.
 
 ---
 
