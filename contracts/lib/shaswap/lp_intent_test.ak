@@ -326,6 +326,26 @@ test withdraw_over_release() fail {
   both(tx, wd_datum(0, 0, None))
 }
 
+// (Rev 25) UNDER-release corridor: the batcher releases only 19M tok for a 100k burn that
+// backs 20M, banking the 1M to remaining LPs. The owner floor (min=0), the owner pin (owner
+// gets the under-released 19M), and the pool backing ALL pass — but the exact-proportional
+// pin (`released_a == res_a_in·l/circ_in = 20M`) REJECTS it. This closes the LP corridor.
+test withdraw_under_release() fail {
+  let tx = fx(
+    wd_intent(100_000),
+    pool_in(200_000_000, 100_000_000, total_lp - 1_000_000),
+    [
+      pool_out(181_000_000, 90_000_000, total_lp - 900_000),
+      payout(
+        assets.from_lovelace(lp_intent_min_ada + 10_000_000)
+          |> assets.add(tok.policy, tok.name, 19_000_000),
+        None,
+      ),
+    ],
+  )
+  both(tx, wd_datum(0, 0, None))
+}
+
 // the burned LP does not fully enter the pool's held balance (held grows by 90k, not
 // the 100k the intent holds — batcher pocketed 10k LP): rejected by `held_out − held_in == L`.
 test withdraw_lp_pocketed() fail {
@@ -564,6 +584,27 @@ test deposit_over_mint() fail {
       payout(
         assets.from_lovelace(lp_intent_min_ada)
           |> assets.add(nft.policy, lp_name, 200_000),
+        None,
+      ),
+    ],
+  )
+  both(tx, dep_datum(0, None))
+}
+
+// (Rev 25) UNDER-credit corridor: same 20M/10M deposit that backs 100k shares, but the
+// batcher credits only 90k, banking the share-room to remaining LPs. The owner floor (min=0),
+// the owner pin (owner gets the under-credited 90k), and backing ALL pass — but the
+// exact-proportional pin (`shares == min(floor(dep_a·circ/res_a), floor(dep_b·circ/res_b)) =
+// 100k`) REJECTS it. This closes the LP corridor on the deposit side.
+test deposit_under_credit() fail {
+  let tx = fx(
+    dep_intent(20_000_000, 10_000_000),
+    pool_in(200_000_000, 100_000_000, total_lp - 1_000_000),
+    [
+      pool_out(220_000_000, 110_000_000, total_lp - 1_090_000),
+      payout(
+        assets.from_lovelace(lp_intent_min_ada)
+          |> assets.add(nft.policy, lp_name, 90_000),
         None,
       ),
     ],

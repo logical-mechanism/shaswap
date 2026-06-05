@@ -154,6 +154,15 @@ pub fn fulfill(
       expect released_b >= d.min_b
       expect released_a >= 0
       expect released_b >= 0
+      // (Rev 25) exact-proportional pin — close the LP-intent corridor (spec
+      // `clearing-price-pin.md` §8, the LP analog of the swap price pin). The released
+      // amount must EQUAL the per-share backing (`floor(res_in·l/circ_in)`), which is the
+      // MAX the pool's `LpAction` already allows — so the batcher cannot under-release and
+      // bank the surplus to remaining LPs. `floor` ≤ exact, so this always satisfies the
+      // pool backing check (no liveness loss). `min_a/min_b` become the owner's abort floor.
+      let circ_in = total_lp - held_in
+      expect released_a == res_a_in * l / circ_in
+      expect released_b == res_b_in * l / circ_in
       // pin the pool output's FULL value (mirrors `clearing.ak`'s pool pin): `pool_in`
       // shifted by exactly −released on each reserve and +L held — so the batcher can't
       // sweep the pool's overhead lovelace or any incidental/airdropped asset. This makes
@@ -192,6 +201,19 @@ pub fn fulfill(
       let dep_b = res_b_out - res_b_in
       expect dep_a >= 0
       expect dep_b >= 0
+      // (Rev 25) exact-proportional pin — close the LP-intent corridor (spec §8). Shares
+      // minted == the per-share backing MAX for the deposited amounts:
+      // `min(floor(dep_a·circ_in/res_a_in), floor(dep_b·circ_in/res_b_in))` — so the batcher
+      // cannot under-credit shares and bank the surplus to remaining LPs. Each term ≤ its
+      // real per-share value, so `min` always satisfies the pool backing check. `min_shares`
+      // becomes the owner's abort floor.
+      let sa = dep_a * circ_in / res_a_in
+      let sb = dep_b * circ_in / res_b_in
+      expect shares == if sa < sb {
+        sa
+      } else {
+        sb
+      }
       // pin the pool output's FULL value (as withdraw, above): `pool_in` shifted by +dep
       // on each reserve and −shares held, nothing else — no overhead/incidental sweep.
       let pool_exp = pool_in.output.value

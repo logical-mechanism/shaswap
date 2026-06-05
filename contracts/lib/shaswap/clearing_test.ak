@@ -463,6 +463,23 @@ test pool_settle_corridor() fail {
   spend.pool_settle(build(1), pool_ref(), pool_datum(), s())
 }
 
+// (Rev 25) dust band — build(1) has n_orders=1, so the pin tolerates ≤1 sub-unit of
+// per-order flooring: paying fair−1 (996_996) still clears (a legitimate honest-rounding
+// solve must never be rejected).
+test pool_settle_dust_ok() {
+  let fair = spend.get_amount_out(sell, pool_tok_in, pool_ada_in - pool_min_ada, 3, 1000)
+  let tx = build1(owner_out_ada, 0, pool_ada_in - ( fair - 1 ), pool_tok_in + sell, True)
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// (Rev 25) one sub-unit past the band — paying fair−2 (996_995) at n_orders=1 underpays
+// beyond the dust tolerance and is REJECTED. Pins the band tight (ungameable to ≤ n_orders).
+test pool_settle_dust_reject() fail {
+  let fair = spend.get_amount_out(sell, pool_tok_in, pool_ada_in - pool_min_ada, 3, 1000)
+  let tx = build1(owner_out_ada, 0, pool_ada_in - ( fair - 2 ), pool_tok_in + sell, True)
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
 // k decreases (pool pays out ADA without gaining token): rejected.
 test pool_settle_k_drop() fail {
   let tx = build1(owner_out_ada, 0, pool_ada_in - 2_000_000, pool_tok_in, True)
@@ -1752,6 +1769,55 @@ test pool_fee_no_residual() {
     tt_pool_datum(),
     s(),
   )
+}
+
+// ---- (Rev 25) two-sided price pin: boundary property (the make-or-break gate) --------
+// For any non-degenerate token/token pool and residual `dx` (n_orders=0 via fee_settle_tx,
+// so the dust band is ZERO), the pin places the pool's payout EXACTLY at the fair curve
+// amount: paying `fair` passes; paying `fair − 1` (the corridor — underpay the trader) is
+// REJECTED by the new lower floor; paying `fair + 1` (overpay) is REJECTED by the k-check.
+// Holding across the whole fuzzed space proves the corridor is closed to ≤ the dust band,
+// AND that get_amount_out is exactly the k-edge (pays_fair must also satisfy k).
+fn pin_params() -> Fuzzer<(Int, Int, Int)> {
+  fuzz.map3(
+    fuzz.int_between(1_000_000_000, 1_000_000_000_000),
+    fuzz.int_between(1_000_000_000, 1_000_000_000_000),
+    fuzz.int_between(1_000_000, 100_000_000),
+    fn(ra, rb, dx) { (ra, rb, dx) },
+  )
+}
+
+test prop_pin_fair_boundary((ra, rb, dx) via pin_params()) {
+  let fair = spend.get_amount_out(dx, ra, rb, 3, 1000)
+  let pays_fair =
+    spend.pool_settle(
+      fee_settle_tx(ra, rb, ra + dx, rb - fair),
+      pool_ref(),
+      tt_pool_datum(),
+      s(),
+    )
+  // underpay by 1 (-net_b = fair − 1): the new lower floor must reject it.
+  let underpay =
+    spend.pool_settle(
+      fee_settle_tx(ra, rb, ra + dx, rb - fair + 1),
+      pool_ref(),
+      tt_pool_datum(),
+      s(),
+    )
+  // overpay by 1 (-net_b = fair + 1): the k-check must reject it.
+  let overpay =
+    spend.pool_settle(
+      fee_settle_tx(ra, rb, ra + dx, rb - fair - 1),
+      pool_ref(),
+      tt_pool_datum(),
+      s(),
+    )
+  and {
+    fair >= 1,
+    pays_fair?,
+    !underpay?,
+    !overpay?,
+  }
 }
 
 // pool pays out far too much B (k actually drops): rejected.
