@@ -138,7 +138,10 @@ export function SwapCard() {
   }, [pairPools, fromToken, toToken, quote]);
 
   // Per-order floor (limit): the worst output the user will accept = the estimated
-  // output minus slippage. The solver may NEVER settle below this (§5.2.5).
+  // output minus slippage. Post-Rev-25 the limit is an ABORT condition, not the execution
+  // price: the pool's two-sided price pin makes the batch settle at the fair AMM-curve
+  // price (§5.2.5/§5.2.7), so the user receives ~estOut; the floor only aborts the order if
+  // the fair price drifts below it before settlement. The solver can never settle below it.
   const slippageBps = BigInt(Math.round(slippage * 100));
   const estOut = quoteFresh && quote ? toBig(quote.amountOut) : 0n;
   const floor = estOut > 0n ? (estOut * (10_000n - slippageBps)) / 10_000n : 0n;
@@ -886,6 +889,12 @@ function RateLine({
           {poolCount > 1 && (
             <DetailRow label="Pool">best of {poolCount} pools</DetailRow>
           )}
+          <p className="pt-1 text-[11px] leading-snug text-muted">
+            Settles at the pool’s fair price — the on-chain pin makes the batch clear at
+            the AMM curve, never worse. Max slippage is a safety abort: if the fair price
+            drifts below it before your order settles, the order rests instead of filling
+            worse.
+          </p>
         </div>
       )}
     </div>
