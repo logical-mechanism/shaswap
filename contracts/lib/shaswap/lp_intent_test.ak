@@ -701,6 +701,70 @@ test deposit_junk_withheld() fail {
   both(tx, dep_datum(0, None))
 }
 
+// (Rev 25) OFF-RATIO over-absorb — the deposit corridor the at-ratio pin closes. The intent
+// holds 12M ADA (2M over the at-ratio 10M for 100k shares on a 2:1 pool); the batcher absorbs
+// ALL 12M into the pool while crediting only 100k shares, donating the 2M to existing LPs.
+// The owner floor (min=0) and per-share backing both pass, but `dep_b == need_b` (= ceil(100k·
+// res_b/circ) = 10M) REJECTS it: the over-supplied side must return to the owner, not the pool.
+test deposit_off_ratio_over_absorbed() fail {
+  let intent = intent_at(
+    intent_ref(),
+    assets.from_lovelace(12_000_000 + tip + lp_intent_min_ada)
+      |> assets.add(tok.policy, tok.name, 20_000_000),
+    dep_datum(0, None),
+  )
+  let tx = fx(
+    intent,
+    pool_in(200_000_000, 100_000_000, total_lp - 1_000_000),
+    [
+      // pool absorbs 20M tok + the full 12M ADA (need_b is only 10M) for 100k shares.
+      pool_out(220_000_000, 112_000_000, total_lp - 1_100_000),
+      payout(
+        assets.from_lovelace(lp_intent_min_ada)
+          |> assets.add(nft.policy, lp_name, 100_000),
+        None,
+      ),
+    ],
+  )
+  both(tx, dep_datum(0, None))
+}
+
+// (Rev 25) boundary: shares exactly at the owner floor `min_shares` clears (deposit_ok at
+// ratio, min_shares = the 100k minted).
+test deposit_at_min_shares() {
+  let tx = fx(
+    dep_intent(20_000_000, 10_000_000),
+    pool_in(200_000_000, 100_000_000, total_lp - 1_000_000),
+    [
+      pool_out(220_000_000, 110_000_000, total_lp - 1_100_000),
+      payout(
+        assets.from_lovelace(lp_intent_min_ada)
+          |> assets.add(nft.policy, lp_name, 100_000),
+        None,
+      ),
+    ],
+  )
+  both(tx, dep_datum(100_000, None))
+}
+
+// (Rev 25) boundary: a minimal 1-share deposit at the at-ratio ceil amount
+// (need_a = ceil(1·200M/1M) = 200 tok, need_b = ceil(1·100M/1M) = 100 ADA) clears.
+test deposit_one_share() {
+  let tx = fx(
+    dep_intent(200, 100),
+    pool_in(200_000_000, 100_000_000, total_lp - 1_000_000),
+    [
+      pool_out(200_000_200, 100_000_100, total_lp - 1_000_001),
+      payout(
+        assets.from_lovelace(lp_intent_min_ada)
+          |> assets.add(nft.policy, lp_name, 1),
+        None,
+      ),
+    ],
+  )
+  both(tx, dep_datum(1, None))
+}
+
 // ===========================================================================
 // SETTLEMENT-FOLD (adversarial-review regression) — a fulfillment must NEVER carry a
 // settlement withdraw-0 for `S`. Otherwise a non-`S`-tagged victim pool could be spent

@@ -426,6 +426,50 @@ mod tests {
         assert_eq!(lp().qty_in(&f.pool_output.value), TOTAL_LP - 1_100_000);
     }
 
+    // (Rev 25) Rust↔Aiken parity for the at-ratio deposit pin: `deposit_plan`'s (dep_a, dep_b)
+    // MUST equal the on-chain `need = ceil(shares·res/circ) = (shares·res + circ − 1)/circ`
+    // (lp_intent.ak LpDeposit), so every batcher deposit satisfies the new `dep == need` pin
+    // exactly and the over-supplied side always rides back to the owner. Grid spans at-ratio
+    // and OFF-ratio intents; guards against future divergence of the two ceil formulas.
+    #[test]
+    fn deposit_dep_matches_contract_ceil_pin() {
+        let reserves = [1i128, 1_000, 1_000_003, 200_000_000, 999_999_937];
+        let circs = [1_000i128, 1_000_000, 7_777_777];
+        let avails = [1i128, 101, 10_000_000, 50_000_000, 123_456_789];
+        for &res_a in &reserves {
+            for &res_b in &reserves {
+                for &circ in &circs {
+                    for &da in &avails {
+                        for &db in &avails {
+                            let Ok((shares, dep_a, dep_b)) =
+                                deposit_plan(da, db, circ, res_a, res_b)
+                            else {
+                                continue;
+                            };
+                            if shares < 1 {
+                                continue;
+                            }
+                            // the EXACT on-chain formula (Aiken `(x + y − 1) / y`).
+                            let (Some(sra), Some(srb)) =
+                                (shares.checked_mul(res_a), shares.checked_mul(res_b))
+                            else {
+                                continue;
+                            };
+                            let need_a = (sra + circ - 1) / circ;
+                            let need_b = (srb + circ - 1) / circ;
+                            assert_eq!(dep_a, need_a, "dep_a≠need_a s={shares} ra={res_a} c={circ}");
+                            assert_eq!(dep_b, need_b, "dep_b≠need_b s={shares} rb={res_b} c={circ}");
+                            // over-supply rides back to the owner (the pool absorbs ≤ available).
+                            assert!(dep_a <= da && dep_b <= db, "absorbed more than available");
+                            // the pool's per-share backing holds (dep·circ ≥ res·shares).
+                            assert!(dep_a * circ >= sra && dep_b * circ >= srb, "backing breached");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn withdraw_floor_breach_rejected() {
         let r = build_fulfillment(

@@ -184,16 +184,33 @@ hashes changed**; `settlement` (`S = a305a3cf…`), `order`, `pool_mint` **byte-
 floors `released_a/_b` only by `min_a/min_b` (`:153-154`) with the **max** capped by the
 pool's per-share backing (`spend.ak:215-216`). Same one-sided structure ⇒ same corridor,
 milder (under-fill donates to remaining LPs; solver captures only θ). Since `lp_intent` is
-**not** in the frozen set and we are relaunching it anyway, **pin the released/minted amount
-to the exact proportional value**:
+**not** in the frozen set and we are relaunching it anyway, **pin both directions to an
+exact `==` (no floor-range on either side)**:
 
 ```
-withdraw:  released_a == floor(res_a_in · L / circ_in)   (and _b)
-deposit:   shares     == the exact proportional mint for (dep_a, dep_b)
+withdraw:  released_a == floor(res_a_in · L / circ_in)        (and _b)
+deposit:   dep_a      == ceil(shares · res_a_in / circ_in)    (and _b)   [the AT-RATIO pin]
 ```
 
 The backing check already bounds the *max*; pinning to it closes the corridor at ~zero
 ex-unit cost. No curve/`get_amount_out` needed (LP actions are proportional, not swaps).
+
+**Deposit symmetry (the at-ratio pin).** The deposit pin is the *mirror* of withdraw, and
+the direction matters. The earlier form derived `shares == min(floor(dep_a·circ/res_a),
+floor(dep_b·circ/res_b))` **from** the batcher-chosen `dep` — which still let an **off-ratio**
+deposit (stale quote, mid-rest price move, third-party client) over-supply the non-binding
+side into the pool *unbacked*, donating it pro-rata to existing LPs (the same corridor,
+narrowed to off-ratio deposits, bounded by the depositor's own over-supply; `min_shares`
+can't catch it). The fix inverts the dependency: the solver declares `shares`, and the pool
+may absorb only the **minimal at-ratio amount** that backs them, `need = ceil(shares·res_in/
+circ_in)` (Aiken has no `ceil`: `(x + y − 1) / y`). `ceil` is the smallest `dep` with
+`dep·circ_in ≥ res_in·shares`, so the pool's per-share backing always passes (no liveness
+loss), and because it is *minimal*, every off-ratio over-supply is forced back to the owner
+by the unchanged exact owner-payout pin — never silently donated. The batcher's
+`deposit_plan` already computes `dep = ceil(res·shares/circ)` and returns the remainder, so
+it is **bit-exact** with this pin (Rust↔Aiken parity test `deposit_dep_matches_contract_ceil_pin`);
+no batcher logic change. This re-hashes **only `lp_intent`** (`f30fb448 → 05451fe2`); the
+`pool` pin and the frozen anchor are untouched.
 
 ## 9. Blueprint changes (companion edits)
 
