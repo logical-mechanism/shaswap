@@ -154,6 +154,15 @@ pub fn fulfill(
       expect released_b >= d.min_b
       expect released_a >= 0
       expect released_b >= 0
+      // (Rev 25) exact-proportional pin — close the LP-intent corridor (spec
+      // `clearing-price-pin.md` §8, the LP analog of the swap price pin). The released
+      // amount must EQUAL the per-share backing (`floor(res_in·l/circ_in)`), which is the
+      // MAX the pool's `LpAction` already allows — so the batcher cannot under-release and
+      // bank the surplus to remaining LPs. `floor` ≤ exact, so this always satisfies the
+      // pool backing check (no liveness loss). `min_a/min_b` become the owner's abort floor.
+      let circ_in = total_lp - held_in
+      expect released_a == res_a_in * l / circ_in
+      expect released_b == res_b_in * l / circ_in
       // pin the pool output's FULL value (mirrors `clearing.ak`'s pool pin): `pool_in`
       // shifted by exactly −released on each reserve and +L held — so the batcher can't
       // sweep the pool's overhead lovelace or any incidental/airdropped asset. This makes
@@ -186,12 +195,24 @@ pub fn fulfill(
       let shares = held_in - held_out
       expect shares >= d.min_shares
       expect shares >= 1
-      // deposited assets that entered the pool (a deposit can't pull reserves OUT). The
-      // pool validator caps over-minting via per-share backing.
+      // deposited assets that entered the pool (a deposit can't pull reserves OUT).
       let dep_a = res_a_out - res_a_in
       let dep_b = res_b_out - res_b_in
       expect dep_a >= 0
       expect dep_b >= 0
+      // (Rev 25) AT-RATIO deposit pin — mirror the withdraw exact-pin (both are now `==`,
+      // not a floor-range). The solver declares `shares` (= circ_out − circ_in, from the
+      // held-LP delta); the pool may absorb only the MINIMAL at-ratio amount that backs
+      // them, `need = ceil(shares·res_in/circ_in)`. Pinning `dep == need` (rather than
+      // deriving `shares` from `dep`) forces any OFF-RATIO over-supply back to the owner via
+      // the unchanged owner payout pin — never silently donated to existing LPs. `ceil` is
+      // the smallest dep with `dep·circ_in ≥ res_in·shares`, so the pool's per-share backing
+      // always passes (no liveness loss). Aiken has no ceil: `(x + y − 1) / y` for `x,y > 0`.
+      // `min_shares` stays the owner's abort floor.
+      let need_a = ( shares * res_a_in + circ_in - 1 ) / circ_in
+      let need_b = ( shares * res_b_in + circ_in - 1 ) / circ_in
+      expect dep_a == need_a
+      expect dep_b == need_b
       // pin the pool output's FULL value (as withdraw, above): `pool_in` shifted by +dep
       // on each reserve and −shares held, nothing else — no overhead/incidental sweep.
       let pool_exp = pool_in.output.value

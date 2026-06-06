@@ -16,7 +16,7 @@ use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
 use shaswap/clearing
-use shaswap/constants.{lp_name, order_min_ada, total_lp}
+use shaswap/constants.{lp_name, order_min_ada, pool_min_ada, total_lp}
 use shaswap/spend
 use shaswap/types.{
   AssetId, BoundDatum, OrderDatum, PoolDatum, SettlementRedeemer,
@@ -445,8 +445,39 @@ test reclaim_script_owner() fail {
 
 // ---- pool validator logic (owns k) ----------------------------------------
 
+// (Rev 25) The pool must pay the FAIR curve amount. The ADA reserve has pool_min_ada
+// carved out (reserve_of), so res_b_in = pool_ada_in − pool_min_ada = 999_998_000_000, and
+// get_amount_out(sell=1_000_000, res_in=1e12 token, res_out=999_998_000_000, φ=0.3%) =
+// 996_997 ADA. n_orders=1, so the pin allows ≤1 sub-unit dust; paying exactly fair clears it.
 test pool_settle_ok() {
+  let fair = spend.get_amount_out(sell, pool_tok_in, pool_ada_in - pool_min_ada, 3, 1000)
+  let tx = build1(owner_out_ada, 0, pool_ada_in - fair, pool_tok_in + sell, True)
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// (Rev 25) The pre-pin floor→fair corridor: pay the trader only `received`=500_000 for
+// 1_000_000 token worth ~996_999 at the curve, banking the ~497k gap into k. The old
+// one-sided k-check accepted this (k rises); the two-sided pin REJECTS it (underpayment
+// ≫ the n_orders dust band). This is the economic fix, asserted on-chain.
+test pool_settle_corridor() fail {
   spend.pool_settle(build(1), pool_ref(), pool_datum(), s())
+}
+
+// (Rev 25) dust band — build(1) has n_orders=1, so the pin tolerates ≤1 sub-unit of
+// per-order flooring: paying fair−1 (996_996) still clears (a legitimate honest-rounding
+// solve must never be rejected).
+test pool_settle_dust_ok() {
+  let fair = spend.get_amount_out(sell, pool_tok_in, pool_ada_in - pool_min_ada, 3, 1000)
+  let tx = build1(owner_out_ada, 0, pool_ada_in - ( fair - 1 ), pool_tok_in + sell, True)
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// (Rev 25) one sub-unit past the band — paying fair−2 (996_995) at n_orders=1 underpays
+// beyond the dust tolerance and is REJECTED. Pins the band tight (ungameable to ≤ n_orders).
+test pool_settle_dust_reject() fail {
+  let fair = spend.get_amount_out(sell, pool_tok_in, pool_ada_in - pool_min_ada, 3, 1000)
+  let tx = build1(owner_out_ada, 0, pool_ada_in - ( fair - 2 ), pool_tok_in + sell, True)
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
 }
 
 // k decreases (pool pays out ADA without gaining token): rejected.
@@ -1684,20 +1715,35 @@ fn fee_settle_tx(
   }
 }
 
-// pool gains 10_000 A, pays out 9_000 B: k grows well past the 0.3% fee -> ok.
+// (Rev 25) pool gains 10_000 A, pays the FAIR curve amount get_amount_out(10_000, 1e6, 1e6,
+// φ=0.3%) = 9_871 B (res_b_out = 990_129). No orders in this synthetic tx ⇒ n_orders=0 ⇒
+// the pin requires EXACTLY fair: k grows by precisely the fee, not "past" it. (The old
+// fixture paid only 9_000 B — a corridor clearing the pin now rejects; see pool_fee_corridor.)
 test pool_fee_ok() {
   spend.pool_settle(
-    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 991_000),
+    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 990_129),
     pool_ref(),
     tt_pool_datum(),
     s(),
   )
 }
 
-// same the other direction (pool gains 10_000 B, pays 9_000 A): ok.
+// same the other direction (pool gains 10_000 B, pays the fair 9_871 A): ok.
 test pool_fee_reverse_ok() {
   spend.pool_settle(
-    fee_settle_tx(1_000_000, 1_000_000, 991_000, 1_010_000),
+    fee_settle_tx(1_000_000, 1_000_000, 990_129, 1_010_000),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+}
+
+// (Rev 25) pool gains 10_000 A but pays only 9_000 B (res_b_out=991_000) — fair is 9_871, so
+// this underpays the trader by ~871 and banks it as k. Old one-sided k-check accepted it
+// ("k grows past the fee"); the two-sided pin REJECTS it (n_orders=0 ⇒ zero dust band).
+test pool_fee_corridor() fail {
+  spend.pool_settle(
+    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 991_000),
     pool_ref(),
     tt_pool_datum(),
     s(),
@@ -1723,6 +1769,55 @@ test pool_fee_no_residual() {
     tt_pool_datum(),
     s(),
   )
+}
+
+// ---- (Rev 25) two-sided price pin: boundary property (the make-or-break gate) --------
+// For any non-degenerate token/token pool and residual `dx` (n_orders=0 via fee_settle_tx,
+// so the dust band is ZERO), the pin places the pool's payout EXACTLY at the fair curve
+// amount: paying `fair` passes; paying `fair − 1` (the corridor — underpay the trader) is
+// REJECTED by the new lower floor; paying `fair + 1` (overpay) is REJECTED by the k-check.
+// Holding across the whole fuzzed space proves the corridor is closed to ≤ the dust band,
+// AND that get_amount_out is exactly the k-edge (pays_fair must also satisfy k).
+fn pin_params() -> Fuzzer<(Int, Int, Int)> {
+  fuzz.map3(
+    fuzz.int_between(1_000_000_000, 1_000_000_000_000),
+    fuzz.int_between(1_000_000_000, 1_000_000_000_000),
+    fuzz.int_between(1_000_000, 100_000_000),
+    fn(ra, rb, dx) { (ra, rb, dx) },
+  )
+}
+
+test prop_pin_fair_boundary((ra, rb, dx) via pin_params()) {
+  let fair = spend.get_amount_out(dx, ra, rb, 3, 1000)
+  let pays_fair =
+    spend.pool_settle(
+      fee_settle_tx(ra, rb, ra + dx, rb - fair),
+      pool_ref(),
+      tt_pool_datum(),
+      s(),
+    )
+  // underpay by 1 (-net_b = fair − 1): the new lower floor must reject it.
+  let underpay =
+    spend.pool_settle(
+      fee_settle_tx(ra, rb, ra + dx, rb - fair + 1),
+      pool_ref(),
+      tt_pool_datum(),
+      s(),
+    )
+  // overpay by 1 (-net_b = fair + 1): the k-check must reject it.
+  let overpay =
+    spend.pool_settle(
+      fee_settle_tx(ra, rb, ra + dx, rb - fair - 1),
+      pool_ref(),
+      tt_pool_datum(),
+      s(),
+    )
+  and {
+    fair >= 1,
+    pays_fair?,
+    !underpay?,
+    !overpay?,
+  }
 }
 
 // pool pays out far too much B (k actually drops): rejected.

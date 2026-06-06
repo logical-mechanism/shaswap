@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 24 — 2026-06-05. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 25 — 2026-06-05. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -261,6 +261,29 @@
 > Only the **settlement** hash changes again (the guard is in `clearing.ak`); pool/
 > pool_mint/order/lp_intent unchanged from Rev 23. 154 tests green (139 unit + 15
 > property). No Critical/High/theft/unbacked-mint/lock path found in the re-review.**
+>
+> **Rev 25: close the clearing-price corridor — two-sided pool price pin (§5.2.5/§5.2.7/
+> §5.4).** A post-Rev-24 economic-soundness review (`reviews/economic-soundness-2026-06-05.md`,
+> memory `econ-corridor`) confirmed the anchor verifies **validity, not optimality**: the
+> per-order floor (full `sell_amount` vs `limit`) + the pool's **one-sided** `k ≥ k_in`
+> leave the uniform price free in a **`[floor, fair-curve]` corridor**; underpaying a trader
+> *raises* `k`, so the `k`-check caps only the top. A solver-LP banks the gap as
+> `k`-appreciation; the price-blind tip can't compete it down. (The reference solver itself
+> clears one-sided books at an order floor today — `solve.rs` picks the volume-max feasible
+> candidate, which on an imbalanced book is a floor price.) Custody/sandwich-immunity are
+> unaffected. **Fix (Scope A):** the pool validator pins its payout **two-sided** —
+> `−net_b ∈ [get_amount_out(net_a) − ε, get_amount_out(net_a)]`, the existing `k`-check
+> keeping the upper edge — forcing `p` to the **fair curve-execution price for any non-zero
+> residual** (the uniform price makes the aggregate pin per-order). `get_amount_out` mirrors
+> the batcher's `curve.swap_out`; `ε` is an **absolute, N-derived** dust bound (never a
+> fraction of `k`), pinned by a differential test. **O(1), pool-hash only — the immutable
+> anchor `S`, `order`, `pool_mint` stay byte-identical** (the `lp_intent` corridor is closed
+> the same way — exact proportional pin — as it is not frozen). **Deferred (Scope B):** the
+> full equilibrium closing the **perfectly-netted zero-residual trader↔trader** split (needs
+> a curve-aware check in/beside the anchor → changes `S`; gated on its own §13.1 spike, run
+> in parallel). The limit becomes an **abort condition**, not the execution price. Spec:
+> `documentation/spec/clearing-price-pin.md`. **Hash impact (pre-mainnet):** `pool` +
+> `lp_intent` change; `settlement`/`order`/`pool_mint` byte-identical. Ships as a relaunch.**
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -536,10 +559,18 @@ witness — the validator checks algebra, never solves (Principle 4).
    pool's before/after value for conservation, but never the curve or the fee.
 4. **Best-response for orders.** Each order gets the best-response trade at the
    clearing price, respecting its limit and partial-fill rule.
-5. **Per-order floor.** Every order receives **at least its own stated
+5. **Per-order floor + price pin.** Every order receives **at least its own stated
    limit/min-receive** — curve-agnostic (safe against any pool variant, §5.4),
-   bounds any accepted clearing, makes first-valid-wins safe. Guarantees **never
-   worse than a plain AMM**; netting surplus above the floor is upside (§7).
+   bounds any accepted clearing, makes first-valid-wins safe. As of Rev 25 the
+   **limit is an *abort condition*** (like Uniswap slippage), **not the execution
+   price**: the pool's **two-sided curve pin** (§5.4) forces execution **at the fair
+   curve price**, so a clearing is **never worse than a plain AMM *against the
+   curve*** — not merely against the order's own limit. *(Pre-pin v1 guaranteed only
+   the latter; the gap — a solver-chosen floor→fair corridor — is the
+   `econ-corridor` finding, closed by `spec/clearing-price-pin.md`.)* The directional
+   netting surplus is now **returned to traders** by the pin; only the
+   perfectly-netted (CoW-matched, zero-residual) trader↔trader split remains
+   solver-allocated (the documented residue, §5.2.7).
 6. **No double satisfaction.** Each order is bound to **exactly one** owner-output
    via the order's unique **OutputReference** (`txid#index`, which Cardano guarantees
    unique — no per-order NFT needed). The settlement validator enforces an
@@ -554,15 +585,23 @@ witness — the validator checks algebra, never solves (Principle 4).
      by position (position itself is the injective key; the per-output bound
      `OutputReference` is still checked to confirm the solver's claimed pairing).
      Writing the O(N²) scan is a correctness-of-design error, not just slow.
-7. **Surplus / equilibrium (intent; cost-bounded by §13.1).** To route netting
-   surplus to *traders* not LPs, the clearing should be required to be the **true
-   uniform-price equilibrium**. **v1 decision (post-§13.1 measurement):** **ship the
-   §5.2.5 floor-only path** (Uniswap parity guaranteed, ~40–50 orders/settlement) and
-   **defer equilibrium** — its added per-order verification cost is not yet measured
-   and would lower N. Equilibrium (and a surplus split) becomes a later upgrade once
-   its own spike (§13.1 follow-up) bounds the cost. This resolves the v1 fork in
-   §12.2; the floor never makes a user worse than a plain AMM, so deferring surplus
-   capture costs only upside, never safety.
+7. **Surplus / equilibrium — the two-sided pool price pin (Rev 25).** To route
+   surplus to *traders* not LPs, the clearing must be the **uniform-price
+   equilibrium**, not just floor-feasible. **v1 ships the cheap O(1) form:** the pool
+   validator pins its payout **two-sided** to the curve — `−net_b ∈ [get_amount_out(net_a) − ε,
+   get_amount_out(net_a)]` (`spec/clearing-price-pin.md`). Because the residual trades
+   at the single uniform price, this forces `p` to the **curve-execution price for any
+   non-zero residual** — recovering the §5.2.4 best-response for the directional flow
+   that carries essentially all the extraction value, at ~zero added ex-units (it
+   reuses the curve the pool already evaluates; the anchor stays curve-agnostic). It
+   lives **only in the pool hash** — the immutable settlement anchor `S` is unchanged.
+   **Deferred (Scope B):** the *full* equilibrium that also closes the
+   **perfectly-netted (zero-residual) trader↔trader** split — that needs a curve-aware
+   per-order check in/beside the immutable anchor (changes `S`, re-audit, lowers N) and
+   is gated on its own §13.1 ex-unit spike (run in parallel, decide before mainnet).
+   The residue is a bounded trader↔trader transfer with **no solver-LP harvest
+   incentive** (the pool is untouched, so `k` does not move). This resolves the v1 fork
+   in §12.2 for the part that matters economically.
 
 ### 5.3 Solver model — first-valid-wins, fully permissionless
 
@@ -799,9 +838,12 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
   already sit in the orders. **No token is ever minted to pay solvers.**
 - **ADA's triple role** (tip / min-ADA / traded side of an ADA pair) is separated in
   the conservation check (§5.2.1) so none leaks into another.
-- **Surplus capture (the differentiator, §5.2.7).** The floor guarantees Uniswap
-  parity; whether netting surplus reaches *traders* depends on requiring the true
-  equilibrium, cost-bounded by §13.1. Explicit open decision (§12.2).
+- **Surplus capture (the differentiator, §5.2.7).** Rev 25's **two-sided pool price
+  pin** forces the **fair curve-execution price** for any non-zero residual, so the
+  directional surplus reaches *traders*, not LPs — the floor→fair corridor is closed
+  in the pool hash (anchor unchanged). Only the **perfectly-netted (zero-residual)
+  trader↔trader** split remains solver-allocated (bounded, no solver-LP incentive); the
+  full equilibrium that closes it is deferred (Scope B, §5.2.7, §13.1 spike).
 - **Partial fills — proportional tip, one-level remainder (RESOLVED, Rev 8; impl
   `clearing.ak`).** The solver declares each order's fill `f`; on a partial fill it
   collects `tip·f/sell_amount` **now** (pay-per-fill) and the remainder keeps the
@@ -818,7 +860,7 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
 
 | Attacker | Capability | Containment |
 |---|---|---|
-| Malicious / self-dealing solver | Chooses batch composition; places own orders; clears at the floor | Uniform price (§5.2.2) + each order ≥ its own limit (§5.2.5); own orders fill at the same uniform price. Worst case = Uniswap-parity; surplus leakage bounded by §5.2.7. |
+| Malicious / self-dealing solver (incl. solver-LP) | Chooses batch composition; places own orders; tries to clear at the floor and bank the floor→fair gap as `k` (the `econ-corridor` finding) | Uniform price (§5.2.2) + each order ≥ its own limit (§5.2.5) + **the pool's two-sided curve pin (§5.2.7/§5.4, Rev 25)**: any non-zero residual is forced to the **fair curve-execution price**, so directional surplus can no longer be banked. Residual worst case = **fair-curve execution** (= a plain AMM), not the floor. Only the **perfectly-netted zero-residual trader↔trader** split is solver-allocated (bounded by both limits; **no solver-LP harvest** — the pool is untouched). |
 | Solver-solution thief | Copies the public witness from the mempool, swaps reward output, resubmits | **Moot at v1** — re-solving the 1-D clearing is trivial, so copying saves nothing (§5.3). A real concern only at heavy solve scope (§13.2). |
 | Double-satisfaction attacker | Reuses one owner-output to satisfy two orders' floors | Closed by §5.2.6 — injective order→output binding via unique OutputReference. |
 | Colluding block producer (SPO) | Picks which valid settlement lands; can delay/censor | Cannot violate §5.2; censored user self-solves (§5.3). |
@@ -881,8 +923,10 @@ uniform-price batch + bidirectional netting, per-order floor, injective O(N) bin
 partial fills (proportional tip), deadlines, value-derived LP (deposit/withdraw/first-
 deposit/close), **static trading fee (residual-only, §5.2.3/§7)**, non-custodial reclaim,
 withdraw-0 wiring. **Not yet implemented:** **PA-AMM `λ`** (deferred, `λ=1` no-op).
-**Best-response (§5.2.4)** is enforced as the floor only (v1 floor-only, §5.2.7).
-Off-chain (batcher/frontend/data layer) not started.
+**Best-response (§5.2.4)** is enforced as the per-order floor **plus the pool's
+two-sided curve price pin** (Rev 25, §5.2.7) — fair curve-execution for any non-zero
+residual; only the perfectly-netted zero-residual trader↔trader split is deferred
+(Scope B).
 
 **Explicitly NOT in v1 / never in core:** any oracle dependency; order privacy
 (intents and limit prices are public on-chain); cross-shard price unification;
@@ -900,8 +944,10 @@ privileged operator, any mortal external dependency in the core.
 ## 12. Open design decisions
 
 1. **Solver tip mechanics.** User-set + protocol minimum vs. fixed; datum encoding.
-2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7): floor-only; equilibrium
-   deferred** pending its own cost spike.
+2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7, Rev 25): the pool's
+   two-sided curve pin returns directional surplus to traders (fair-curve execution);
+   only the perfectly-netted zero-residual trader↔trader split (Scope B) is deferred**
+   pending its own ex-unit spike.
 3. **Order rollover** mechanics (the size *bound* is resolved: ~40/settlement, §5.3).
 4. ~~Partial-fill semantics~~ — **RESOLVED (Rev 8): proportional tip, one-level
    remainder, pre-funded 2× min-ADA, limit-price preserved** (§7; impl `clearing.ak`,

@@ -141,7 +141,13 @@ fn evaluate(
     if included.is_empty() {
         return None;
     }
-    let feasible = curve::k_with_fee_ok(res_a, res_b, res_a + net_a, res_b + net_b, fee);
+    // (Rev 25) feasibility is now TWO-sided: k caps overpayment, the pin caps underpayment
+    // (the pool must release the full curve amount for its residual, within eps=n_orders).
+    // A candidate that clears one-sided flow at an order floor — what v1 used to pick — now
+    // fails the pin and is correctly dropped; the fair-price candidate below replaces it.
+    let n = included.len() as i128;
+    let feasible = curve::k_with_fee_ok(res_a, res_b, res_a + net_a, res_b + net_b, fee)
+        && curve::pin_ok(res_a, res_b, res_a + net_a, res_b + net_b, fee, n);
     Some(Candidate {
         price: p,
         included,
@@ -241,6 +247,85 @@ fn refine_to_subset(
         .collect()
 }
 
+/// The pool residual `(net_a, net_b)` a fixed `included` set produces at price `p`,
+/// with every order filled fully (the solver's default). Mirrors `evaluate`'s
+/// accumulation and `clearing::received_for`'s rounding, so it agrees with the pin.
+fn residual_at(included: &[OrderInput], p: Price) -> Option<(i128, i128)> {
+    let mut net_a: i128 = 0;
+    let mut net_b: i128 = 0;
+    for o in included {
+        let f = o.datum.sell_amount;
+        let recv = clearing::received_for(o.datum.sell_a, f, p).ok()?;
+        if o.datum.sell_a {
+            net_a = net_a.checked_add(f)?;
+            net_b = net_b.checked_sub(recv)?;
+        } else {
+            net_a = net_a.checked_sub(recv)?;
+            net_b = net_b.checked_add(f)?;
+        }
+    }
+    Some((net_a, net_b))
+}
+
+/// (Rev 25) The **fair-equilibrium price**: the uniform `p` at which the included set's
+/// pool residual lands exactly on the constant-product curve — i.e. the pool pays
+/// `swap_out(net_a)` for its net input, so the Rev-25 pin holds and every order clears at
+/// the curve-execution price (not its floor). For a one-sided book `net_a` is constant, so
+/// `p = swap_out(net_a)/net_a` converges in one step; for a mixed book the residual depends
+/// weakly on `p` (b-sellers' received), so we iterate the map to its fixed point. Returns
+/// `None` for a degenerate pool or a perfectly-netted set (any price works — handled by
+/// `balance_price`/`spot`).
+fn fair_price(included: &[OrderInput], res_a: i128, res_b: i128, fee: Fee) -> Option<Price> {
+    let mut p = spot_price(res_a, res_b)?;
+    for _ in 0..8 {
+        let (net_a, net_b) = residual_at(included, p)?;
+        let next = if net_a > 0 {
+            // pool gains asset_a, pays asset_b: fair price (b per a) = swap_out(a→b)/net_a.
+            let fair_b = curve::swap_out(res_a, res_b, net_a, fee);
+            if fair_b <= 0 {
+                return None;
+            }
+            reduce(fair_b, net_a)
+        } else if net_a < 0 {
+            // pool gains asset_b (net_b > 0), pays asset_a: fair price = net_b / swap_out(b→a).
+            let fair_a = curve::swap_out(res_b, res_a, net_b, fee);
+            if fair_a <= 0 {
+                return None;
+            }
+            reduce(net_b, fair_a)
+        } else {
+            // zero residual: perfectly netted, any price clears — keep the current guess.
+            return Some(p);
+        };
+        if next == p {
+            break;
+        }
+        p = next;
+    }
+    Some(p)
+}
+
+/// Re-price an included subset at its **fair-equilibrium price** (+ pool-favouring nudges
+/// for the per-order rounding) and return the feasible candidates. This is the Rev-25
+/// replacement for clearing one-sided/imbalanced residuals at an order floor: the fair
+/// price makes the pool pay the full curve amount, satisfying the two-sided pin.
+fn refine_to_fair(
+    subset: &[OrderInput],
+    res_a: i128,
+    res_b: i128,
+    fee: Fee,
+    max_orders: usize,
+) -> Vec<Candidate> {
+    let Some(fp) = fair_price(subset, res_a, res_b, fee) else {
+        return Vec::new();
+    };
+    std::iter::once(fp)
+        .chain(PRICE_NUDGES_BPS.iter().map(|&b| nudge(fp, b)))
+        .filter(|p| p.num > 0 && p.den > 0)
+        .filter_map(|p| evaluate(subset, p, res_a, res_b, fee, max_orders))
+        .collect()
+}
+
 /// Solve a batch: returns the best floor-only settlement, or `None` if no
 /// non-empty feasible batch exists at any candidate price.
 pub fn solve(orders: &[OrderInput], pool: &PoolInput) -> Option<SolveResult> {
@@ -310,7 +395,11 @@ pub fn solve_capped(
             continue;
         };
         let refined = refine_to_subset(&cand.included, res_a, res_b, fee, max_orders);
-        for c in std::iter::once(cand).chain(refined) {
+        // (Rev 25) also re-price this subset at its fair-equilibrium price — the candidate
+        // that satisfies the two-sided pin for a one-sided/imbalanced residual (where the
+        // old floor-price candidate is now infeasible). Netted books still win via balance.
+        let fair = refine_to_fair(&cand.included, res_a, res_b, fee, max_orders);
+        for c in std::iter::once(cand).chain(refined).chain(fair) {
             if !c.feasible {
                 continue;
             }
@@ -340,7 +429,13 @@ pub fn solve_capped(
     let settlement = clearing::build_settlement(&chosen, &fills, pool, best.price, None).ok()?;
     let res_a_out = curve::reserve_of(&settlement.pool_output.value, &d.asset_a);
     let res_b_out = curve::reserve_of(&settlement.pool_output.value, &d.asset_b);
-    if !curve::k_with_fee_ok(res_a, res_b, res_a_out, res_b_out, fee) {
+    // (Rev 25) re-verify BOTH on-chain gates on the actual net: the k-check (top) and the
+    // two-sided price pin (bottom, eps = order count). Never return a settlement the `pool`
+    // validator would reject — if even the fair candidate misses the dust band, under-solve.
+    let eps = chosen.len() as i128;
+    if !curve::k_with_fee_ok(res_a, res_b, res_a_out, res_b_out, fee)
+        || !curve::pin_ok(res_a, res_b, res_a_out, res_b_out, fee, eps)
+    {
         return None;
     }
 
@@ -447,6 +542,41 @@ mod cap_tests {
         // A cap >= the book settles the whole book in one batch.
         let big = solve_capped(&orders, &pool, 99).expect("settlement");
         assert_eq!(big.orders.len(), uncapped.orders.len());
+    }
+
+    // (Rev 25) THE corridor fix, end-to-end in the solver: a one-sided book with a near-zero
+    // (market) floor. Pre-Rev-25 the solver cleared this at an order floor price — banking the
+    // floor→fair gap into k. Now the two-sided pin forces the FAIR curve price, so the trader
+    // receives ~get_amount_out(sell), not ~their floor, and the settlement passes the pin.
+    #[test]
+    fn one_sided_market_order_clears_at_fair_not_floor() {
+        let (res, dx) = (1_000_000_000_000i128, 1_000_000i128);
+        let pool = pool(res, res);
+        // limit = 1 ⇒ a market order: pre-fix it could be paid as little as ~1 lovelace.
+        let orders = vec![token_seller(0, dx, 1)];
+        let r = solve(&orders, &pool).expect("a fair settlement must exist");
+
+        let fee = Fee { num: 3, den: 1000 };
+        let fair = curve::swap_out(res, res, dx, fee); // = get_amount_out(dx) at the curve
+        let paid = -r.settlement.net_b; // ADA the pool paid the trader
+        assert!(
+            paid >= fair - 1 && paid <= fair,
+            "must clear at the fair curve price: paid {paid} vs fair {fair}"
+        );
+        // and the settlement satisfies the on-chain pin (eps = 1 order) — never rejected.
+        assert!(curve::pin_ok(
+            res,
+            res,
+            res + r.settlement.net_a,
+            res + r.settlement.net_b,
+            fee,
+            1
+        ));
+        // sanity: the trader got ~the curve price (~997k), ~1e6× their market floor of 1.
+        assert!(
+            paid > 900_000,
+            "clearing at the floor would pay far less ({paid})"
+        );
     }
 
     #[test]

@@ -18,9 +18,27 @@
       withdraw/deposit intent and confirm the batcher fulfils it **within a block** alongside
       swap settlements (the whole point); confirm the direct `LpAction` path still works on a
       quiet pool; confirm LP-intent reclaim (a withdraw reclaim returns LP tokens, §13.11).
+- [ ] **Clearing-price pin (Rev 25) in the frozen set.** The two-sided pool price pin
+      (`spend.pool_settle`) + the `lp_intent` exact-proportional pin are part of the immutable
+      deployment — **`pool` and `lp_intent` carry NEW hashes** (`07332aa6…`, `f30fb448…` on
+      preprod; regenerate at the mainnet RC), while `settlement`/`S` (`a305a3cf…`), `order`,
+      `pool_mint` stay byte-identical (verify via the reproducible-build diff). Spec:
+      [`spec/clearing-price-pin.md`](../spec/clearing-price-pin.md).
+- [ ] **Corridor-fix E2E on preprod.** Confirm: a one-sided / market-limit order settles at
+      the **fair AMM-curve price** (≈ `get_amount_out`, not the order floor); an attempted
+      underpayment beyond the `n_orders` dust band is **rejected on-chain**; the reference
+      batcher's fair-equilibrium pricing fulfils one-sided books **within a block** (no
+      liveness regression). Re-run the differential parity (`prop_pin_fair_boundary` /
+      `pin_ok_boundary_matches_contract`) against the frozen artifacts.
+- [ ] **Ex-unit headroom for the pin.** The §13.1 full-tx run confirms the (O(1)) pin +
+      `get_amount_out` per pool-spend does not lower the ~40–50 order ceiling. **Decide
+      Scope B** (the deferred equilibrium check closing the perfectly-netted trader↔trader
+      residue) here: ship it (changes `S` → re-audit the anchor) or sign it off as a
+      documented residue. `lp_intent` being non-frozen does NOT extend to `S`.
 - [ ] **Audit current.** [`contracts/audit/audit_report.md`](../../contracts/audit/audit_report.md)
-      header pins the audited `BLUEPRINT Rev` and date, and no contract change has landed
-      since (else re-audit).
+      header pins the audited `BLUEPRINT Rev` (now **Rev 25**) and date, and no contract change
+      has landed since (else re-audit). The Rev 25 pin is **new value-protecting code outside
+      the audited anchor** — it must be in the audited scope before mainnet.
 
 ## 1. Deploy the immutable artifacts (mainnet)
 
