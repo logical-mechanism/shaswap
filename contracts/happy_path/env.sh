@@ -53,11 +53,14 @@ export ORDER_SCRIPT="$SCRIPTS/order.plutus"
 export POOL_SCRIPT="$SCRIPTS/pool.plutus"
 export LP_INTENT_SCRIPT="$SCRIPTS/lp_intent.plutus"
 
-# --- identities (derived; see also deployment.json) — post-audit set (BLUEPRINT Rev 24) -
+# --- identities (derived; see also deployment.json) — Rev 25 clearing-price-pin set -------
+# pool + lp_intent re-hashed (two-sided price pin / at-ratio LP pins); settlement (S) +
+# order byte-identical. Applied hashes derived via the app's MeshJS apply (app == cardano-cli
+# verified); pool keeps the S stake credential, only its payment hash changed.
 export S_HASH="a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea"          # settlement (= stake credential S)
 export ORDER_HASH="e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d"      # order(S)
-export POOL_HASH="1cd27f8d56dd553e23f83e619b2202427616dbbe460bcf77cc17e4e1"       # pool(S)
-export LP_INTENT_HASH="83c38b9816b01794f9336948e3e1ca38b1ff6928e174c8fa9aa360e4"  # lp_intent(S)
+export POOL_HASH="34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac"       # pool(S) — Rev 25
+export LP_INTENT_HASH="fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d"  # lp_intent(S) — Rev 25
 export S_STAKE_ADDR="$(cat "$SCRIPTS/settlement.stake.addr")"                     # reward account for S
 export ORDER_ADDR="$(cat "$SCRIPTS/order.addr")"                                  # where orders live (tagged S)
 export POOL_ADDR="$(cat "$SCRIPTS/pool.addr")"                                    # where the pool lives (tagged S)

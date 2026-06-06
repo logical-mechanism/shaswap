@@ -5,9 +5,9 @@
   "ogmios_url": "http://127.0.0.1:1337",
   "settlement_hash": "a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea",
   "order_script_hash": "e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d",
-  "pool_script_hash": "1cd27f8d56dd553e23f83e619b2202427616dbbe460bcf77cc17e4e1",
-  "lp_intent_script_hash": "83c38b9816b01794f9336948e3e1ca38b1ff6928e174c8fa9aa360e4",
-  "pool_mint_policy": "07bc9c0c78627caff9f6053eacb9d71364a75aa0aaf116a06ae7f7d8",
+  "pool_script_hash": "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac",
+  "lp_intent_script_hash": "fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d",
+  "pool_mint_policy": "d5ccd17454150e29feb00ee72f5bf1155bcf41718cb7e641dd5f593d",
   "nft_name": "4e4654",
   "lp_name": "4c50",
   "total_lp": 9223372036854775807,
@@ -15,19 +15,19 @@
   "pool_min_ada": 2000000,
   "order_min_ada": 2000000,
   "settlement_ref": {
-    "tx_id": "c5751d0d3f0e69acec31550753c67f379db9e12b6ff510b5d5034f271dea866f",
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 0
   },
   "order_ref": {
-    "tx_id": "c5751d0d3f0e69acec31550753c67f379db9e12b6ff510b5d5034f271dea866f",
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 2
   },
   "pool_ref": {
-    "tx_id": "c5751d0d3f0e69acec31550753c67f379db9e12b6ff510b5d5034f271dea866f",
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 1
   },
   "lp_intent_ref": {
-    "tx_id": "c5751d0d3f0e69acec31550753c67f379db9e12b6ff510b5d5034f271dea866f",
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 3
   },
   "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey",

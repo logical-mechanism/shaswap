@@ -29,11 +29,11 @@ import {
 const PREPROD_ORDER =
   "addr_test1xrnl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzjxy5";
 const PREPROD_POOL =
-  "addr_test1xqwdylud2mw4203rlqlxrxezqfp8v9kmherqhnmhest7fcdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qr38v5k";
+  "addr_test1xq6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu5dngl";
 const MAINNET_ORDER =
   "addr1x8nl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu50xgt";
 const MAINNET_POOL =
-  "addr1xywdylud2mw4203rlqlxrxezqfp8v9kmherqhnmhest7fcdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qq86vcf";
+  "addr1xy6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzsnyq";
 
 test("ORDER_ADDR derivation pins to golden preprod address", () => {
   assert.equal(deriveBaseAddress(ORDER_SCRIPT_HASH, SETTLEMENT_HASH, 0), PREPROD_ORDER);
