@@ -40,16 +40,23 @@ The components are decoupled. Keep them that way.
 - Plutus v3, `aiken-lang/stdlib`. All arithmetic is integer/rational — no floats.
 - The **settlement validator is the immutable trust anchor** and runs once per tx via
   the **withdraw-0** trick (BLUEPRINT §5.4). Pool curves are pluggable *underneath* it.
+- The deployment set is `settlement`, `order`, `pool`, `pool_mint`, and `lp_intent`
+  (a **second immutable validator** — batcher-fulfilled LP deposits/withdrawals,
+  BLUEPRINT §5.1/§5.4; `Fulfill` is self-contained, `ReclaimLp` is owner-signature-only).
+  It joins as a NEW hash; the other four hashes are unchanged.
 
 ### `batcher/` (Rust + Pallas)
 - A standalone binary; the **reference** solver so the role is genuinely
   permissionless — it is **not** a privileged operator. Anyone may run their own.
-- Once scaffolded: `cargo build` · `cargo run` · `cargo test` · `cargo clippy` ·
-  `cargo fmt`. Use Pallas (TxPipe) for chain access, tx building, primitives.
+- Implemented as a Cargo workspace (`crates/`): `cargo build` · `cargo run` ·
+  `cargo test` · `cargo clippy` · `cargo fmt`. Use Pallas (TxPipe) for chain access,
+  tx building, primitives.
 
 ### `app/` (TS + React + MeshJS)
 - The website; builds order intents and settlements client-side, wallet via MeshJS.
-- Once scaffolded: the usual `dev` / `build` / `test` scripts.
+- Next.js (Node `>=22.6`): `npm run dev` · `npm run build` · `npm run lint` ·
+  `npm test` (node `--test` strip-types runner over `src/**/*.test.ts`) ·
+  `npm run test:components` (vitest) · `npm run e2e` (playwright).
 - **Hard rule:** all chain data goes through a **data-access abstraction** — no module
   calls a specific provider (Koios/Blockfrost/Maestro) directly, so providers are
   swappable and we can move to our own node (e.g. Dolos) later.
@@ -79,7 +86,8 @@ These are distilled from BLUEPRINT §3 (principles) and §5.2 (settlement rules)
      stored**).
   4. **Best-response** per order.
   5. **Per-order floor** — each order gets at least its own limit (never worse than a
-     plain AMM).
+     plain AMM). The clearing price is **pinned two-sided** (BLUEPRINT Rev 25) so the
+     solver cannot harvest the floor→fair corridor.
   6. **No double satisfaction** — injective order→output binding via each order's
      unique `OutputReference` (no per-order NFT).
 - **Once-per-tx validator must check EVERY script input** — none may slip past it.

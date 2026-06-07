@@ -8,31 +8,43 @@ append-only-ish; don't restate blueprint content (it would drift).
 
 ## Current phase
 
-**On-chain implementation in progress (Rev 7 design).** Anchor + order/pool/pool_mint
-validators exist in `contracts/`, 31 tests green. LP deposit/withdraw + pool
-create/close mint are now implemented. Still pre-production: partial fills,
-bidirectional netting, and an emulator pass.
+**Pre-mainnet on preprod — Rev 25, all layers built + deployed.** The full protocol is
+implemented and live on preprod: **five validators** (the immutable `settlement` anchor +
+`order` + `pool` + `pool_mint` + the `lp_intent` batcher-fulfilled LP validator; 164 aiken
+tests), a working **Rust reference batcher** (~106 tests; discover→solve→assemble→evaluate→
+submit, one-sided + netting settlements, capped/chained within- and cross-pool draining,
+LP-intent fulfilment), and the **Next.js dApp** (swap post/reclaim, LP add/remove, pool
+create/close, LP intents; 147 node + 55 vitest) — all behind the data-access seam. The
+economic **floor→fair corridor is closed on-chain** (Rev 25 two-sided clearing-price pin +
+`lp_intent` exact pins), re-audited 0 Critical/High/Medium. Launch-readiness scaffolding
+(Apache-2.0 license, `1.0.0-rc.1` RC freeze + reproducible-build CI guard, app/batcher
+mainnet-safety surfaces, six launch docs, guarded mainnet-deploy tooling) is done. **Not yet
+on mainnet** — `deployment.ts` mainnet block stays `deployed: false`. Live preprod set: pool
+`34b30c7a`, lp_intent `fa885b03`, anchor `S=a305a3cf`, refs tx `9088f8dc`.
 
 ## Immediate next step
 
-**Off-chain reference solver WORKS LIVE end-to-end** on branch
-`batcher/reference-solver` (66 tests, clippy -D + fmt clean). Crates: **`solver-core`**
-(clearing mirror + v1 floor-only solver + sim), **`txbuild`** (Plutus Data encoder,
-addresses, values, plan), **`shaswap-txbuilder`** (forked pallas-txbuilder w/ withdraw-0),
-**`chain`** (Kupo+Ogmios `ChainBackend` + `assemble` body stitch + Config/decode/fees),
-**`orchestrator`** (bin `shaswap-batcher`: discover→solve→assemble→evaluate→submit).
-**Proven on preprod:** a one-sided settlement (`05d99063…`) AND a perfect two-sided
-**netting** (`4e12d57f…`, pool untouched) built+signed+submitted entirely by the Rust
-batcher. Services: `happy_path/run-{ogmios,kupo}.sh`. **Next (batcher polish, optional):**
-a continuous loop (it's currently one-shot per invocation), mempool-aware order posting,
-multi-funding/auto-split when <2 pure-ADA UTXOs. **Still owed on-chain:** an **emulator
-pass** with a real `Data` ScriptContext (confirms the ~40-order ceiling + decoding cost),
-and folding the clearing-price/ADA-triple-role specs into exact rounding rules. Later:
-**true-equilibrium** cost spike (§5.2.7). The **app** now reads preprod live, posts/reclaims
-orders, adds/removes liquidity (LP deposit/withdraw), and **creates pools** behind the data
-seam (see the 2026-06-01 and 2026-06-02 log entries). **Done on-chain:**
-trust anchor, order/pool/pool_mint validators, LP path, pool close, bidirectional netting,
-deadlines, partial fills.
+**Execute the mainnet go-live gates** (`documentation/launch/mainnet-checklist.md`) — the
+protocol is feature-complete and preprod-proven; what's left is the irreversible freeze.
+Blockers before the anchor freezes on mainnet:
+1. **§13.1 full-tx ex-unit confirmation** with a real CBOR `ScriptContext`. The live ceiling
+   is now **measured at ~34 orders/tx** (mem-bound, ~478k mem/order; 35 orders = 16.72M mem >
+   the ~16.5M budget), so the safe operating cap is `SHASWAP_MAX_ORDERS_PER_TX=30` (validated
+   draining 100s of trades). The checklist still wants the full-tx spike re-run on the frozen
+   Rev 25 set.
+2. **Scope-B go/no-go** — close the perfectly-netted `net=0` trader↔trader CoW residue (a
+   curve-aware per-order check in/beside the anchor → changes `S`, forces re-audit, lowers N)
+   or sign it off as an accepted v1 residual. Decided in lockstep with the spike.
+3. **Re-audit against Rev 25** — the standing `audit_report.md` pins Rev 21; the audit-machine
+   pass `d612c75` already cleared the Rev 25 surface (0 C/H/M), but checklist §0 wants the
+   frozen set formally inside audited scope.
+4. **Bootstrap** — wire mainnet identities + `deployed: true` into `deployment.ts`, flip
+   `.do/app.mainnet.yaml` + the mainnet Blockfrost key, populate the verified-pool allowlists,
+   seed the canonical pool, run ≥2 independent batchers (BLUEPRINT liveness).
+Deploy is one guarded path: `scripts/mainnet/{00-verify-build,01-register-s,02-deploy-refs,
+03-verify-onchain}.sh` over `scripts/mainnet/lib.sh` (requires
+`MAINNET_CONFIRM=I_UNDERSTAND_THIS_IS_IRREVERSIBLE`; idempotent/resumable; re-derives + pins
+the audited Rev 25 hashes).
 
 ## What's decided (authority: BLUEPRINT §3, §5, §12 "Resolved" — see there for detail)
 
@@ -50,19 +62,38 @@ High-signal pointers only:
 - **Trust-anchor wiring = stake-credential tag `S`** (Rev 6, §5.4): order/pool UTXOs
   are stake-delegated to `S`; settlement is **unparameterised**, finds its inputs by
   `S`, identifies the pool by its NFT — resolves the order↔settlement hash circularity.
-- **v1 batch cap ≈ 40 orders/settlement** (§5.3); **v1 = floor-only, equilibrium
-  deferred** (§5.2.7).
+- **v1 batch cap ≈ 34 orders/settlement** (measured live, mem-bound; safe operating cap
+  `max_orders_per_tx=30`); larger books drain over chained settlement txs in one pass.
+- **Clearing price two-sided-pinned to fair** (Rev 25, §5.2.7): the settlement anchor
+  verifies validity, the **pool** validator pins the residual to the fair curve price, so
+  the floor→fair **corridor is closed** — the slippage limit is an *abort condition*, not
+  the execution price. Full surplus-max equilibrium (the perfectly-netted residue) deferred.
+- **Second immutable validator `lp_intent`** (§5.1/§5.4): the permissionless batcher fulfils
+  LP deposit/withdraw intents on hot pools; enterprise-addressed (anchor never enumerates it),
+  owner payout exact-pinned, `ReclaimLp` owner-signature-only.
+- **Pool-fee cap (5%) + tip sanity enforced APP-SIDE**, not on-chain (the only on-chain fee
+  guard is `0 ≤ φ < 1`) — keeps the audited validators frozen.
+- **Apache-2.0** license; contracts **`1.0.0-rc.1`** with a **CI reproducible-build guard**
+  (`aiken v1.1.22`, `git diff --exit-code plutus.json`).
+- **Compliance = SundaeSwap-mirror**: click-through Terms/Privacy consent gate only; IP
+  geofence + OFAC/SDN screening deliberately deferred (would add a mortal dependency).
 - Stack: Aiken / Rust+Pallas / TS-React+MeshJS / hosted provider behind a swappable
   data-access abstraction.
 
 ## Open / unresolved (authority: BLUEPRINT §12 + §13)
 
-- ~~Ex-unit feasibility (§13.1)~~ — **resolved: viable, ~40–50, O(N) binding, mem-bound.**
+- ~~Ex-unit feasibility (§13.1)~~ — **resolved: viable, mem-bound; live ceiling ~34
+  orders/tx** (~478k mem/order), safe operating cap 30. **Still owed for mainnet:** the
+  full-tx §13.1 spike with a real CBOR `ScriptContext` on the frozen Rev 25 set.
 - ~~Trust-anchor wiring / k-ownership split / binding-O(N)~~ — **resolved Rev 6 (§5.4/§5.2).**
-- ~~Surplus rule (v1)~~ — **resolved: v1 floor-only;** equilibrium cost still needs its
-  own spike (est. lowers N to ~30–40).
-- **Spec stubs to finish** (`spec/partial-fills.md`, `spec/clearing-price.md`,
-  `spec/ada-triple-role.md`) → full specs during the deep dive.
+- ~~Surplus rule (v1)~~ — **resolved & DEPLOYED (Rev 25): the floor→fair corridor is CLOSED**
+  by a two-sided pool price pin (+ `lp_intent` exact/at-ratio pins), preprod-live + re-audited
+  0 C/H/M. Only **Scope-B** is deferred — the perfectly-netted `net=0` trader↔trader residue
+  (closing it changes the frozen anchor `S`); gated on the §13.1 spike + a go/no-go. See the
+  2026-06-06 Rev 25 log entry.
+- ~~Spec stubs to finish~~ — **done:** `spec/{partial-fills,clearing-price,clearing-price-pin,
+  ada-triple-role,economic-parameters,liveness-and-recovery,data-availability,liquidity-bootstrap,
+  lp-intents,ex-unit-spike}.md` all written; `launch/{mainnet-checklist,batcher-operations}.md` added.
 - Solver tip mechanics; order rollover; `λ`/fee defaults; sharding defaults; ~~data
   provider choice~~ (app uses **Blockfrost** behind the seam, server-side key).
 - ~~**⚠️ PRE-RELEASE: owner payout is an ENTERPRISE address → breaks some wallets.**~~
@@ -75,8 +106,141 @@ High-signal pointers only:
   preprod** (see the 2026-06-01 base-address log entry): a settlement paid the owner at a
   base address that the owner key then spent. (Lace *display* is the maintainer's final
   browser check.)
+- **Mainnet not yet wired:** `deployment.ts` mainnet stays `deployed: false` (null refs);
+  verified-pool allowlists empty; mainnet client wiring + canonical-pool bootstrap are blocked
+  on the actual deploy (see Immediate next step). Terms/Privacy are a DRAFT pending US counsel.
 
 ## Log
+
+- **2026-06-07** — **App wallet-perf: defer the MeshJS WASM off mobile load (PRs #32, #34).**
+  The dApp's home-route Lighthouse weight came almost entirely from `@meshsdk/core-cst` (a
+  ~7.5 MB WASM serialization lib whose instantiation is one ~2,955 ms main-thread task ≈ all of
+  mobile TBT). **PR #32** (`app/lazy-load-meshsdk`, `7227a6f`) deferred `MeshProvider` via a
+  post-mount `useEffect` `import()` + `next/dynamic` — eager first-load JS dropped ~8.5 MB→~195 KB
+  gz but **Lighthouse stayed FLAT** (mobile 67→68, desktop 70→70): Lighthouse measures TBT across
+  the whole load window, so the WASM still instantiated during the trace. **PR #34**
+  (`app/wallet-defer-on-interaction`, `8e2a77d`) is the working fix: a **mesh-free**
+  `AppWalletProvider` (`src/lib/wallet/context.tsx`, disconnected by default) imports the wallet
+  stack ONLY on the user's first interaction (`pointerdown`/`keydown`/`touchstart`, never
+  scroll/idle), so a headless load never triggers the WASM; `MeshBridge`
+  (`src/components/wallet/MeshBridge.tsx`) is the sole `@meshsdk/react` importer, mounts a local
+  `MeshProvider`, and mirrors state up via `onState` (no app re-mount); drop-in compat hooks
+  (`src/lib/wallet/hooks.ts`) keep consumers changing only their import path. The swap form
+  SSRs/paints immediately with live API quotes and no wallet. **Live PageSpeed:** home **67→96
+  mobile, 70→100 desktop**; mobile TBT ~3,000→10 ms; total bytes 8.7 MB→412 KB. 147 node + 55
+  vitest green, 21 routes prerender; playwright confirms core-cst isn't requested until a click.
+  `/pools/[id]` is deliberately left heavy (client-side pool-datum decode). Both merged to `dev`
+  and `main`; `app.shaswap.org` auto-deploys from `main` (`.do/app.preprod.yaml`). **Owed
+  (maintainer):** confirm the live redeploy landed + re-run PageSpeed in prod.
+
+- **2026-06-06** — **🎯 Rev 25 CLEARING-PRICE PIN — the economic corridor is CLOSED on-chain +
+  relaunched to preprod (PR #30).** Acts on the 2026-06-05 economic-soundness review
+  (`documentation/reviews/economic-soundness-2026-06-05.md`), which proved the crux: the
+  settlement anchor verifies **validity, not optimality** — the per-order floor uses the full
+  `sell_amount` and the pool `k`-check was **one-sided**, so the uniform price was free in a
+  `[order-floor, AMM-curve]` corridor. Underpaying a trader *raises* k (so k caps only the top),
+  and the tip is price-invariant so the tip auction can't compete it down; a solver-who-is-also-LP
+  banks the floor→fair gap as k-appreciation (≈0.7% on a tight 2% limit, up to ~99.99% on
+  `limit=1`). **Fix (Scope A):** `spend.pool_settle` adds the missing LOWER edge — a two-sided
+  price pin `−net_b ≥ get_amount_out(net_a, …) − n_orders` (and symmetric), keeping the k-check as
+  the upper edge, so any non-zero residual is forced to the **fair curve price** (uniform price ⇒
+  per-order). Dust band `eps = n_orders` is **absolute/batch-size-derived** (≤~34 sub-units),
+  never a fraction of k. `lp_intent.ak` closes its milder corridor with **exact `==` pins**
+  (withdraw `released == floor(res·L/circ)`; deposit the **at-ratio pin** `dep ==
+  ceil(shares·res/circ)` — off-ratio over-supply forced back to owner, never donated). Batcher
+  (`c77a8e9`) gained a `fair_price` candidate re-pricing each subset at the fair-equilibrium price
+  (was a regression risk — it previously floored one-sided books); `curve.rs` mirrors the pin with
+  Rust↔Aiken parity tests. App (`e8710b8`) reframes the slippage limit as an **abort condition**.
+  **BLUEPRINT Rev 25** corrects the false §5.2.5 "never worse than a plain AMM" / §8 "worst case =
+  Uniswap-parity" claims (true vs the *curve* only after the pin), ships the cheap O(1) pin
+  (§5.2.7), and strikes the §12.2 surplus rule as resolved for v1. **Re-audit** (`d612c75`,
+  audit-machine, `audit_report_060626.md`): re-derived the pin math → **0 Critical / 0 High / 0
+  Medium** (1 Low), 164 tests. **Relaunched to preprod** (`e9fec38`): applied **pool `34b30c7a`,
+  lp_intent `fa885b03`**; the frozen anchor (settlement `a305a3cf`, order `e7fa1a38`, pool_mint
+  `f558dfb2`) is byte-identical; all 4 refs in tx **`9088f8dc`** (settlement#0/pool#1/order#2/
+  lp_intent#3); `8af5dca`+`6bff062` aligned batcher+app + added a preprod config base.
+  **ACCEPTED-not-fixed (v1):** the perfectly-netted `net=0` trader↔trader CoW residue (no
+  solver-LP harvest, pool untouched — that's **Scope B**, deferred) and the decimals-blind dust
+  band. **Owed:** the §13.1 full-tx ex-unit spike + the Scope-B go/no-go gate the mainnet anchor
+  freeze (see Immediate next step).
+
+- **2026-06-04 → 06-06** — **LP-INTENTS: a second immutable validator (batcher-fulfilled LP) +
+  audit 060426 remediation (PR #29).** Added `lp_intent(S)` (`contracts/validators/lp_intent.ak`
+  + lib, spec `documentation/spec/lp-intents.md`) so the permissionless batcher can fulfil LP
+  **deposit/withdraw** intents on hot pools where the direct `pool.LpAction` path loses the
+  per-block race for the pool UTXO. It sits at an **enterprise** address (stake `None`) so the
+  anchor never enumerates it; `Fulfill` asserts `!withdrawal_present(S)` (a **load-bearing no-fold
+  guard** — without it a settlement for an S-pool could co-spend a non-S victim pool via PoolSettle
+  and mint unbacked shares), requires exactly one intent input per tx (injective owner bind, no
+  per-intent NFT), `mint==0`, binds the pool by `datum.pool_nft`, and **exact-pins** the owner
+  payout (so the batcher nets only `funding+tip`). `ReclaimLp` is owner-VK-sig-only;
+  withdraw-reclaim returns the **LP token, not the underlying** (honest §13 residual). Off-chain
+  followed: batcher Phase-2 fulfilment (`15207ef`, +`60cbdd3` under-tip pre-gate before the
+  EvaluateTx round-trip) and app Phase-3 post/reclaim UI (`155e013`:
+  `LiquidityPanel`/`PendingLpIntents`/`useLpIntents`). **Audit `audit_report_060426.md`**
+  (audit-machine, 0 Crit/1 High/1 Med/3 Low) fully remediated (`cfdf643` Rev 23 + self-review
+  `2f16475` Rev 24): **H-01** partial-fill remainder didn't pin `pool_nft` (asset-substitution
+  rug) → pinned in `consume_remainder` (re-hashed settlement); **M-01/L-02** standalone `lp_action`
+  didn't pin full pool value (dust-DoS + overhead-lovelace skim) → `out.value == pool_exp`;
+  **L-03** `mint.create` min-ADA; **L-01** Script-owner non-reclaimable → documented. **Deployed +
+  E2E-verified on preprod** (`e965427`/`ae7f29d`: batcher fulfilled a deposit in-block, ReclaimLp
+  on signature) — but **that identity set (S `a305a3cf`, refs `c5751d0d`) was SUPERSEDED the same
+  day** by the Rev 25 relaunch above (pool `34b30c7a`, lp_intent `fa885b03`, refs `9088f8dc`);
+  treat the `c5751d0d`/`e8edcd58`/`246c1a88` txs as historical. **Owed:** multi-intent batching
+  deferred; L-01 VK-owner precondition is an off-chain-builder obligation.
+
+- **2026-06-04** — **LAUNCH-READINESS (PR #27): license, RC freeze, reproducible-build guard,
+  mainnet-safety surfaces, launch docs + guarded deploy.** Closed the gap between "hyperstructure
+  on paper" and a mainnet go-live. (1) **License/READMEs** (`306ed7e`): Apache-2.0 `LICENSE` +
+  `NOTICE` (Copyright 2026 Logical Mechanism), filled root + `documentation/` READMEs. (2) **Six
+  launch docs** (`9ffcf65`): `spec/economic-parameters.md` (the permanent immutable constants —
+  `min_ada`=2 ADA, `min_liq`=1000, `total_lp`=i64::MAX, on-chain fee bound `0≤φ<1` the ONLY fee
+  guard, no on-chain tip floor/fee ceiling), `spec/liveness-and-recovery.md`,
+  `spec/data-availability.md`, `spec/liquidity-bootstrap.md`, `launch/mainnet-checklist.md` (the
+  one-shot go-live gate), `launch/batcher-operations.md` (operator runbook). (3) **Contracts → RC**
+  (`d716943`): `aiken.toml` `0.1.0`→**`1.0.0-rc.1`** (`plutus.json` version-string only, no
+  bytecode drift); `.tool-versions` pins `aiken 1.1.22` + `nodejs 22.6.0` (reproducible build
+  `v1.1.22+39d6b04`); `audit_report.md` stamped (2026-06-03, in-house audit-machine, NOT an
+  external firm). (4) **App economic guards** (`cc0cf42`): `createPool.ts` rejects `φ > 5%` (1/20);
+  new fail-closed per-network **verified-pool NFT allowlist** (`verifiedPools.ts`, UI-only, no
+  on-chain privilege; all networks currently empty); `SwapCard` high-fee caution + ✓Verified badge
+  + low-tip advisory; `order.test.ts` locks `buildOrder` to always emit a VK owner. (5) **Batcher
+  safety** (`ff9fd3b`): startup `network=MAINNET/preprod/preview` banner, a live-funds warning on
+  `SHASWAP_SUBMIT=1` mainnet, `deployment.mainnet.example.json` template. (6) **Reproducibility
+  guard + guarded mainnet deploy** (`1a6a3ad`→`2a6abf1`→`73e203f`): CI fails on `git diff
+  --exit-code plutus.json` after a fresh pinned-`v1.1.22` build; the one-shot deploy was hardened
+  (4 confirmed review bugs fixed — inter-step confirmation-wait, idempotent re-register, real
+  on-chain verify, safe collateral) then refactored into `scripts/mainnet/lib.sh` + human-paced
+  steps `00-verify-build`→`01-register-s`→`02-deploy-refs`→`03-verify-onchain.sh` (requires
+  `MAINNET_CONFIRM=I_UNDERSTAND_THIS_IS_IRREVERSIBLE`; idempotent/resumable; pins + re-derives the
+  audited hashes). **Owed:** verified-pool allowlists empty (populate at bootstrap); mainnet
+  `deployment.ts` `deployed:false`; checklist pre-flight gates (full-tx ex-unit, Scope-B, re-audit
+  vs Rev 25) not yet executed.
+
+- **2026-06-04** — **Batcher: capped netted-book draining + the live ~34-order ex-unit ceiling
+  (PR #25 `batcher/bulk-test`).** Fixed `solve_capped` (`solver-core/src/solve.rs`, `cd3d12d`) so a
+  **capped** settlement on a **netted two-sided book** still clears: it interleaves the two sides
+  before truncating and re-prices the kept subset to its own balance price (before, capping a
+  netted book below its size returned no clearing and posted orders sat unsettled). Added
+  `happy_path/bulk-post-orders.sh` (`f6d6087`) to load-test batching. **Measured the per-tx ex-unit
+  ceiling live: ~34 orders** — 35 orders = mem 16,720,216 > the ~16,500,000 budget (mem is binding,
+  ~478k mem/order; steps fine at ~7.0B/10B). **Safe operating value: `SHASWAP_MAX_ORDERS_PER_TX=30`**
+  (validated draining 100s of trades steadily); larger books drain over chained settlement txs in
+  one block-driven pass. This is the real-data answer to the §13.1 ex-unit question; the full-tx
+  CBOR-`ScriptContext` spike on the frozen Rev 25 set is the remaining mainnet gate.
+
+- **2026-06-04** — **App: FE/UX polish (PR #22) + SundaeSwap-mirror compliance gate (PR #24).**
+  (1) FE polish across swap/pools/orders: a blocking **Pip overlay** during tx flows, spinning
+  refresh indicators, ADA's own ₳-on-Cardano-blue icon, pool UI tidy (position grid, simpler
+  fee/first-deposit copy), collateral re-check feedback, a fix for orders stuck "pending" after
+  settling, and copy cleanups (drop em-dashes / network-specific wording from shared copy). (2)
+  **Compliance** = click-through Terms/Privacy + a versioned pre-connect consent gate mirroring
+  SundaeSwap — a **consent record only**; nothing geofences, screens, or blocks (deliberately
+  deferred, would add a mortal dependency). New `terms`/`privacy` pages + `legal/LegalConsent.tsx`
+  + `legal/config.ts` (bump `LEGAL.version` to re-prompt), gated in `WalletBar`; hardened
+  (`9153dc5`) with localStorage + in-memory fallback, re-prompt on version bump, disconnect of
+  ungated auto-reconnected wallets, and dialog a11y. Terms/Privacy are a DRAFT — a US attorney must
+  finalize before mainnet; `LEGAL.entity` = Logical Mechanism LLC.
 
 - **2026-06-02** — **App close-empty-pool — reclaim a never-seeded pool (branch `app/create-pool`).**
   Follow-up to create-pool: a creator can now **tear down an EMPTY pool** (no liquidity, `circ==0`)
