@@ -105,6 +105,34 @@ pub fn swap_out(res_in: i128, res_out: i128, dx: i128, fee: Fee) -> i128 {
     i128::try_from(dy).unwrap_or(0)
 }
 
+/// The Rev-25 **two-sided price pin** (mirrors `spend.pool_settle`'s underpay floor):
+/// the pool must release the FULL curve amount for the net residual it absorbed, within
+/// `eps` sub-units. `k_with_fee_ok` separately caps the TOP (overpayment); this is the
+/// LOWER edge that closes the floor→fair corridor. `eps = n_orders` (the absolute,
+/// batch-size-derived dust band — never a fraction of `k`). Vacuous when there is no
+/// residual (perfectly-netted) or on a donation (both sides ≥ 0). A solver MUST size its
+/// residual payout so this holds, or the on-chain `pool` validator rejects the settlement.
+pub fn pin_ok(
+    res_a_in: i128,
+    res_b_in: i128,
+    res_a_out: i128,
+    res_b_out: i128,
+    fee: Fee,
+    eps: i128,
+) -> bool {
+    let net_a = res_a_out - res_a_in;
+    let net_b = res_b_out - res_b_in;
+    if net_a > 0 && net_b < 0 {
+        // pool took asset_a, paid asset_b
+        -net_b >= swap_out(res_a_in, res_b_in, net_a, fee) - eps
+    } else if net_b > 0 && net_a < 0 {
+        // pool took asset_b, paid asset_a (symmetric)
+        -net_a >= swap_out(res_b_in, res_a_in, net_b, fee) - eps
+    } else {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +159,27 @@ mod tests {
         assert!(k_with_fee_ok(ra, rb, ra + dx, rb - dy, fee_3_1000()));
         // paying one extra unit must break the k-check (floor is tight).
         assert!(!k_with_fee_ok(ra, rb, ra + dx, rb - (dy + 1), fee_3_1000()));
+    }
+
+    #[test]
+    fn pin_ok_boundary_matches_contract() {
+        // mirrors clearing_test::prop_pin_fair_boundary / pool_settle_dust_*: with eps=0 the
+        // pool must pay EXACTLY the fair curve amount; eps widens the band by that many units.
+        let f = fee_3_1000();
+        let (ra, rb) = (1_000_000_000i128, 1_000_000_000i128);
+        let dx = 1_000_000;
+        let fair = swap_out(ra, rb, dx, f);
+        // eps = 0: pay fair -> ok; pay fair-1 -> rejected; pay fair+1 -> rejected by k (here pin
+        // is vacuous on overpay, but k_with_fee_ok catches it — both gates run in the solver).
+        assert!(pin_ok(ra, rb, ra + dx, rb - fair, f, 0));
+        assert!(!pin_ok(ra, rb, ra + dx, rb - (fair - 1), f, 0));
+        // eps = 1 (one order): fair-1 now within the dust band; fair-2 still rejected.
+        assert!(pin_ok(ra, rb, ra + dx, rb - (fair - 1), f, 1));
+        assert!(!pin_ok(ra, rb, ra + dx, rb - (fair - 2), f, 1));
+        // overpay (fair+1) leaves the pin vacuous-or-true but BREAKS k — the solver requires both.
+        assert!(!k_with_fee_ok(ra, rb, ra + dx, rb - (fair + 1), f));
+        // perfectly-netted (no residual) is always pin-ok.
+        assert!(pin_ok(ra, rb, ra, rb, f, 0));
     }
 
     #[test]

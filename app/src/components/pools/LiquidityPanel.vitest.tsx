@@ -66,6 +66,12 @@ vi.mock("@/lib/client/tx", () => ({
   withdrawLiquidity: (...a: unknown[]) => h.withdraw(...a),
   closePool: (...a: unknown[]) => h.close(...a),
 }));
+// The panel renders the per-pool LP-intent surface; mock its hook so it doesn't hit the network.
+// (LP_INTENTS_LIVE is false under the test config — preprod default, no lp_intent ref — so the
+// panel defaults to the Direct mode the existing add/remove tests exercise.)
+vi.mock("@/hooks/useLpIntents", () => ({
+  useLpIntents: () => ({ intents: [], loading: false, error: null, reload: () => {} }),
+}));
 
 import { LiquidityPanel } from "./LiquidityPanel";
 
@@ -84,9 +90,16 @@ function editableInput(): HTMLInputElement {
   return el;
 }
 
+/** Switch to the Direct (advanced) LP mode — the default is the batcher intent path now
+ *  that LP_INTENTS_LIVE is true on the preprod test config. */
+function useDirect() {
+  fireEvent.click(screen.getByRole("button", { name: /Direct/ }));
+}
+
 describe("LiquidityPanel — add", () => {
   it("wires the deposit preview math (LP received + min after slippage)", () => {
     render(<LiquidityPanel pool={POOL} />);
+    useDirect();
     // amountA = ADA side (decimals 6). 100 ADA at the 1000/2e9 ratio → 100,000 LP.
     fireEvent.change(editableInput(), { target: { value: "100" } });
 
@@ -103,9 +116,26 @@ describe("LiquidityPanel — add", () => {
   });
 });
 
+describe("LiquidityPanel — mode toggle", () => {
+  it("defaults to the Batcher intent path when live, with Direct one click away", () => {
+    render(<LiquidityPanel pool={POOL} />);
+    // LP_INTENTS_LIVE is true on the preprod test config, so the default is the batcher path:
+    // the deposit form's submit reads "Add liquidity (batcher)".
+    expect(screen.getByRole("button", { name: /Batcher/ })).toBeInTheDocument();
+    fireEvent.change(editableInput(), { target: { value: "100" } });
+    expect(screen.getByRole("button", { name: "Add liquidity (batcher)" })).toBeEnabled();
+
+    // Switching to Direct shows the direct on-chain form (submit reads "Add liquidity").
+    useDirect();
+    fireEvent.change(editableInput(), { target: { value: "100" } });
+    expect(screen.getByRole("button", { name: "Add liquidity" })).toBeEnabled();
+  });
+});
+
 describe("LiquidityPanel — remove", () => {
   function gotoRemove() {
     render(<LiquidityPanel pool={POOL} />);
+    useDirect(); // these assert the DIRECT withdraw preview; intent is the default mode
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
   }
 

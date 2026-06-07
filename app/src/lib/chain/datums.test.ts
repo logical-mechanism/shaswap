@@ -16,14 +16,19 @@ import {
   ADA,
   assetFromUnit,
   assetUnit,
+  decodeLpIntentDatum,
   decodeOrderDatum,
   decodePoolDatum,
   encodeAssetId,
+  encodeLpIntentDatum,
   encodeOrderDatum,
   encodePoolDatum,
+  lpIntentFulfillRedeemer,
+  lpIntentReclaimRedeemer,
   orderReclaimRedeemer,
   orderSettleRedeemer,
   toCbor,
+  type LpIntentDatum,
   type OrderDatum,
   type PoolDatum,
 } from "./datums.ts";
@@ -91,6 +96,94 @@ test("OrderDatum with a SCRIPT stake credential round-trips", () => {
     deadline: 1700000000000n,
   };
   assert.deepEqual(decodeOrderDatum(toCbor(encodeOrderDatum(o))), o);
+});
+
+// ---- LpIntentDatum (BLUEPRINT §5.1 Rev 22) ----
+//
+// Make-or-break parity: the field order + constructor tags must match the Aiken type
+// (`contracts/lib/shaswap/lp_intent_types.ak`) and the pallas encoder
+// (`batcher/crates/txbuild/src/plutus.rs` `lp_intent_datum` / `lp_intent_action`)
+// byte-for-byte, or a posted intent decodes to a different value and the validator
+// rejects (or the batcher mis-fulfils). The golden CBOR below was produced by THIS
+// encoder and hand-verified field-by-field against `plutus.rs`; the same primitives
+// (`constr`/`int`/`asset_id`/`credential`/`option_*`) are already cross-pinned to the
+// pallas encoder by the OrderDatum golden above, so the LP datum is transitively pinned.
+
+// Withdraw intent: base-address owner (Some stake), `min_a`/`min_b` floors set,
+// `min_shares = 0`, a Some deadline. `LpWithdraw = Constr 1 []`.
+const SAMPLE_LP_WITHDRAW: LpIntentDatum = {
+  owner: { kind: "key", hash: "ab".repeat(28) },
+  ownerStake: { kind: "key", hash: "e1".repeat(28) }, // base-address payout
+  poolNft: { policy: "44".repeat(28), name: "4e4654" }, // "NFT"
+  action: "withdraw",
+  minA: 19_000_000n,
+  minB: 9_000_000n,
+  minShares: 0n,
+  tip: 1_000_000n,
+  deadline: 1000n,
+};
+
+const SAMPLE_LP_WITHDRAW_CBOR =
+  "d8799fd8799f581cababababababababababababababababababababababababababababffd8799fd8799f581ce1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1ffffd8799f581c44444444444444444444444444444444444444444444444444444444434e4654ffd87a801a0121eac01a00895440001a000f4240d8799f1903e8ffff";
+
+// Deposit intent: enterprise owner (None stake), `min_shares` floor set,
+// `min_a = min_b = 0`, None deadline. `LpDeposit = Constr 0 []`.
+const SAMPLE_LP_DEPOSIT: LpIntentDatum = {
+  owner: { kind: "key", hash: "cd".repeat(28) },
+  ownerStake: null, // enterprise payout
+  poolNft: { policy: "ee".repeat(28), name: "4e4654" },
+  action: "deposit",
+  minA: 0n,
+  minB: 0n,
+  minShares: 90_000n,
+  tip: 2_000_000n,
+  deadline: null,
+};
+
+const SAMPLE_LP_DEPOSIT_CBOR =
+  "d8799fd8799f581ccdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdffd87a80d8799f581ceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee434e4654ffd8798000001a00015f901a001e8480d87a80ff";
+
+test("LpIntent nullary redeemers match known CBOR", () => {
+  assert.equal(toCbor(lpIntentFulfillRedeemer), "d87980"); // Fulfill = Constr 0 []
+  assert.equal(toCbor(lpIntentReclaimRedeemer), "d87a80"); // ReclaimLp = Constr 1 []
+});
+
+test("LpIntentDatum (withdraw) encodes byte-for-byte to the golden CBOR", () => {
+  assert.equal(toCbor(encodeLpIntentDatum(SAMPLE_LP_WITHDRAW)), SAMPLE_LP_WITHDRAW_CBOR);
+});
+
+test("LpIntentDatum (deposit) encodes byte-for-byte to the golden CBOR", () => {
+  assert.equal(toCbor(encodeLpIntentDatum(SAMPLE_LP_DEPOSIT)), SAMPLE_LP_DEPOSIT_CBOR);
+});
+
+test("LpIntentDatum round-trips through encode → decode (withdraw + deposit)", () => {
+  assert.deepEqual(
+    decodeLpIntentDatum(toCbor(encodeLpIntentDatum(SAMPLE_LP_WITHDRAW))),
+    SAMPLE_LP_WITHDRAW,
+  );
+  assert.deepEqual(
+    decodeLpIntentDatum(toCbor(encodeLpIntentDatum(SAMPLE_LP_DEPOSIT))),
+    SAMPLE_LP_DEPOSIT,
+  );
+});
+
+test("LpIntentDatum with a SCRIPT stake credential round-trips", () => {
+  const d: LpIntentDatum = {
+    ...SAMPLE_LP_WITHDRAW,
+    ownerStake: { kind: "script", hash: "e2".repeat(28) },
+    deadline: 1700000000000n,
+  };
+  assert.deepEqual(decodeLpIntentDatum(toCbor(encodeLpIntentDatum(d))), d);
+});
+
+test("decodeLpIntentDatum rejects malformed input (never silently parses)", () => {
+  // A bare integer is not a constructor.
+  assert.throws(() => decodeLpIntentDatum(toCbor(42n as never)));
+  // An OrderDatum has 9 fields too, but field 3 is a Bool (Constr 0/1) not an AssetId —
+  // and field 7 (`partial`) is a Bool where the LP datum expects an int — so a cross-decode
+  // throws rather than silently mis-parsing.
+  const orderCbor = toCbor(encodeOrderDatum(SAMPLE_ORDER));
+  assert.throws(() => decodeLpIntentDatum(orderCbor));
 });
 
 test("PoolDatum round-trips through encode → decode", () => {

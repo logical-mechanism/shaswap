@@ -67,6 +67,30 @@ What this does **not** mean in v1, stated plainly:
   guarantees you never settle *worse* than a plain AMM would have given — it does **not**
   give you a way to swap without a solver. With zero solvers, nothing settles; you reclaim.
 
+## LP deposit/withdraw — the same liveness story, with one honest caveat
+
+LP actions have the **same two-path** structure (Rev 22, [`lp-intents.md`](lp-intents.md)):
+
+- **Direct path (cold pools)** — you spend the pool UTXO yourself via `LpAction`. Trustless
+  and immediate, but it is a *pool-spend mutually exclusive with a settlement*, so on a busy
+  pool it must **win a race for the pool UTXO every block** and keeps failing with
+  `BadInputsUTxO`. Good for quiet pools; effectively unusable on hot ones.
+- **Intent path (hot pools)** — you post a tipped **LP-intent** UTXO and the permissionless
+  batcher folds it into the per-block pool-spend it is already doing, releasing your
+  reserves (withdraw) or minting your shares (deposit) and keeping **only the tip**. This is
+  the default in the dApp; the direct path is an "advanced / no-trust" fallback toggle.
+
+**Reclaim** works for both (owner signature, always), with one caveat that does **not**
+apply to orders:
+
+- A **deposit-intent** reclaim returns your `asset_a` + `asset_b` — exactly like an order.
+- A **withdraw-intent** reclaim returns your **LP tokens, not the underlying liquidity**.
+  Converting LP back to underlying *is* a pool mutation, so there is no trustless
+  reclaim-to-underlying backstop: hot-pool *exit* has the same tipped-solver liveness as
+  orders (you always recover your LP on signature; turning it into liquidity still needs a
+  solver to fulfil the intent, or a quiet block for the direct path). This is **inherent**,
+  it is the §13.11 residual, and the dApp states it plainly at withdraw time.
+
 For liveness assurance at launch, operators are encouraged to run **≥2 independent
 reference batchers** (different hosts/regions) so a single solver outage doesn't stall the
 book. This is operational defense-in-depth, not a protocol requirement. See

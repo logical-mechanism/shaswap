@@ -6,7 +6,7 @@
 //! with `Some(Inline(S))`; payouts pin the order datum's `owner_stake` — `Some(c)`
 //! for a base address, `None` for an enterprise one).
 
-use crate::types::{BoundDatum, Credential, OrderDatum, OutputReference, PoolDatum};
+use crate::types::{BoundDatum, Credential, LpIntentDatum, OrderDatum, OutputReference, PoolDatum};
 use crate::value::Value;
 
 /// A shelley address: payment credential + optional (inline) stake credential.
@@ -73,4 +73,15 @@ pub struct PoolInput {
     pub address: Address,
     pub value: Value,
     pub datum: PoolDatum,
+}
+
+/// An LP-intent UTXO being consumed by a fulfillment tx (BLUEPRINT §5.1 Rev 22).
+/// Sits at the `lp_intent` validator's address with a `None` (enterprise) stake
+/// credential — never the settlement tag `S`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LpIntentInput {
+    pub output_reference: OutputReference,
+    pub address: Address,
+    pub value: Value,
+    pub datum: LpIntentDatum,
 }

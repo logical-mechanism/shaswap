@@ -41,7 +41,8 @@ test("amountOut: x*y=k with no fee is exact", () => {
 test("fee reduces output (fee boundary)", () => {
   const out0 = quoteConstantProduct(mathPool(0), TOK0.unit, TOK0B.unit, "1000").amountOut;
   const out30 = quoteConstantProduct(mathPool(30), TOK0.unit, TOK0B.unit, "1000").amountOut;
-  // inAfterFee = 997 -> out = 1000*997/(1000+997) = floor(996503/1997)... = 499
+  // single-fraction curve (γ=9970): out = floor(1000*1000*9970 / (1000*10000 + 1000*9970))
+  //                                       = floor(9_970_000_000 / 19_970_000) = 499
   assert.equal(out30, "499");
   assert.ok(BigInt(out30) < BigInt(out0));
 });

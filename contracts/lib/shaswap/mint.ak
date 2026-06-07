@@ -7,7 +7,7 @@ use aiken/collection/list
 use cardano/address.{VerificationKey}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{InlineDatum, OutputReference, Transaction}
-use shaswap/constants.{lp_name, nft_name, total_lp}
+use shaswap/constants.{lp_name, nft_name, pool_min_ada, total_lp}
 use shaswap/types.{PoolDatum}
 
 /// Create: consume the seed, mint exactly {NFT: 1, LP: total_lp} under this
@@ -57,10 +57,27 @@ pub fn create(
   // credential — assert it at create (the only fail-fast gate) rather than let a
   // Script-credential creator silently brick the pre-seed teardown path.
   expect VerificationKey(_) = d.creator
+  // (L-03) the pool must hold at least the per-UTXO min-ADA overhead that
+  // `reserve_of` carves out — otherwise its ADA reserve would be negative and the
+  // first deposit / every settlement against it would be infeasible (self-brick).
+  // This is the on-chain half of the placement invariant; the OFF-CHAIN builder is
+  // still responsible for placing the pool at the `pool(S)` address tagged `S` (the
+  // mint policy is parameterised only by the seed and so cannot see `S` — but the
+  // one-shot NFT + post-creation address continuity make a mis-placement a creator
+  // self-grief, never a theft of others' funds — audit L-03).
+  expect assets.lovelace_of(pool.value) >= pool_min_ada
   True
 }
 
 /// Close: burn-only — no positive quantity may be minted under this policy.
+///
+/// (I-03) This gates only the SIGN of the policy's mint (every triple `q ≤ 0`); it is
+/// deliberately decoupled from the pool spend. The dangerous burns — the pool's *held*
+/// NFT/LP — are impossible without spending the pool input, which routes through
+/// `pool.ClosePool` (held == total_lp + creator signature + full NFT/LP burn). The only
+/// thing this branch lets a holder do standalone is burn their OWN *circulating* LP:
+/// a self-forfeiture (reserves unchanged, fewer real claims, other LPs unharmed). So it
+/// is self-harm-only, never a theft path — pinned by `close_burns_circulating_lp`.
 pub fn close(policy_id: PolicyId, tx: Transaction) -> Bool {
   list.all(
     assets.flatten(assets.restricted_to(tx.mint, [policy_id])),

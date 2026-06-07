@@ -36,9 +36,10 @@ const TOK_UNIT = "3333333333333333333333333333333333333333333333333333333d" + "5
 const PKH = "c0".repeat(28); // mint_test.ak's creator_vkh
 const SEED = { txHash: "77".repeat(32), index: 3 }; // mint_test.ak's seed()
 
-// Ground truth from `aiken blueprint apply` + `cardano-cli policyid` for SEED.
+// Ground truth from `aiken blueprint apply` + `cardano-cli policyid` for SEED (post-audit
+// pool_mint, Rev 24).
 const GROUND_TRUTH_POLICY_ID =
-  "68cd7477559b5702f95ca15722069fe0795445de197359acfd0c408d";
+  "d695abfe998273ddf9724adcea4f43303f84167a47a1f30569060838";
 
 const base: CreatePoolIntent = {
   seed: SEED,

@@ -1,5 +1,11 @@
 import type { UTxO } from "@meshsdk/core";
-import type { Pool, Quote, TokenInfo, WalletPosition } from "@/lib/data";
+import type {
+  LpIntentPosition,
+  Pool,
+  Quote,
+  TokenInfo,
+  WalletPosition,
+} from "@/lib/data";
 
 /**
  * Client-side fetch helpers.
@@ -54,6 +60,18 @@ export async function fetchOrders(
     signal,
   );
   return orders;
+}
+
+export async function fetchLpIntents(
+  address: string,
+  signal?: AbortSignal,
+): Promise<LpIntentPosition[]> {
+  const qs = new URLSearchParams({ address });
+  const { intents } = await getJson<{ intents: LpIntentPosition[] }>(
+    `/api/lp-intents?${qs.toString()}`,
+    signal,
+  );
+  return intents;
 }
 
 /**

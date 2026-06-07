@@ -21,4 +21,5 @@ pub mod backend;
 pub mod config;
 pub mod decode;
 pub mod fees;
+pub mod fulfill;
 pub mod kupo_ogmios;

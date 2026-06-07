@@ -8,22 +8,32 @@ import {
 import {
   type AssetId,
   assetUnit,
+  decodeLpIntentDatum,
   decodeOrderDatum,
   decodePoolDatum,
   isAda,
+  type LpIntentDatum,
   type OrderDatum,
 } from "@/lib/chain/datums";
 import {
+  DEPLOYMENT_NETWORK_ID,
   lpUnitForPool,
   ORDER_ADDR,
   POOL_ADDR,
   TOTAL_LP,
 } from "@/lib/chain/deployment";
+import { lpIntentAddress } from "@/lib/chain/lpIntentScript";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
 import { feeToBps, httpStatus, isRetriable } from "./providerUtil";
-import { qtyOfUnit, reserveOf, toPosition } from "./providerMap";
-import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
+import { qtyOfUnit, reserveOf, toLpIntentPosition, toPosition } from "./providerMap";
+import type {
+  LpIntentPosition,
+  Pool,
+  Quote,
+  TokenInfo,
+  WalletPosition,
+} from "./types";
 import { toBigInt as toBig } from "../bigint";
 import { errText, log } from "../log";
 
@@ -282,6 +292,40 @@ export class BlockfrostDataProvider implements DataProvider {
       positions.push(toPosition(u, d, poolByNft.get(assetUnit(d.poolNft))));
     }
     return positions;
+  }
+
+  async walletLpIntents(address: string): Promise<LpIntentPosition[]> {
+    const ownerPkh = deserializeAddress(address).pubKeyHash;
+    if (!ownerPkh) return [];
+
+    // The lp_intent enterprise address (stake = None) — derived, S-applied. On a network where
+    // the LP-intent path isn't live yet (pre-Phase-4) it has no history; a 404 from Blockfrost
+    // for a never-used address is "no intents", not an error.
+    const addr = lpIntentAddress(DEPLOYMENT_NETWORK_ID);
+    let utxos;
+    try {
+      utxos = await retry(() => this.bf.fetchAddressUTxOs(addr));
+    } catch (e) {
+      if (httpStatus(e) === 404) return [];
+      throw e;
+    }
+    const pools = await this.fetchPools();
+    const poolByNft = new Map(pools.map((p) => [p.pool.id, p.pool]));
+
+    const intents: LpIntentPosition[] = [];
+    for (const u of utxos) {
+      const cbor = u.output.plutusData;
+      if (!cbor) continue;
+      let d: LpIntentDatum;
+      try {
+        d = decodeLpIntentDatum(cbor);
+      } catch {
+        continue; // junk parked at the public lp_intent address — skip
+      }
+      if (d.owner.kind !== "key" || d.owner.hash !== ownerPkh) continue;
+      intents.push(toLpIntentPosition(u, d, poolByNft.get(assetUnit(d.poolNft))));
+    }
+    return intents;
   }
 
   protocolParameters(): Promise<Protocol> {

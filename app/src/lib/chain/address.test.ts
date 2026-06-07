@@ -27,13 +27,13 @@ import {
 
 // Golden order/pool addresses = base(payment = order/pool script, stake = `S`).
 const PREPROD_ORDER =
-  "addr_test1xzqpc7jvgf5tnpksmlvsqy8wt4ts3svtrxlysk6nazxj9u490hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0q4qj5a7";
+  "addr_test1xrnl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzjxy5";
 const PREPROD_POOL =
-  "addr_test1xpzz0muy20c6ed86cwzyl0ruxjzjlcvguj4enula5pa4xwa90hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0qvte56r";
+  "addr_test1xq6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu5dngl";
 const MAINNET_ORDER =
-  "addr1xxqpc7jvgf5tnpksmlvsqy8wt4ts3svtrxlysk6nazxj9u490hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0qkk053p";
+  "addr1x8nl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu50xgt";
 const MAINNET_POOL =
-  "addr1x9zz0muy20c6ed86cwzyl0ruxjzjlcvguj4enula5pa4xwa90hn6jxg6k42yzuegwyvlwgphynpd0fasg47nva29yy0q0ay5ku";
+  "addr1xy6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzsnyq";
 
 test("ORDER_ADDR derivation pins to golden preprod address", () => {
   assert.equal(deriveBaseAddress(ORDER_SCRIPT_HASH, SETTLEMENT_HASH, 0), PREPROD_ORDER);

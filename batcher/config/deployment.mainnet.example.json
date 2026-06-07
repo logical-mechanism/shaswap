@@ -1,5 +1,5 @@
 {
-  "_comment": "MAINNET deployment template for the ShaSwap reference solver. Copy to deployment.mainnet.json, fill the <...> values from the mainnet deploy (see documentation/launch/mainnet-checklist.md), and confirm the startup banner prints 'network=MAINNET' before setting SHASWAP_SUBMIT=1. The script_hash / pool_mint_policy / nft_name / lp_name / total_lp / min_liq / *_min_ada values are network-independent and match contracts/plutus.json + constants.ak.",
+  "_comment": "MAINNET deployment template for the ShaSwap reference solver (Rev 25 clearing-price-pin set). Copy to deployment.mainnet.json, fill the <...> values from the mainnet deploy (see documentation/launch/mainnet-checklist.md), and confirm the startup banner prints 'network=MAINNET' before setting SHASWAP_SUBMIT=1. The four script hashes (settlement/order/pool/lp_intent) + nft_name / lp_name / total_lp / min_liq / *_min_ada are NETWORK-INDEPENDENT (a script hash does not depend on the network; pool/order/lp_intent are S-applied, S is byte-identical on mainnet) and already match contracts/plutus.json + constants.ak — copy them verbatim. pool_mint_policy is the one identity that is NOT network-independent: see its note below.",
 
   "network_id": 1,
   "network_magic": 764824073,
@@ -8,10 +8,12 @@
   "kupo_url": "http://127.0.0.1:1442",
   "ogmios_url": "http://127.0.0.1:1337",
 
-  "settlement_hash": "a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e",
-  "order_script_hash": "801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2",
-  "pool_script_hash": "4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b",
-  "pool_mint_policy": "3d36f7963dcca05ba53e32babdf3c2572d467c7388dbb1cf4b28645f",
+  "settlement_hash": "a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea",
+  "order_script_hash": "e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d",
+  "pool_script_hash": "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac",
+  "lp_intent_script_hash": "fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d",
+  "_pool_mint_policy": "PER-POOL, NOT network-independent. Each pool has its own one-shot NFT/LP minting policy = resolveScriptHash(applyParamsToScript(pool_mint compiled code, [the pool's seed OutputReference])); f558dfb2… is only the UNAPPLIED template and never appears on-chain. Set this to the applied policy id of the specific pool this batcher serves (the batcher discovers pools by pool_mint_policy + nft_name), once that pool is created on mainnet. On preprod the canonical pool's policy is d5ccd174… (see contracts/happy_path/deployment.json).",
+  "pool_mint_policy": "<MAINNET_POOL_MINT_POLICY>",
   "nft_name": "4e4654",
   "lp_name": "4c50",
   "total_lp": 9223372036854775807,
@@ -19,10 +21,11 @@
   "pool_min_ada": 2000000,
   "order_min_ada": 2000000,
 
-  "_refs": "From the MAINNET reference-script deploy tx (settlement #0, pool #1, order #2 by convention). Fill after running scripts/deploy-mainnet.sh.",
+  "_refs": "From the MAINNET reference-script deploy tx (settlement #0, pool #1, order #2, lp_intent #3 by convention). Fill after running scripts/deploy-mainnet.sh. lp_intent_ref is REQUIRED for the batcher to fulfil LP intents (Rev 22); omit it only to run settlements-only.",
   "settlement_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 0 },
   "order_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 2 },
   "pool_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 1 },
+  "lp_intent_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 3 },
 
   "_skey": "cardano-cli TextEnvelope signing key for the solver wallet. File mode 0600, OUTSIDE the repo. Controls only the solver's own float, never user funds.",
   "signing_key_path": "/opt/shaswap/keys/solver.skey",

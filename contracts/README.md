@@ -30,6 +30,14 @@ Core guarantees enforced on-chain (BLUEPRINT §5.2):
 - **Pool invariant non-decreasing** including the static trading fee, owned by the pool
   validator (`k` is derived from real reserves, never stored).
 - **Non-custodial**: every well-formed order is reclaimable by its owner's signature.
+  *Well-formed* requires a **verification-key `owner`** (and likewise for LP-intents):
+  reclaim is signature-based, so a `Script`-credential owner — which validators cannot
+  reject at creation, since spend scripts don't run when a UTXO is created — would be
+  settle-able/fulfillable but never reclaimable, i.e. lockable if never settled (audit
+  L-01). The off-chain builders **must** set `owner` to the wallet's payment key hash.
+  Relatedly, an order's `owner_stake` must not equal the settlement credential `S` (it
+  would tag the payout and self-brick the settle path) — this one the anchor now rejects
+  on-chain in `check_one`, so it is a clean rejection rather than a silent lock.
 
 ## Layout
 
@@ -46,7 +54,7 @@ Core guarantees enforced on-chain (BLUEPRINT §5.2):
 
 | Module | Purpose |
 |---|---|
-| [`types.ak`](lib/shaswap/types.ak) | Datum/redeemer encodings. `OrderDatum` (8 fields, incl. `pool_nft`) and `PoolDatum` (6 fields) are deliberately distinct shapes so an order can never be relabelled as the pool (§5.4). |
+| [`types.ak`](lib/shaswap/types.ak) | Datum/redeemer encodings. `OrderDatum` (9 fields, incl. `pool_nft`) and `PoolDatum` (6 fields) are deliberately distinct shapes so an order can never be relabelled as the pool (§5.4). |
 | [`clearing.ak`](lib/shaswap/clearing.ak) | The once-per-tx settlement check — the heart of the protocol (§5.2). |
 | [`spend.ak`](lib/shaswap/spend.ak) | Spend-path logic for the order and pool validators (settle deferral, reclaim, `k`+fee check, value-derived LP, pool teardown), factored out so it is unit-testable. |
 | [`mint.ak`](lib/shaswap/mint.ak) | Pool create/close mint logic, including fail-fast `PoolDatum` validation at creation. |

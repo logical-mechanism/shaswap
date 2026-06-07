@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 21 — 2026-06-01. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 25 — 2026-06-05. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -177,6 +177,113 @@
 > `a57de7a9…`, order `801c7a4c…`, pool `4427ef84…`, pool_mint `3d36f796…`); a live settlement
 > paid the owner at a **base** address that the owner key then spent. Resolves the
 > pre-release enterprise-payout limitation.**
+> **Rev 22: batcher-fulfilled LP intents (§5.1/§5.4/§13) — LP exit under pool contention.**
+> Adds an **LP-intent** path so deposits/withdrawals can be fulfilled by the permissionless
+> batcher *like orders*, fixing the structural gap that the direct `LpAction` path is
+> mutually exclusive with a settlement and so must **win a race for the pool UTXO every
+> block** on a hot pool (a human-built withdraw is `BadInputsUTxO` and rebuilds forever).
+> A new **`S`-parameterised `lp_intent` validator** (a fifth, additive immutable hash) pins
+> the owner payout **and the full pool output** exactly — released reserves (withdraw) or
+> minted shares (deposit) go to the owner, the batcher keeps **only the tip** — while the
+> **unchanged** pool `LpAction` validator still caps over-release/over-mint (existing-LP
+> protection). Fulfillment is a **separate, self-contained tx, never folded into a
+> settlement** (principle: chained, not folded), enforced by a `!withdrawal_present(S)`
+> guard (so the pool-spend can only be `LpAction` — which is why the validator is
+> parameterised by `S`); LP-intent UTXOs sit at a **non-`S` (enterprise) address** so the
+> anchor never enumerates them. **A pre-lock adversarial review (7-lens multi-agent sweep)
+> found and we fixed a CRITICAL settlement-fold over-mint** — a non-`S`-tagged pool spent
+> via `PoolSettle` (which the anchor never enumerates, and whose `k`-check doesn't pin held
+> LP) bypassed per-share backing, letting a deposit fulfill mint unbacked shares — **closed
+> by the `!withdrawal_present(S)` guard**; plus a low-severity overhead/incidental-asset
+> sweep, **closed by the full pool-output pin** (+4 regression tests). The
+> settlement/order/pool/pool_mint hashes are **byte-identical** (verified via the
+> plutus.json reproducibility guard); only a new `lp_intent` hash appears. The direct path
+> is kept as the cold-pool/no-trust fallback. **Honest residual
+> (§13.11):** a withdraw-intent reclaim returns **LP tokens, not underlying** — hot-pool LP
+> exit has the same tipped-solver liveness as orders, strictly weaker than order reclaim,
+> and inherent (withdrawal mutates shared pool state). Spec:
+> `documentation/spec/lp-intents.md`. Mirrored in the batcher (decode/discovery/LP-math/
+> fulfillment tx/chaining) and the app (intent builders + LP UI; intent default with the
+> direct path as advanced fallback).**
+>
+> **Rev 23: external audit remediation (audit-machine 2026-06-04,
+> `contracts/audit/audit_report_060426.md`) — closes H-01 / M-01 / L-02 / L-03 +
+> I-01/I-03/I-06/I-08.** An independent multi-agent audit of the post-Rev-22 tree (incl.
+> the new `lp_intent` subsystem) surfaced one **High** and one **Medium** path that
+> re-hash the anchor before mainnet:
+> - **H-01 (High, settlement/clearing):** the partial-fill **remainder rollover** pinned
+> every field of the solver-authored remainder datum *except* `pool_nft`, reopening the
+> C-02 bought-asset substitution for the *unsold* portion — a solver could re-point a
+> remainder at an attacker pool with a worthless `asset_b` and meet the bare-int floor
+> with junk. **Closed** by `expect ro.pool_nft == order.pool_nft` in `consume_remainder`
+> (mirrors `check_one`'s order binding). +2 tests (negative + fuzz over the NFT space).
+> - **M-01 (Medium) / L-02 (Low) (pool/spend):** the standalone `LpAction` path pinned
+> only the pool's NFT/reserves/held-LP, not its **full value**, so a no-op LP action
+> could pile foreign dust into the shared pool (bloat toward `maxValueSize`) or skim a
+> token/token pool's overhead lovelace. **Closed** by the same `expect out.value ==
+> pool_exp` full-value pin the settlement anchor and `lp_intent` already use — all three
+> pool-mutation paths are now uniform. +4 tests.
+> - **L-03 (Low, pool_mint):** `mint.create` never asserted the created pool holds the
+> carved-out min-ADA overhead (a sub-min-ADA pool has a negative ADA reserve and
+> self-bricks). **Closed** by `expect lovelace_of(pool.value) >= pool_min_ada`; the
+> residual address-placement invariant stays an off-chain-builder responsibility (the
+> policy is seed-only and cannot see `S`; the one-shot NFT + post-creation continuity
+> make a mis-placement a creator self-grief, never third-party theft) and is documented.
+> - **Informational:** README `OrderDatum` field count 8→9 (**I-01**); `mint.close`
+> self-harm-only doc note (**I-03**); the anchor's `publish`/`allow_registration`
+> certificate authority and the `pool.LpAction` wrapper guard + `expect Some(datum)` are
+> now driven through the real validator entrypoints in
+> `validators/{settlement,pool}.test.ak` (**I-06**); the missing `lp_intent.ReclaimLp`
+> bench added (**I-08**). **I-02** (missing blueprint/spec) was a false positive — the
+> audit ran on a stripped copy; the docs exist here. **L-01** (a `Script`-owner
+> order/intent is settle-able but not reclaimable) has no on-chain creation gate (no
+> order/intent mint) and is documented as a hard builder precondition (VK owner).
+> **I-04/I-05/I-07** are safe-as-written defense-in-depth notes (no change). **O-01/O-02/
+> O-03** (cold-path `assets.tokens`; hot-path fold-fusion) are deferred to an
+> optimization pass with before/after benches, to keep this remediation correctness-only.
+> **Hash impact (pre-mainnet, expected):** the `settlement`, `pool`, and `pool_mint`
+> hashes change (the three files carrying the fixes); `order` and `lp_intent` are
+> **byte-identical**. Nothing is on mainnet (`deployed: false`), so this is the correct
+> pre-freeze time — downstream `deployment.ts`/batcher config + any preprod instances
+> must regenerate the three new hashes. 152 tests green (137 unit + 15 property).**
+>
+> **Rev 24: post-fix adversarial self-review hardening (§5.2.1).** After Rev 23 an
+> in-house adversarial re-review (6 finder lenses → double verification) over the
+> *post-fix* tree independently confirmed H-01/M-01/L-02/L-03 correct with no liveness
+> regression, and surfaced two minor items, now closed: (RR-1, Low self-inflicted
+> liveness) an order pinning `owner_stake == S` makes its own payout `is_tagged(S)`, so
+> it is mis-classified as a phantom remainder and the settlement aborts at `expect [] =
+> remainders` — un-settleable but always reclaimable, and attacker-uncontrollable. Closed
+> by an **additive** guard `expect order.owner_stake != Some(account)` in
+> `clearing.check_one` (verify-don't-trust; purely additive, cannot weaken conservation),
+> + `settlement_base_payout_stake_eq_s_rejected`. (RR-2, Medium *test gap*) the settlement
+> keystone `assets.is_zero(tx.mint)` had no negative test; added `settlement_stray_mint`.
+> Only the **settlement** hash changes again (the guard is in `clearing.ak`); pool/
+> pool_mint/order/lp_intent unchanged from Rev 23. 154 tests green (139 unit + 15
+> property). No Critical/High/theft/unbacked-mint/lock path found in the re-review.**
+>
+> **Rev 25: close the clearing-price corridor — two-sided pool price pin (§5.2.5/§5.2.7/
+> §5.4).** A post-Rev-24 economic-soundness review (`reviews/economic-soundness-2026-06-05.md`,
+> memory `econ-corridor`) confirmed the anchor verifies **validity, not optimality**: the
+> per-order floor (full `sell_amount` vs `limit`) + the pool's **one-sided** `k ≥ k_in`
+> leave the uniform price free in a **`[floor, fair-curve]` corridor**; underpaying a trader
+> *raises* `k`, so the `k`-check caps only the top. A solver-LP banks the gap as
+> `k`-appreciation; the price-blind tip can't compete it down. (The reference solver itself
+> clears one-sided books at an order floor today — `solve.rs` picks the volume-max feasible
+> candidate, which on an imbalanced book is a floor price.) Custody/sandwich-immunity are
+> unaffected. **Fix (Scope A):** the pool validator pins its payout **two-sided** —
+> `−net_b ∈ [get_amount_out(net_a) − ε, get_amount_out(net_a)]`, the existing `k`-check
+> keeping the upper edge — forcing `p` to the **fair curve-execution price for any non-zero
+> residual** (the uniform price makes the aggregate pin per-order). `get_amount_out` mirrors
+> the batcher's `curve.swap_out`; `ε` is an **absolute, N-derived** dust bound (never a
+> fraction of `k`), pinned by a differential test. **O(1), pool-hash only — the immutable
+> anchor `S`, `order`, `pool_mint` stay byte-identical** (the `lp_intent` corridor is closed
+> the same way — exact proportional pin — as it is not frozen). **Deferred (Scope B):** the
+> full equilibrium closing the **perfectly-netted zero-residual trader↔trader** split (needs
+> a curve-aware check in/beside the anchor → changes `S`; gated on its own §13.1 spike, run
+> in parallel). The limit becomes an **abort condition**, not the execution price. Spec:
+> `documentation/spec/clearing-price-pin.md`. **Hash impact (pre-mainnet):** `pool` +
+> `lp_intent` change; `settlement`/`order`/`pool_mint` byte-identical. Ships as a relaunch.**
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -355,6 +462,31 @@ contention/MEV fix; SAMM sharding is a secondary scaling lever**, not the founda
    produces the new Pool UTXO, one **uniquely-bound** owner-output per filled order,
    remainder UTXOs for partial fills, and the solver's ADA reward output.
 
+5. **LP-intent UTXO** — a deposit or withdrawal *intent*, fulfilled by the permissionless
+   batcher like an order (Rev 22, [`spec/lp-intents.md`](spec/lp-intents.md)). It addresses
+   the structural gap that the direct LP path (Pool UTXO path (b)) is a pool-spend
+   *mutually exclusive* with a settlement, so on a hot pool it must win a race for the pool
+   UTXO every block.
+   - *Datum (`LpIntentDatum`):* `owner` (VK) + `owner_stake` (payout stake half, as for
+     orders), the target `pool_nft` (consent, bound by NFT), `action` (`LpDeposit` |
+     `LpWithdraw`), the owner floors `min_a`/`min_b` (withdraw) / `min_shares` (deposit),
+     the ADA `tip`, and an optional `deadline`.
+   - *Address:* payment credential = the new **`S`-parameterised `lp_intent` validator**;
+     **stake credential = `None`** (enterprise) — deliberately **NOT** the settlement tag
+     `S`, so the once-per-tx anchor never enumerates it (it is fulfilled in its own tx, not
+     inside a settlement — §5.4). (The validator is parameterised by `S` only so `Fulfill`
+     can assert `!withdrawal_present(S)`; the UTXO's stake credential is still `None`.)
+   - *Spend paths:* (a) **owner reclaim** on signature alone (returns the intent — LP
+     tokens for a withdraw, A+B for a deposit); (b) **batcher fulfillment** (`Fulfill`) — a
+     mini-settlement for one LP action: the pool is spent via `LpAction` (caps
+     over-release/over-mint, protecting existing LPs) and the `lp_intent` validator pins
+     the owner payout exactly (released reserves / minted shares to the owner, **tip only**
+     to the batcher). The **first deposit is not** intent-fulfillable (the creator seeds
+     directly via the direct path).
+   - **Honest residual (§13.11):** withdraw-reclaim returns **LP tokens, not underlying** —
+     converting LP to liquidity mutates shared pool state, so hot-pool LP *exit* has the
+     same tipped-solver liveness as orders, strictly weaker than order reclaim.
+
 ### 5.2 The settlement validation rules
 
 Accepted iff all hold. Runs **once per transaction** (§5.4) over a solver-supplied
@@ -427,10 +559,18 @@ witness — the validator checks algebra, never solves (Principle 4).
    pool's before/after value for conservation, but never the curve or the fee.
 4. **Best-response for orders.** Each order gets the best-response trade at the
    clearing price, respecting its limit and partial-fill rule.
-5. **Per-order floor.** Every order receives **at least its own stated
+5. **Per-order floor + price pin.** Every order receives **at least its own stated
    limit/min-receive** — curve-agnostic (safe against any pool variant, §5.4),
-   bounds any accepted clearing, makes first-valid-wins safe. Guarantees **never
-   worse than a plain AMM**; netting surplus above the floor is upside (§7).
+   bounds any accepted clearing, makes first-valid-wins safe. As of Rev 25 the
+   **limit is an *abort condition*** (like Uniswap slippage), **not the execution
+   price**: the pool's **two-sided curve pin** (§5.4) forces execution **at the fair
+   curve price**, so a clearing is **never worse than a plain AMM *against the
+   curve*** — not merely against the order's own limit. *(Pre-pin v1 guaranteed only
+   the latter; the gap — a solver-chosen floor→fair corridor — is the
+   `econ-corridor` finding, closed by `spec/clearing-price-pin.md`.)* The directional
+   netting surplus is now **returned to traders** by the pin; only the
+   perfectly-netted (CoW-matched, zero-residual) trader↔trader split remains
+   solver-allocated (the documented residue, §5.2.7).
 6. **No double satisfaction.** Each order is bound to **exactly one** owner-output
    via the order's unique **OutputReference** (`txid#index`, which Cardano guarantees
    unique — no per-order NFT needed). The settlement validator enforces an
@@ -445,15 +585,23 @@ witness — the validator checks algebra, never solves (Principle 4).
      by position (position itself is the injective key; the per-output bound
      `OutputReference` is still checked to confirm the solver's claimed pairing).
      Writing the O(N²) scan is a correctness-of-design error, not just slow.
-7. **Surplus / equilibrium (intent; cost-bounded by §13.1).** To route netting
-   surplus to *traders* not LPs, the clearing should be required to be the **true
-   uniform-price equilibrium**. **v1 decision (post-§13.1 measurement):** **ship the
-   §5.2.5 floor-only path** (Uniswap parity guaranteed, ~40–50 orders/settlement) and
-   **defer equilibrium** — its added per-order verification cost is not yet measured
-   and would lower N. Equilibrium (and a surplus split) becomes a later upgrade once
-   its own spike (§13.1 follow-up) bounds the cost. This resolves the v1 fork in
-   §12.2; the floor never makes a user worse than a plain AMM, so deferring surplus
-   capture costs only upside, never safety.
+7. **Surplus / equilibrium — the two-sided pool price pin (Rev 25).** To route
+   surplus to *traders* not LPs, the clearing must be the **uniform-price
+   equilibrium**, not just floor-feasible. **v1 ships the cheap O(1) form:** the pool
+   validator pins its payout **two-sided** to the curve — `−net_b ∈ [get_amount_out(net_a) − ε,
+   get_amount_out(net_a)]` (`spec/clearing-price-pin.md`). Because the residual trades
+   at the single uniform price, this forces `p` to the **curve-execution price for any
+   non-zero residual** — recovering the §5.2.4 best-response for the directional flow
+   that carries essentially all the extraction value, at ~zero added ex-units (it
+   reuses the curve the pool already evaluates; the anchor stays curve-agnostic). It
+   lives **only in the pool hash** — the immutable settlement anchor `S` is unchanged.
+   **Deferred (Scope B):** the *full* equilibrium that also closes the
+   **perfectly-netted (zero-residual) trader↔trader** split — that needs a curve-aware
+   per-order check in/beside the immutable anchor (changes `S`, re-audit, lowers N) and
+   is gated on its own §13.1 ex-unit spike (run in parallel, decide before mainnet).
+   The residue is a bounded trader↔trader transfer with **no solver-LP harvest
+   incentive** (the pool is untouched, so `k` does not move). This resolves the v1 fork
+   in §12.2 for the part that matters economically.
 
 ### 5.3 Solver model — first-valid-wins, fully permissionless
 
@@ -572,6 +720,18 @@ witness — the validator checks algebra, never solves (Principle 4).
   and accounts for each** (exactly one pool by NFT; all others as orders). Otherwise
   an unvalidated order could ride along inside a settlement. This is a hard invariant
   of the design, and the stake-tag enumeration is how it is met.
+- **LP-intents are verified in their own tx, never via the anchor (Rev 22, §5.1).** A
+  batcher-fulfilled deposit/withdraw is a self-contained tx: the pool is spent via
+  `LpAction` and the **`S`-parameterised `lp_intent` validator** pins the owner payout (and
+  the full pool output), so the batcher keeps only the tip. It is **never folded into a
+  settlement** (chained, not folded), enforced by a `!withdrawal_present(S)` guard that
+  forces the pool-spend to be `LpAction` — closing a settlement-fold (found in pre-lock
+  review) where a non-`S`-tagged pool spent via `PoolSettle` (which the anchor never
+  enumerates, and whose `k`-check doesn't pin held LP) would let a deposit mint unbacked
+  shares. `lp_intent` thus needs `S` but not the pool hash, and its UTXOs sit at a non-`S`
+  (enterprise) address the anchor never enumerates. This keeps the anchor's clean
+  conservation and `k`-direction invariant untouched while routing LP exit around pool
+  contention. Spec: [`spec/lp-intents.md`](spec/lp-intents.md).
 
 ### 5.5 Sharding (SAMM) — scaling lever (and its price-dispersion cost)
 
@@ -678,9 +838,12 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
   already sit in the orders. **No token is ever minted to pay solvers.**
 - **ADA's triple role** (tip / min-ADA / traded side of an ADA pair) is separated in
   the conservation check (§5.2.1) so none leaks into another.
-- **Surplus capture (the differentiator, §5.2.7).** The floor guarantees Uniswap
-  parity; whether netting surplus reaches *traders* depends on requiring the true
-  equilibrium, cost-bounded by §13.1. Explicit open decision (§12.2).
+- **Surplus capture (the differentiator, §5.2.7).** Rev 25's **two-sided pool price
+  pin** forces the **fair curve-execution price** for any non-zero residual, so the
+  directional surplus reaches *traders*, not LPs — the floor→fair corridor is closed
+  in the pool hash (anchor unchanged). Only the **perfectly-netted (zero-residual)
+  trader↔trader** split remains solver-allocated (bounded, no solver-LP incentive); the
+  full equilibrium that closes it is deferred (Scope B, §5.2.7, §13.1 spike).
 - **Partial fills — proportional tip, one-level remainder (RESOLVED, Rev 8; impl
   `clearing.ak`).** The solver declares each order's fill `f`; on a partial fill it
   collects `tip·f/sell_amount` **now** (pay-per-fill) and the remainder keeps the
@@ -697,7 +860,7 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
 
 | Attacker | Capability | Containment |
 |---|---|---|
-| Malicious / self-dealing solver | Chooses batch composition; places own orders; clears at the floor | Uniform price (§5.2.2) + each order ≥ its own limit (§5.2.5); own orders fill at the same uniform price. Worst case = Uniswap-parity; surplus leakage bounded by §5.2.7. |
+| Malicious / self-dealing solver (incl. solver-LP) | Chooses batch composition; places own orders; tries to clear at the floor and bank the floor→fair gap as `k` (the `econ-corridor` finding) | Uniform price (§5.2.2) + each order ≥ its own limit (§5.2.5) + **the pool's two-sided curve pin (§5.2.7/§5.4, Rev 25)**: any non-zero residual is forced to the **fair curve-execution price**, so directional surplus can no longer be banked. Residual worst case = **fair-curve execution** (= a plain AMM), not the floor. Only the **perfectly-netted zero-residual trader↔trader** split is solver-allocated (bounded by both limits; **no solver-LP harvest** — the pool is untouched). |
 | Solver-solution thief | Copies the public witness from the mempool, swaps reward output, resubmits | **Moot at v1** — re-solving the 1-D clearing is trivial, so copying saves nothing (§5.3). A real concern only at heavy solve scope (§13.2). |
 | Double-satisfaction attacker | Reuses one owner-output to satisfy two orders' floors | Closed by §5.2.6 — injective order→output binding via unique OutputReference. |
 | Colluding block producer (SPO) | Picks which valid settlement lands; can delay/censor | Cannot violate §5.2; censored user self-solves (§5.3). |
@@ -760,8 +923,10 @@ uniform-price batch + bidirectional netting, per-order floor, injective O(N) bin
 partial fills (proportional tip), deadlines, value-derived LP (deposit/withdraw/first-
 deposit/close), **static trading fee (residual-only, §5.2.3/§7)**, non-custodial reclaim,
 withdraw-0 wiring. **Not yet implemented:** **PA-AMM `λ`** (deferred, `λ=1` no-op).
-**Best-response (§5.2.4)** is enforced as the floor only (v1 floor-only, §5.2.7).
-Off-chain (batcher/frontend/data layer) not started.
+**Best-response (§5.2.4)** is enforced as the per-order floor **plus the pool's
+two-sided curve price pin** (Rev 25, §5.2.7) — fair curve-execution for any non-zero
+residual; only the perfectly-netted zero-residual trader↔trader split is deferred
+(Scope B).
 
 **Explicitly NOT in v1 / never in core:** any oracle dependency; order privacy
 (intents and limit prices are public on-chain); cross-shard price unification;
@@ -779,8 +944,10 @@ privileged operator, any mortal external dependency in the core.
 ## 12. Open design decisions
 
 1. **Solver tip mechanics.** User-set + protocol minimum vs. fixed; datum encoding.
-2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7): floor-only; equilibrium
-   deferred** pending its own cost spike.
+2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7, Rev 25): the pool's
+   two-sided curve pin returns directional surplus to traders (fair-curve execution);
+   only the perfectly-netted zero-residual trader↔trader split (Scope B) is deferred**
+   pending its own ex-unit spike.
 3. **Order rollover** mechanics (the size *bound* is resolved: ~40/settlement, §5.3).
 4. ~~Partial-fill semantics~~ — **RESOLVED (Rev 8): proportional tip, one-level
    remainder, pre-funded 2× min-ADA, limit-price preserved** (§7; impl `clearing.ak`,
@@ -846,6 +1013,20 @@ strictly rejected (no `True` branch).
     external pair (`asset_a ≠ asset_b`, neither side under `policy_id`), and a valid fee
     (`0 ≤ fee_num < fee_den`, `fee_den > 0`) — so a misconfigured pool can't be created
     rather than silently bricking later. (+1 test, 73 green.)
+11. **Hot-pool LP exit has no reclaim-to-underlying backstop (Rev 22).** The new LP-intent
+    path ([`spec/lp-intents.md`](spec/lp-intents.md)) lets the permissionless batcher fulfil
+    deposits/withdrawals so LPs are not stuck racing the batcher for the pool UTXO every
+    block. But unlike an order — whose reclaim returns the exact asset locked, since an
+    order never mutates shared state — a **withdraw-intent reclaim can only return the LP
+    tokens, not the underlying liquidity**, because converting LP to underlying *is* a pool
+    mutation. So hot-pool LP exit reduces to the **same tipped-permissionless-solver
+    liveness as orders** (you always get your LP back on signature; converting it still
+    needs some solver to fulfil the intent, or the direct path to win a quiet block) —
+    consistent with the design but **strictly weaker than order reclaim**, and **inherent**
+    (not an implementation gap). Mitigations: a tight `min_a`/`min_b` floor, the standing
+    tip incentive (the batcher's take is **tip-only**, so it gains nothing by
+    under-/non-fulfilling), and the always-available direct path. Documented, not
+    engineered away.
 
 ---
 

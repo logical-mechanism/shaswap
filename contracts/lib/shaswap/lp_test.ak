@@ -301,6 +301,89 @@ test stray_mint() fail {
   spend.lp_action(tx, pool_ref(), pool_datum())
 }
 
+// ---- full-value pin: dust-bloat / overhead-skim (audit M-01 / L-02) ---------
+// The standalone LpAction now pins the pool output's FULL value (`out.value ==
+// pool_exp`), matching the settlement anchor and the lp_intent path. These prove
+// the two gaps that pin closes.
+
+const foreign_policy =
+  #"acacacacacacacacacacacacacacacacacacacacacacacacacacacac"
+
+// (M-01) a no-op LpAction (reserves/held/NFT/datum unchanged) that piles a foreign
+// dust asset into the pool output. Per-share backing holds with equality, so before
+// the full-value pin this passed and bloated the shared pool toward maxValueSize;
+// now the pin rejects any asset outside the pool's own {asset_a, asset_b, nft, lp}.
+test lp_action_foreign_asset_bloat() fail {
+  let pin = pool_in(100_000_000, 200_000_000, total_lp - 1_000_000)
+  let dirty = Output {
+    address: pool_addr(),
+    value: pool_val(100_000_000, 200_000_000, total_lp - 1_000_000)
+      |> assets.add(foreign_policy, #"4646", 12_345),
+    datum: InlineDatum(pool_datum()),
+    reference_script: None,
+  }
+  spend.lp_action(lp_tx(pin, dirty), pool_ref(), pool_datum())
+}
+
+// (M-01 sanity) the same no-op WITHOUT the foreign asset is still accepted — the pin
+// admits a genuine no-op (all deltas zero ⇒ out == in), so it doesn't over-reject.
+test lp_action_noop_ok() {
+  let pin = pool_in(100_000_000, 200_000_000, total_lp - 1_000_000)
+  spend.lp_action(
+    lp_tx(pin, pool_out(100_000_000, 200_000_000, total_lp - 1_000_000, True)),
+    pool_ref(),
+    pool_datum(),
+  )
+}
+
+// (L-02) a token/token-pool LpAction that lowers the pool's overhead lovelace below
+// the input's (skimming it to the actor). On a token/token pool the lovelace is pure
+// overhead — never read as a reserve — so before the pin it was unconstrained; now
+// the full-value pin holds it fixed.
+test lp_action_token_token_lovelace_skim() fail {
+  let pin = Input {
+    output_reference: pool_ref(),
+    output: tt_pool(100_000_000, 200_000_000, total_lp - 1_000_000),
+  }
+  let skimmed = Output {
+    address: pool_addr(),
+    value: assets.from_lovelace(pool_min_ada - 500_000)
+      |> assets.add(tok.policy, tok.name, 100_000_000)
+      |> assets.add(tokb.policy, tokb.name, 200_000_000)
+      |> assets.add(nft.policy, nft.name, 1)
+      |> assets.add(nft.policy, lp_name, total_lp - 1_000_000),
+    datum: InlineDatum(tt_datum()),
+    reference_script: None,
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pin],
+    outputs: [skimmed],
+  }
+  spend.lp_action(tx, pool_ref(), tt_datum())
+}
+
+// PROPERTY (M-01): any extra asset under a foreign policy (≠ the pool's own
+// {asset_a, asset_b, nft, lp}) piled into the pool output is rejected for every
+// (name, qty) — the full-value pin admits only the pool's four assets.
+test prop_lp_action_reject_foreign_asset(
+  p via fuzz.both(
+    fuzz.bytearray_between(0, 32),
+    fuzz.int_between(1, 1_000_000_000),
+  ),
+) fail {
+  let (name, qty) = p
+  let pin = pool_in(100_000_000, 200_000_000, total_lp - 1_000_000)
+  let dirty = Output {
+    address: pool_addr(),
+    value: pool_val(100_000_000, 200_000_000, total_lp - 1_000_000)
+      |> assets.add(foreign_policy, name, qty),
+    datum: InlineDatum(pool_datum()),
+    reference_script: None,
+  }
+  spend.lp_action(lp_tx(pin, dirty), pool_ref(), pool_datum())
+}
+
 // ---- close (unseeded pool teardown) ---------------------------------------
 
 fn close_mint(nft_qty: Int, lp_qty: Int) -> Value {
