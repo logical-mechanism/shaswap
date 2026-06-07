@@ -145,22 +145,23 @@ pub fn pool_settle(
   // batch-size-derived bound — never a fraction of k — so any residual underpayment is
   // ≤ n_orders sub-units of the paid asset (vs the unbounded corridor it closes). A solver
   // can always pick `p = get_amount_out(net_a)/net_a` and clear within the band (liveness).
-  let n_orders =
-    list.length(list.filter(tx.inputs, fn(i) { utils.is_tagged(i.output, s) })) - 1
-  let pin_ok =
-    if net_a > 0 && net_b < 0 {
-      // pool took asset_a, paid asset_b: paid-out ≥ fair − dust
-      -net_b >= get_amount_out(net_a, res_a_in, res_b_in, d.fee_num, d.fee_den) - n_orders
-    } else if net_b > 0 && net_a < 0 {
-      // pool took asset_b, paid asset_a (symmetric)
-      -net_a >= get_amount_out(net_b, res_b_in, res_a_in, d.fee_num, d.fee_den) - n_orders
-    } else {
-      // No residual paid out: a perfectly-netted batch (net = 0 — the documented
-      // trader↔trader residue, spec §5) or a donation (both sides ≥ 0, only raises k —
-      // `k_ok` allows it). A both-negative drain (pool pays both with no input) is rejected
-      // by `k_ok`. Nothing to pin in these cases.
-      True
-    }
+  let n_orders = list.length(
+    list.filter(tx.inputs, fn(i) { utils.is_tagged(i.output, s) }),
+  ) - 1
+  let pin_ok = if net_a > 0 && net_b < 0 {
+    // pool took asset_a, paid asset_b: paid-out ≥ fair − dust
+    -net_b >= get_amount_out(net_a, res_a_in, res_b_in, d.fee_num, d.fee_den) - n_orders
+  } else if
+  net_b > 0 && net_a < 0 {
+    // pool took asset_b, paid asset_a (symmetric)
+    -net_a >= get_amount_out(net_b, res_b_in, res_a_in, d.fee_num, d.fee_den) - n_orders
+  } else {
+    // No residual paid out: a perfectly-netted batch (net = 0 — the documented
+    // trader↔trader residue, spec §5) or a donation (both sides ≥ 0, only raises k —
+    // `k_ok` allows it). A both-negative drain (pool pays both with no input) is rejected
+    // by `k_ok`. Nothing to pin in these cases.
+    True
+  }
   k_ok? && pin_ok?
 }
 
