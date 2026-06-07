@@ -1,0 +1,35 @@
+{
+  "_comment": "PREPROD deployment template for the ShaSwap reference solver, pinned to the LIVE Rev 25 clearing-price-pin deployment (reference scripts in tx 9088f8dc…, canonical TEST/ADA pool reseeded in tx 255040ab…). Unlike the mainnet template this is FULLY FILLED — every identity below is already on-chain on preprod — so an operator only needs to (1) point kupo_url/ogmios_url at their own preprod node and (2) set signing_key_path to their own preprod solver key. Copy to deployment.preprod.json and run. The four script hashes (settlement/order/pool/lp_intent) + nft_name / lp_name / total_lp / min_liq / *_min_ada match contracts/plutus.json + constants.ak.",
+
+  "network_id": 0,
+  "network_magic": 1,
+
+  "_provider": "Point at your OWN preprod node (Kupo + Ogmios, or Dolos) for a no-third-party-dependency setup. Localhost shown; replace with your endpoints. Kupo MUST index the lp_intent ENTERPRISE address (it is NOT S-tagged) or the batcher never sees LP intents.",
+  "kupo_url": "http://127.0.0.1:1442",
+  "ogmios_url": "http://127.0.0.1:1337",
+
+  "settlement_hash": "a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea",
+  "order_script_hash": "e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d",
+  "pool_script_hash": "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac",
+  "lp_intent_script_hash": "fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d",
+  "_pool_mint_policy": "PER-POOL: each pool's one-shot NFT/LP minting policy is derived from its seed OutputReference, so this is the policy id of the SPECIFIC pool this batcher serves (the batcher discovers pools by pool_mint_policy + nft_name). d5ccd174… below is the LIVE canonical preprod TEST/ADA pool (tx 255040ab…). Change it to serve a different preprod pool.",
+  "pool_mint_policy": "d5ccd17454150e29feb00ee72f5bf1155bcf41718cb7e641dd5f593d",
+  "nft_name": "4e4654",
+  "lp_name": "4c50",
+  "total_lp": 9223372036854775807,
+  "min_liq": 1000,
+  "pool_min_ada": 2000000,
+  "order_min_ada": 2000000,
+
+  "_refs": "The LIVE Rev 25 reference-script deploy tx (settlement #0, pool #1, order #2, lp_intent #3). lp_intent_ref is REQUIRED for the batcher to fulfil LP intents (Rev 22); omit it only to run settlements-only.",
+  "settlement_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 0 },
+  "order_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 2 },
+  "pool_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 1 },
+  "lp_intent_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 3 },
+
+  "_skey": "cardano-cli TextEnvelope signing key for YOUR preprod solver wallet. File mode 0600, OUTSIDE the repo. Controls only the solver's own float, never user funds.",
+  "signing_key_path": "/opt/shaswap/keys/solver-preprod.skey",
+
+  "max_orders_per_tx": 20,
+  "strategy": "round-robin"
+}
