@@ -1,5 +1,6 @@
 import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type {
+  LpIntentPosition,
   Pool,
   Quote,
   TokenInfo,
@@ -50,6 +51,14 @@ export interface DataProvider {
 
   /** A wallet's open orders / positions for a bech32 address. */
   walletPositions(address: string): Promise<WalletPosition[]>;
+
+  /**
+   * A wallet's open batcher-fulfilled LP intents (deposit/withdraw) for a bech32 address —
+   * the live UTXOs at the `lp_intent` address owned by this wallet's payment key. Mirrors
+   * `walletPositions` for the LP-intent surface (pending/reclaim). Empty on a network where
+   * the LP-intent path isn't live yet (the address resolves but holds nothing).
+   */
+  walletLpIntents(address: string): Promise<LpIntentPosition[]>;
 
   /**
    * Current protocol parameters — needed client-side by `MeshTxBuilder` for fee

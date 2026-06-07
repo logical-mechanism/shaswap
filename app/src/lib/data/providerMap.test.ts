@@ -9,9 +9,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Asset, UTxO } from "@meshsdk/core";
-import { qtyOfUnit, reserveOf, toPosition } from "./providerMap.ts";
-import { ADA, type AssetId, type OrderDatum } from "../chain/datums.ts";
-import { POOL_MIN_ADA } from "../chain/deployment.ts";
+import { qtyOfUnit, reserveOf, toLpIntentPosition, toPosition } from "./providerMap.ts";
+import {
+  ADA,
+  type AssetId,
+  type LpIntentDatum,
+  type OrderDatum,
+} from "../chain/datums.ts";
+import {
+  LP_INTENT_MIN_ADA,
+  lpUnitForPool,
+  POOL_MIN_ADA,
+} from "../chain/deployment.ts";
 import type { Pool, TokenInfo } from "./types.ts";
 
 const TEST_POLICY = "8160c878d40c39d7bfeb300560343d646620ab50182981efa8ae779a";
@@ -118,4 +127,81 @@ test("toPosition shows placeholders for an orphan order (pool not found)", () =>
   assert.equal(p.tokenOut.ticker, "?");
   assert.equal(p.tokenIn.unit, NFT_UNIT); // placeholder unit = the pool NFT unit
   assert.equal(p.status, "open");
+});
+
+// ---- toLpIntentPosition: value interpretation (LP for withdraw, dA/dB for deposit) ----
+
+const LP_UNIT = lpUnitForPool(NFT_UNIT);
+
+function lpDatum(over: Partial<LpIntentDatum> = {}): LpIntentDatum {
+  return {
+    owner: { kind: "key", hash: "ab".repeat(28) },
+    ownerStake: null,
+    poolNft: NFT_ASSET,
+    action: "withdraw",
+    minA: 0n,
+    minB: 0n,
+    minShares: 0n,
+    tip: 1_000_000n,
+    deadline: null,
+    ...over,
+  };
+}
+
+function lpUtxo(amount: Asset[], txHash = "1a".repeat(32), outputIndex = 0): UTxO {
+  return {
+    input: { txHash, outputIndex },
+    output: { address: "addr_test1w...", amount },
+  } as unknown as UTxO;
+}
+
+test("toLpIntentPosition (withdraw): reads L LP, floors, no deposit fields", () => {
+  const value: Asset[] = [
+    { unit: "lovelace", quantity: (LP_INTENT_MIN_ADA + 1_000_000n).toString() },
+    { unit: LP_UNIT, quantity: "250000" },
+  ];
+  const p = toLpIntentPosition(
+    lpUtxo(value),
+    lpDatum({ action: "withdraw", minA: 19_000_000n, minB: 9_000_000n }),
+    POOL,
+  );
+  assert.equal(p.action, "withdraw");
+  assert.equal(p.lp, "250000");
+  assert.equal(p.depositA, undefined);
+  assert.equal(p.depositB, undefined);
+  assert.equal(p.minA, "19000000");
+  assert.equal(p.minB, "9000000");
+  assert.equal(p.tip, "1000000");
+  assert.equal(p.poolNft, NFT_UNIT);
+  assert.equal(p.tokenA.unit, ADA_INFO.unit);
+});
+
+test("toLpIntentPosition (deposit, ADA side): carves traded-ADA out of lovelace", () => {
+  // asset_a = ADA: lovelace carries 50 ADA deposit + tip + min; asset_b = TEST: 70M rides aside.
+  const dA = 50_000_000n;
+  const value: Asset[] = [
+    { unit: "lovelace", quantity: (dA + 1_000_000n + LP_INTENT_MIN_ADA).toString() },
+    { unit: TEST_UNIT, quantity: "70000000" },
+  ];
+  const p = toLpIntentPosition(
+    lpUtxo(value),
+    lpDatum({ action: "deposit", minShares: 60_000n }),
+    POOL,
+  );
+  assert.equal(p.action, "deposit");
+  assert.equal(p.depositA, "50000000"); // ADA side, tip+min carved out
+  assert.equal(p.depositB, "70000000"); // token side, raw
+  assert.equal(p.lp, undefined);
+  assert.equal(p.minShares, "60000");
+});
+
+test("toLpIntentPosition (orphan): placeholder pair, still reads locked LP", () => {
+  const value: Asset[] = [
+    { unit: "lovelace", quantity: (LP_INTENT_MIN_ADA + 1_000_000n).toString() },
+    { unit: LP_UNIT, quantity: "100" },
+  ];
+  const p = toLpIntentPosition(lpUtxo(value), lpDatum({ action: "withdraw", minA: 1n }), undefined);
+  assert.equal(p.tokenA.ticker, "?");
+  assert.equal(p.tokenB.ticker, "?");
+  assert.equal(p.lp, "100"); // LP unit derives from the pool NFT, so still readable
 });

@@ -21,14 +21,17 @@ WORK="$REPO/scripts/work-mainnet"             # tx drafts + refs.json (gitignore
 mkdir -p "$WORK"
 
 # Committed identities (must equal contracts/plutus.json + constants.ak; pinned by the
-# app's address.test.ts). Deploy REFUSES bytecode whose hash differs.
-S_HASH="a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e"      # settlement = stake cred S
-ORDER_HASH="801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2"  # order(S)
-POOL_HASH="4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b"   # pool(S)
+# app's address.test.ts). Rev 25 clearing-price-pin set (BLUEPRINT Rev 25). Deploy REFUSES
+# bytecode whose hash differs. lp_intent is the fifth, additive immutable hash (Rev 22).
+S_HASH="a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea"      # settlement = stake cred S
+ORDER_HASH="e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d"  # order(S)
+POOL_HASH="34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac"   # pool(S) — Rev 25
+LP_INTENT_HASH="fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d"  # lp_intent(S) — Rev 25
 
 SETTLEMENT_SCRIPT="$SCRIPTS_DIR/settlement.plutus"
 ORDER_SCRIPT="$SCRIPTS_DIR/order.plutus"
 POOL_SCRIPT="$SCRIPTS_DIR/pool.plutus"
+LP_INTENT_SCRIPT="$SCRIPTS_DIR/lp_intent.plutus"
 
 cli() { cardano-cli latest "$@"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -116,6 +119,7 @@ verify_build() {
   _verify_hash "$SETTLEMENT_SCRIPT" "$S_HASH" settlement
   _verify_hash "$ORDER_SCRIPT" "$ORDER_HASH" order
   _verify_hash "$POOL_SCRIPT" "$POOL_HASH" pool
+  _verify_hash "$LP_INTENT_SCRIPT" "$LP_INTENT_HASH" lp_intent
 }
 
 # ── Step 1: register the settlement stake credential S (idempotent) ──────────────────
@@ -158,6 +162,7 @@ publish_refs() {
     --tx-out "$DEPLOY_ADDR+60000000" --tx-out-reference-script-file "$SETTLEMENT_SCRIPT" \
     --tx-out "$DEPLOY_ADDR+30000000" --tx-out-reference-script-file "$POOL_SCRIPT" \
     --tx-out "$DEPLOY_ADDR+15000000" --tx-out-reference-script-file "$ORDER_SCRIPT" \
+    --tx-out "$DEPLOY_ADDR+25000000" --tx-out-reference-script-file "$LP_INTENT_SCRIPT" \
     --change-address "$DEPLOY_ADDR" --mainnet --out-file "$WORK/refs.tx"
   cli transaction sign --tx-file "$WORK/refs.tx" --signing-key-file "$DEPLOY_SKEY" \
     --mainnet --out-file "$WORK/refs.signed"
@@ -168,9 +173,10 @@ import sys, json
 t = sys.argv[1]
 json.dump({"settlement_ref": {"tx_id": t, "index": 0},
            "pool_ref":       {"tx_id": t, "index": 1},
-           "order_ref":      {"tx_id": t, "index": 2}}, sys.stdout, indent=2)
+           "order_ref":      {"tx_id": t, "index": 2},
+           "lp_intent_ref":  {"tx_id": t, "index": 3}}, sys.stdout, indent=2)
 PY
-  echo "    reference scripts submitted in tx $rtxid  (settlement=#0, pool=#1, order=#2)"
+  echo "    reference scripts submitted in tx $rtxid  (settlement=#0, pool=#1, order=#2, lp_intent=#3)"
   echo "    refs written to $WORK/refs.json"
   wait_for_tx "$rtxid" "reference scripts"
 }
@@ -182,7 +188,7 @@ verify_onchain() {
   [ -f "$WORK/refs.json" ] || die "no $WORK/refs.json — run 02-deploy-refs.sh (or deploy-mainnet.sh) first."
   local rtxid; rtxid=$(python3 -c "import json;print(json.load(open('$WORK/refs.json'))['settlement_ref']['tx_id'])")
   local failed=0 pair rest ref want label got
-  for pair in "$rtxid#0:$S_HASH:settlement" "$rtxid#1:$POOL_HASH:pool" "$rtxid#2:$ORDER_HASH:order"; do
+  for pair in "$rtxid#0:$S_HASH:settlement" "$rtxid#1:$POOL_HASH:pool" "$rtxid#2:$ORDER_HASH:order" "$rtxid#3:$LP_INTENT_HASH:lp_intent"; do
     ref="${pair%%:*}"; rest="${pair#*:}"; want="${rest%%:*}"; label="${rest#*:}"
     got=$(ref_hash "$ref")
     if [ "$got" = "$want" ]; then echo "    ok  $label ref $ref carries $want";

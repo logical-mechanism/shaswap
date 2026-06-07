@@ -15,6 +15,7 @@
 
 pub mod clearing;
 pub mod curve;
+pub mod lp;
 pub mod output;
 pub mod sim;
 pub mod solve;

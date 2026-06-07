@@ -20,6 +20,7 @@ import {
   closePoolRedeemer,
   decodePoolDatum,
   lpActionRedeemer,
+  lpIntentReclaimRedeemer,
   mintCloseRedeemer,
   mintCreateRedeemer,
   orderReclaimRedeemer,
@@ -32,7 +33,13 @@ import {
   type PoolView,
 } from "@/lib/chain/lp";
 import {
+  buildLpIntentDeposit,
+  buildLpIntentWithdraw,
+} from "@/lib/chain/lpIntent";
+import { lpIntentScriptHash } from "@/lib/chain/lpIntentScript";
+import {
   DEPLOYMENT_NETWORK_ID,
+  LP_INTENT_SCRIPT_SIZE,
   LP_NAME_HEX,
   lpUnitForPool,
   NFT_NAME_HEX,
@@ -43,6 +50,7 @@ import {
   POOL_SCRIPT_HASH,
   POOL_SCRIPT_SIZE,
   requireDeployed,
+  requireLpIntentDeployed,
   TOTAL_LP,
 } from "@/lib/chain/deployment";
 
@@ -68,11 +76,15 @@ async function fetchProtocolParams(): Promise<{
 }
 
 /** Resolve a single on-chain UTXO (value + inline datum) via the seam. */
-async function fetchUtxo(txHash: string, index: number): Promise<UTxO> {
+async function fetchUtxo(
+  txHash: string,
+  index: number,
+  what = "order",
+): Promise<UTxO> {
   const res = await fetch(`/api/tx/utxo?tx=${txHash}&index=${index}`);
   if (!res.ok) throw new Error(`utxo resolve request failed (${res.status})`);
   const { utxo } = (await res.json()) as { utxo: UTxO | null };
-  if (!utxo) throw new Error("order UTXO not found — already spent or settled");
+  if (!utxo) throw new Error(`${what} UTXO not found — already spent or fulfilled`);
   return utxo;
 }
 
@@ -397,6 +409,229 @@ export async function depositLiquidity(
   const signedTx = await wallet.signTx(unsignedTx);
   const txHash = await wallet.submitTx(signedTx);
   return { txHash };
+}
+
+// ---- batcher-fulfilled LP intents (deposit/withdraw via the permissionless solver) ----
+
+export interface PostLpIntentResult {
+  txHash: string;
+  /** The intent's output reference (`<hash>#0` — the intent is the first output). */
+  ref: string;
+  /** The owner (change) address — for matching against the on-chain intent list. */
+  owner: string;
+}
+
+export interface PostLpIntentDepositArgs {
+  /** The pool to add liquidity to (pair + NFT identity binding). */
+  pool: Pool;
+  /** Amount of `asset_a` to deposit (base units). */
+  amountA: bigint;
+  /** Amount of `asset_b` to deposit (base units). */
+  amountB: bigint;
+  /** Owner floor — minimum LP minted, from a conservative quote (`quoteLpDeposit`). */
+  minShares: bigint;
+  /** Solver tip (lovelace). */
+  tip: bigint;
+  deadline: bigint | null;
+}
+
+export interface PostLpIntentWithdrawArgs {
+  pool: Pool;
+  /** LP tokens to redeem (base units). */
+  lpAmount: bigint;
+  /** Owner floors — minimum released `asset_a` / `asset_b` (`quoteLpWithdraw`). */
+  minA: bigint;
+  minB: bigint;
+  tip: bigint;
+  deadline: bigint | null;
+}
+
+/** The wallet's owner pkh + payout stake credential (shared by both LP-intent posts). */
+async function lpIntentOwner(wallet: IWallet) {
+  const changeAddress = await wallet.getChangeAddress();
+  const { pubKeyHash, stakeCredentialHash, stakeScriptCredentialHash } =
+    deserializeAddress(changeAddress);
+  // Carry the wallet's own stake credential so the payout lands at a BASE address the wallet
+  // displays + can spend (mirrors postOrder / audit M-01; the validator pins it from the datum).
+  const ownerStake = stakeCredentialHash
+    ? ({ kind: "key", hash: stakeCredentialHash } as const)
+    : stakeScriptCredentialHash
+      ? ({ kind: "script", hash: stakeScriptCredentialHash } as const)
+      : null;
+  return { changeAddress, pubKeyHash, ownerStake };
+}
+
+/**
+ * Build → sign → submit a DEPOSIT intent: a plain payment to the `lp_intent` address with the
+ * inline `LpIntentDatum`, funded by the wallet — exactly like `postOrder` (no script runs at
+ * creation; the batcher fulfils it later). Gated by `requireLpIntentDeployed()` so a posted
+ * intent is never a fund trap (un-fulfillable AND un-reclaimable) before the path is live.
+ */
+export async function postLpIntentDeposit(
+  wallet: IWallet,
+  args: PostLpIntentDepositArgs,
+): Promise<PostLpIntentResult> {
+  requireLpIntentDeployed();
+  const { changeAddress, pubKeyHash, ownerStake } = await lpIntentOwner(wallet);
+
+  const built = buildLpIntentDeposit({
+    ownerPkh: pubKeyHash,
+    ownerStake,
+    poolNftUnit: args.pool.id,
+    assetAUnit: args.pool.tokenA.unit,
+    assetBUnit: args.pool.tokenB.unit,
+    amountA: args.amountA,
+    amountB: args.amountB,
+    minShares: args.minShares,
+    tip: args.tip,
+    deadline: args.deadline,
+  });
+
+  // A plain payment (no Plutus script) — needs no cost models / collateral.
+  const [{ params }, utxos] = await Promise.all([
+    fetchProtocolParams(),
+    wallet.getUtxos(),
+  ]);
+  const txBuilder = new MeshTxBuilder({ params });
+  const unsignedTx = await txBuilder
+    .txOut(built.address, built.value)
+    .txOutInlineDatumValue(built.datum) // default "Mesh" datum type
+    .changeAddress(changeAddress)
+    .selectUtxosFrom(utxos)
+    .complete();
+
+  const signedTx = await wallet.signTx(unsignedTx);
+  const txHash = await wallet.submitTx(signedTx);
+  return { txHash, ref: `${txHash}#0`, owner: changeAddress };
+}
+
+/**
+ * Build → sign → submit a WITHDRAW intent: a plain payment to the `lp_intent` address holding
+ * `lpAmount` LP + the inline datum, funded by the wallet (coin selection supplies the LP).
+ * Same gate + structure as the deposit post. Reclaim returns the LP tokens, not underlying (§13).
+ */
+export async function postLpIntentWithdraw(
+  wallet: IWallet,
+  args: PostLpIntentWithdrawArgs,
+): Promise<PostLpIntentResult> {
+  requireLpIntentDeployed();
+  const { changeAddress, pubKeyHash, ownerStake } = await lpIntentOwner(wallet);
+
+  const built = buildLpIntentWithdraw({
+    ownerPkh: pubKeyHash,
+    ownerStake,
+    poolNftUnit: args.pool.id,
+    assetAUnit: args.pool.tokenA.unit,
+    assetBUnit: args.pool.tokenB.unit,
+    lpAmount: args.lpAmount,
+    minA: args.minA,
+    minB: args.minB,
+    tip: args.tip,
+    deadline: args.deadline,
+  });
+
+  const [{ params }, utxos] = await Promise.all([
+    fetchProtocolParams(),
+    wallet.getUtxos(),
+  ]);
+
+  // Preflight: the intent UTXO must carry `lpAmount` LP, so the wallet must hold it. Surface a
+  // clear error up front rather than an opaque balancer "not enough UTxOs" (mirrors withdrawLiquidity).
+  const lpUnit = lpUnitForPool(args.pool.id);
+  const walletLp = utxos.reduce((sum, u) => {
+    const a = u.output.amount.find((x) => x.unit === lpUnit);
+    return sum + (a ? BigInt(a.quantity) : 0n);
+  }, 0n);
+  if (walletLp < args.lpAmount) {
+    throw new Error(
+      `wallet holds ${walletLp} LP for this pool — not enough to redeem ${args.lpAmount}`,
+    );
+  }
+
+  const txBuilder = new MeshTxBuilder({ params });
+  const unsignedTx = await txBuilder
+    .txOut(built.address, built.value)
+    .txOutInlineDatumValue(built.datum)
+    .changeAddress(changeAddress)
+    .selectUtxosFrom(utxos)
+    .complete();
+
+  const signedTx = await wallet.signTx(unsignedTx);
+  const txHash = await wallet.submitTx(signedTx);
+  return { txHash, ref: `${txHash}#0`, owner: changeAddress };
+}
+
+/**
+ * Build → sign → submit an owner-reclaim of one's own LP intent (the `ReclaimLp` path).
+ *
+ * Spends the intent UTXO with the `ReclaimLp` redeemer via the on-chain `lp_intent` reference
+ * script (no inlined 2.8 kB validator). The validator requires the owner's signature, so
+ * `requiredSignerHash(ownerPkh)` + the wallet signing IS the authorization — every intent is
+ * owner-reclaimable. A DEPOSIT reclaim returns `asset_a` + `asset_b`; a WITHDRAW reclaim
+ * returns the **LP tokens**, NOT the underlying (the §13 residual — turning LP back into
+ * reserves is the pool mutation this path routes around). The full intent value returns to the
+ * owner as change. Mirrors `reclaimOrder`. `ref` is `"<txHash>#<index>"`.
+ */
+export async function reclaimLpIntent(
+  wallet: IWallet,
+  ref: string,
+): Promise<string> {
+  const [txHash, indexStr] = ref.split("#");
+  const index = Number(indexStr);
+  if (!txHash || !Number.isInteger(index)) {
+    throw new Error(`malformed lp-intent ref: ${ref}`);
+  }
+  // Refuse on a network where the LP-intent path isn't live yet (also narrows LP_INTENT_REF).
+  const { lpIntentRef } = requireLpIntentDeployed();
+
+  const [intent, protocol, changeAddress, collateral, utxos] = await Promise.all([
+    fetchUtxo(txHash, index, "lp-intent"),
+    fetchProtocolParams(),
+    wallet.getChangeAddress(),
+    wallet.getCollateral(),
+    wallet.getUtxos(),
+  ]);
+  const { params, costModels } = protocol;
+  const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
+  const col = collateral[0];
+  if (!col) {
+    throw new Error("no collateral in wallet — set a collateral UTXO and retry");
+  }
+  const fundingUtxos = excludeCollateral(utxos, collateral);
+
+  const txBuilder = new MeshTxBuilder({ params, evaluator });
+  // Inject the network's real cost models so the script-integrity hash matches the node.
+  txBuilder.setCostModels(costModels);
+  const unsignedTx = await txBuilder
+    .spendingPlutusScriptV3()
+    .txIn(
+      intent.input.txHash,
+      intent.input.outputIndex,
+      intent.output.amount,
+      intent.output.address,
+      0, // scriptSize: the intent UTXO carries no attached reference script.
+    )
+    .spendingTxInReference(
+      lpIntentRef.txHash,
+      lpIntentRef.outputIndex,
+      LP_INTENT_SCRIPT_SIZE.toString(),
+      lpIntentScriptHash(),
+    )
+    .spendingReferenceTxInInlineDatumPresent()
+    .spendingReferenceTxInRedeemerValue(lpIntentReclaimRedeemer)
+    .txInCollateral(
+      col.input.txHash,
+      col.input.outputIndex,
+      col.output.amount,
+      col.output.address,
+    )
+    .requiredSignerHash(ownerPkh)
+    .changeAddress(changeAddress)
+    .selectUtxosFrom(fundingUtxos)
+    .complete();
+
+  const signedTx = await wallet.signTx(unsignedTx);
+  return wallet.submitTx(signedTx);
 }
 
 export interface CreatePoolArgs {

@@ -40,6 +40,13 @@ SHASWAP_STRATEGY=round-robin   # drain order: round-robin | profit-greedy
 RUST_LOG=debug            # verbosity (default info); tracing w/ timestamps + levels
 ```
 
+**Preprod.** A committed, ready-to-run base pinned to the LIVE Rev 25 deployment is
+[`config/deployment.preprod.example.json`](config/deployment.preprod.example.json) — every
+on-chain identity is filled (refs tx `9088f8dc…`, pool `34b30c7a…`, lp_intent `fa885b03…`,
+canonical pool policy `d5ccd174…`); copy it and set only your own Kupo/Ogmios URLs + a `0600`
+solver skey. (The maintainer's local `../contracts/happy_path/deployment.json` carries the same
+identities with machine-local paths.)
+
 **Mainnet.** Start from [`config/deployment.mainnet.example.json`](config/deployment.mainnet.example.json)
 (`network_id=1`, `network_magic=764824073`, your own Kupo/Ogmios, a `0600` skey). The
 startup banner prints `network=MAINNET` and, with `SHASWAP_SUBMIT=1`, logs an explicit

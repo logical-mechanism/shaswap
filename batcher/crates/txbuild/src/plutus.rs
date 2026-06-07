@@ -13,6 +13,9 @@
 //! - `SettlementRedeemer` → `Constr 0 [price_num, price_den, asset_a, asset_b, pool_nft, fills]`
 //! - `OrderRedeemer` → `Settle` = `Constr 0 []`, `Reclaim` = `Constr 1 []`
 //! - `PoolRedeemer` → `PoolSettle` = `Constr 0 []`, `LpAction` = `Constr 1 []`, `ClosePool` = `Constr 2 []`
+//! - `LpIntentDatum` → `Constr 0 [owner, owner_stake, pool_nft, action, min_a, min_b, min_shares, tip, deadline]`
+//! - `LpIntentAction` → `LpDeposit` = `Constr 0 []`, `LpWithdraw` = `Constr 1 []`
+//! - `LpIntentRedeemer` → `Fulfill` = `Constr 0 []`, `ReclaimLp` = `Constr 1 []`
 //! - `Bool` → `False` = `Constr 0 []`, `True` = `Constr 1 []`
 //! - `Option` → `Some(x)` = `Constr 0 [x]`, `None` = `Constr 1 []`
 
@@ -20,7 +23,8 @@ use pallas_codec::utils::{Int, MaybeIndefArray};
 use pallas_primitives::{BigInt, Constr, PlutusData};
 use solver_core::output::Datum;
 use solver_core::types::{
-    AssetId, BoundDatum, Credential, OrderDatum, OutputReference, PoolDatum, SettlementRedeemer,
+    AssetId, BoundDatum, Credential, LpIntentAction, LpIntentDatum, OrderDatum, OutputReference,
+    PoolDatum, SettlementRedeemer,
 };
 
 /// Build a constructor `Data`. Nonempty fields use an indefinite-length array and
@@ -143,6 +147,31 @@ pub fn bound_datum(d: &BoundDatum) -> PlutusData {
     constr(0, vec![output_reference(&d.order_ref)])
 }
 
+/// `LpIntentAction` — `LpDeposit` = `Constr 0 []`, `LpWithdraw` = `Constr 1 []`.
+pub fn lp_intent_action(a: &LpIntentAction) -> PlutusData {
+    match a {
+        LpIntentAction::LpDeposit => constr(0, vec![]),
+        LpIntentAction::LpWithdraw => constr(1, vec![]),
+    }
+}
+
+pub fn lp_intent_datum(d: &LpIntentDatum) -> PlutusData {
+    constr(
+        0,
+        vec![
+            credential(&d.owner),
+            option_credential(&d.owner_stake),
+            asset_id(&d.pool_nft),
+            lp_intent_action(&d.action),
+            int(d.min_a),
+            int(d.min_b),
+            int(d.min_shares),
+            int(d.tip),
+            option_int(d.deadline),
+        ],
+    )
+}
+
 pub fn settlement_redeemer(r: &SettlementRedeemer) -> PlutusData {
     let fills = if r.fills.is_empty() {
         MaybeIndefArray::Def(vec![])
@@ -170,6 +199,21 @@ pub fn order_settle() -> PlutusData {
 /// `PoolRedeemer::PoolSettle`.
 pub fn pool_settle() -> PlutusData {
     constr(0, vec![])
+}
+
+/// `PoolRedeemer::LpAction` — how a fulfillment tx spends the pool (Constr 1 []).
+pub fn pool_lp_action() -> PlutusData {
+    constr(1, vec![])
+}
+
+/// `LpIntentRedeemer::Fulfill` — the batcher fulfilling an LP intent (Constr 0 []).
+pub fn lp_intent_fulfill() -> PlutusData {
+    constr(0, vec![])
+}
+
+/// `LpIntentRedeemer::ReclaimLp` — owner reclaim (Constr 1 []).
+pub fn lp_intent_reclaim() -> PlutusData {
+    constr(1, vec![])
 }
 
 /// Encode an output's typed [`Datum`] into Plutus `Data` (for an inline datum).

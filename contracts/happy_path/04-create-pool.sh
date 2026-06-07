@@ -7,8 +7,8 @@ source "$(dirname "${BASH_SOURCE[0]:-$0}")/env.sh"
 
 TEST_POLICY=$(cat "$WORK/test-policy.id")
 TEST_NAME_HEX="54455354"
-RES_A=1000000000           # TEST reserve (asset_a)
-RES_B=1000000000          # ADA reserve (asset_b), lovelace (on top of pool_min_ada)
+: "${RES_A:=1000000000}"   # TEST reserve (asset_a) — env-overridable for smaller test pools
+: "${RES_B:=1000000000}"   # ADA reserve (asset_b), lovelace (on top of pool_min_ada)
 POOL_ADA=$((RES_B + POOL_MIN_ADA))
 
 U=$(cli query utxo --address "$SOLVER_ADDR" --testnet-magic "$NET_MAGIC" --output-json)

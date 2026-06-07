@@ -3,10 +3,11 @@
   "network_magic": 1,
   "kupo_url": "http://127.0.0.1:1442",
   "ogmios_url": "http://127.0.0.1:1337",
-  "settlement_hash": "a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e",
-  "order_script_hash": "801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2",
-  "pool_script_hash": "4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b",
-  "pool_mint_policy": "3d36f7963dcca05ba53e32babdf3c2572d467c7388dbb1cf4b28645f",
+  "settlement_hash": "a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea",
+  "order_script_hash": "e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d",
+  "pool_script_hash": "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac",
+  "lp_intent_script_hash": "fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d",
+  "pool_mint_policy": "d5ccd17454150e29feb00ee72f5bf1155bcf41718cb7e641dd5f593d",
   "nft_name": "4e4654",
   "lp_name": "4c50",
   "total_lp": 9223372036854775807,
@@ -14,16 +15,20 @@
   "pool_min_ada": 2000000,
   "order_min_ada": 2000000,
   "settlement_ref": {
-    "tx_id": "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 0
   },
   "order_ref": {
-    "tx_id": "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 2
   },
   "pool_ref": {
-    "tx_id": "78130a6c6f88173ac3b6c75babb10de03f68b239213e95f4a83d5959fec8fc7e",
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 1
+  },
+  "lp_intent_ref": {
+    "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
+    "index": 3
   },
   "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey",
   "max_orders_per_tx": 20,

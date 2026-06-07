@@ -47,18 +47,24 @@ export USER_VKEY="$KEYS_DIR/user.vkey"
 [ -f "$KEYS_DIR/user.addr" ] && export USER_ADDR="$(cat "$KEYS_DIR/user.addr")" || true
 [ -f "$USER_VKEY" ] && export USER_PKH="$(cardano-cli latest address key-hash --payment-verification-key-file "$USER_VKEY")" || true
 
-# --- scripts (settlement is unparameterised; order/pool parameterised by S) ----
+# --- scripts (settlement unparameterised; order/pool/lp_intent parameterised by S) ----
 export SETTLEMENT_SCRIPT="$SCRIPTS/settlement.plutus"
 export ORDER_SCRIPT="$SCRIPTS/order.plutus"
 export POOL_SCRIPT="$SCRIPTS/pool.plutus"
+export LP_INTENT_SCRIPT="$SCRIPTS/lp_intent.plutus"
 
-# --- identities (derived; see also deployment.json) ---------------------------
-export S_HASH="a57de7a9191ab5544173287119f7203724c2d7a7b0457d367545211e"          # settlement (= stake credential S)
-export ORDER_HASH="801c7a4c4268b986d0dfd90010ee5d5708c18b19be485b53e88d22f2"      # order(S)
-export POOL_HASH="4427ef8453f1acb4fac3844fbc7c34852fe188e4ab99f3fda07b533b"       # pool(S)
+# --- identities (derived; see also deployment.json) — Rev 25 clearing-price-pin set -------
+# pool + lp_intent re-hashed (two-sided price pin / at-ratio LP pins); settlement (S) +
+# order byte-identical. Applied hashes derived via the app's MeshJS apply (app == cardano-cli
+# verified); pool keeps the S stake credential, only its payment hash changed.
+export S_HASH="a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea"          # settlement (= stake credential S)
+export ORDER_HASH="e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d"      # order(S)
+export POOL_HASH="34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac"       # pool(S) — Rev 25
+export LP_INTENT_HASH="fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d"  # lp_intent(S) — Rev 25
 export S_STAKE_ADDR="$(cat "$SCRIPTS/settlement.stake.addr")"                     # reward account for S
 export ORDER_ADDR="$(cat "$SCRIPTS/order.addr")"                                  # where orders live (tagged S)
 export POOL_ADDR="$(cat "$SCRIPTS/pool.addr")"                                    # where the pool lives (tagged S)
+export LP_INTENT_ADDR="$(cat "$SCRIPTS/lp_intent.addr")"                          # where LP intents live (enterprise, NOT S-tagged)
 
 # --- protocol constants (MUST equal contracts/lib/shaswap/constants.ak) --------
 export NFT_NAME="4e4654"            # "NFT"

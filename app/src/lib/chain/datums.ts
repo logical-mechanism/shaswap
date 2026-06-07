@@ -82,6 +82,33 @@ export interface PoolDatum {
   creator: Credential;
 }
 
+/** `lp_intent_types.LpIntentAction` — `LpDeposit = Constr 0`, `LpWithdraw = Constr 1`. */
+export type LpIntentAction = "deposit" | "withdraw";
+
+/**
+ * `lp_intent_types.LpIntentDatum` (BLUEPRINT §5.1 Rev 22) — a batcher-fulfilled
+ * deposit/withdraw intent. Flat shape (mirrors `OrderDatum`): a withdraw uses
+ * `minA`/`minB` (the released-reserve floor) and sets `minShares = 0`; a deposit uses
+ * `minShares` and sets `minA = minB = 0`.
+ */
+export interface LpIntentDatum {
+  owner: Credential;
+  /** Payout stake half (as `OrderDatum.ownerStake`); pinned from the datum (M-01). */
+  ownerStake: Credential | null;
+  poolNft: AssetId;
+  action: LpIntentAction;
+  /** Withdraw floor: released `asset_a` ≥ `minA` (0 for deposit). */
+  minA: bigint;
+  /** Withdraw floor: released `asset_b` ≥ `minB` (0 for deposit). */
+  minB: bigint;
+  /** Deposit floor: minted `shares` ≥ `minShares` (0 for withdraw). */
+  minShares: bigint;
+  /** Solver reward (lovelace) — the only value the batcher keeps. */
+  tip: bigint;
+  /** Optional fulfillment deadline (POSIX ms). */
+  deadline: bigint | null;
+}
+
 /** ADA is the empty `(policy, name)` asset. */
 export const ADA: AssetId = { policy: "", name: "" };
 
@@ -160,6 +187,28 @@ export function encodePoolDatum(d: PoolDatum): Data {
 export function encodeBoundDatum(orderRef: OutputReference): Data {
   return mConStr(0, [encodeOutputReference(orderRef)]);
 }
+
+function lpIntentActionData(a: LpIntentAction): Data {
+  return mConStr(a === "deposit" ? 0 : 1, []);
+}
+
+export function encodeLpIntentDatum(d: LpIntentDatum): Data {
+  return mConStr(0, [
+    encodeCredential(d.owner),
+    optionCredential(d.ownerStake),
+    encodeAssetId(d.poolNft),
+    lpIntentActionData(d.action),
+    d.minA,
+    d.minB,
+    d.minShares,
+    d.tip,
+    optionInt(d.deadline),
+  ]);
+}
+
+/** `LpIntentRedeemer::Fulfill` (batcher) / `ReclaimLp` (owner) — both nullary. */
+export const lpIntentFulfillRedeemer: Data = mConStr(0, []);
+export const lpIntentReclaimRedeemer: Data = mConStr(1, []);
 
 /** `OrderRedeemer::Settle` / `Reclaim` (nullary). */
 export const orderSettleRedeemer: Data = mConStr(0, []);
@@ -297,5 +346,30 @@ export function decodePoolDatum(cborHex: string): PoolDatum {
     feeNum: asInt(f[3]),
     feeDen: asInt(f[4]),
     creator: decodeCredential(f[5]),
+  };
+}
+
+function decodeLpIntentAction(d: PlutusJson): LpIntentAction {
+  const { index } = readConstr(d);
+  if (index === 0) return "deposit";
+  if (index === 1) return "withdraw";
+  throw new Error(`unknown LpIntentAction constructor ${index}`);
+}
+
+/** Decode an inline `LpIntentDatum` from its CBOR hex. Throws on any malformed input. */
+export function decodeLpIntentDatum(cborHex: string): LpIntentDatum {
+  const root = deserializeDatum<PlutusJson>(cborHex);
+  const f = asConstr(root, 0);
+  if (f.length !== 9) throw new Error(`LpIntentDatum: expected 9 fields, got ${f.length}`);
+  return {
+    owner: decodeCredential(f[0]),
+    ownerStake: decodeOptionCredential(f[1]),
+    poolNft: decodeAssetId(f[2]),
+    action: decodeLpIntentAction(f[3]),
+    minA: asInt(f[4]),
+    minB: asInt(f[5]),
+    minShares: asInt(f[6]),
+    tip: asInt(f[7]),
+    deadline: decodeOptionInt(f[8]),
   };
 }

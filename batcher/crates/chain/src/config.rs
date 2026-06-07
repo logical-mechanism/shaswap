@@ -53,6 +53,9 @@ pub struct Config {
     pub order_script_hash: String,
     pub pool_script_hash: String,
     pub pool_mint_policy: String,
+    /// The unparameterised `lp_intent` validator hash (BLUEPRINT §5.1 Rev 22). Its
+    /// UTXOs sit at an enterprise address (payment = this hash, stake = `None`).
+    pub lp_intent_script_hash: String,
 
     /// Pool NFT name (hex) and LP name (hex) — must equal `constants.ak`.
     pub nft_name: String,
@@ -68,6 +71,13 @@ pub struct Config {
     pub settlement_ref: RefInput,
     pub order_ref: RefInput,
     pub pool_ref: RefInput,
+    /// Reference script UTXO for the `lp_intent` validator. **Optional** — it is
+    /// deployed only at the Phase-4 redeploy (the lp_intent validator joins the
+    /// reference-script set then), so a pre-Phase-4 deployment JSON omits it and LP
+    /// intent fulfillment is simply disabled (settlements are unaffected). Once
+    /// present, the batcher references it (alongside `pool_ref`) to fulfil intents.
+    #[serde(default)]
+    pub lp_intent_ref: Option<RefInput>,
 
     /// Path to the solver wallet signing key.
     pub signing_key_path: String,
@@ -158,6 +168,7 @@ impl Config {
             settlement_cred,
             order_script_hash: hash28(&self.order_script_hash, "order_script_hash")?,
             pool_script_hash: hash28(&self.pool_script_hash, "pool_script_hash")?,
+            lp_intent_script_hash: hash28(&self.lp_intent_script_hash, "lp_intent_script_hash")?,
             pool_mint_policy,
             pool_nft,
             kupo_url: self.kupo_url.clone(),
@@ -165,6 +176,11 @@ impl Config {
             settlement_ref: ref_input(&self.settlement_ref, "settlement_ref")?,
             order_ref: ref_input(&self.order_ref, "order_ref")?,
             pool_ref: ref_input(&self.pool_ref, "pool_ref")?,
+            lp_intent_ref: self
+                .lp_intent_ref
+                .as_ref()
+                .map(|r| ref_input(r, "lp_intent_ref"))
+                .transpose()?,
             // Clamp to ≥ 1 — a 0 cap would never include any order.
             max_orders_per_tx: self.max_orders_per_tx.max(1),
         })
@@ -206,6 +222,7 @@ pub struct ValidatedConfig {
     pub settlement_cred: Credential,
     pub order_script_hash: Vec<u8>,
     pub pool_script_hash: Vec<u8>,
+    pub lp_intent_script_hash: Vec<u8>,
     pub pool_mint_policy: Vec<u8>,
     pub pool_nft: AssetId,
     pub kupo_url: String,
@@ -213,6 +230,10 @@ pub struct ValidatedConfig {
     pub settlement_ref: OutputReference,
     pub order_ref: OutputReference,
     pub pool_ref: OutputReference,
+    /// Reference-script UTXO for the `lp_intent` validator, if deployed (Phase 4).
+    /// `None` disables LP-intent fulfillment (the batcher can't reference the
+    /// validator); settlements are unaffected. See [`Config::lp_intent_ref`].
+    pub lp_intent_ref: Option<OutputReference>,
     /// Max orders per settlement tx (≥ 1; see [`Config::max_orders_per_tx`]).
     pub max_orders_per_tx: usize,
 }
@@ -228,6 +249,7 @@ mod tests {
               "kupo_url": "http://localhost:1442", "ogmios_url": "http://localhost:1337",
               "settlement_hash": "{s}", "order_script_hash": "{s}",
               "pool_script_hash": "{s}", "pool_mint_policy": "{s}",
+              "lp_intent_script_hash": "{s}",
               "nft_name": "4e4654", "lp_name": "4c50",
               "total_lp": 9223372036854775807, "min_liq": 1000,
               "pool_min_ada": 2000000, "order_min_ada": 2000000,
@@ -268,6 +290,26 @@ mod tests {
             "\"order_min_ada\": 2000000, \"max_orders_per_tx\": 0,",
         );
         assert_eq!(Config::from_json(&zero).unwrap().max_orders_per_tx, 1);
+    }
+
+    #[test]
+    fn lp_intent_ref_is_optional_and_parses_when_present() {
+        // Absent in the JSON → None (pre-Phase-4 deployment; LP fulfillment off).
+        let v = Config::from_json(&good_json()).expect("valid");
+        assert_eq!(v.lp_intent_ref, None);
+
+        // Present → parsed into an OutputReference.
+        let tx = "d1".repeat(32);
+        let with = good_json().replace(
+            "\"signing_key_path\"",
+            &format!(
+                "\"lp_intent_ref\": {{\"tx_id\": \"{tx}\", \"index\": 3}}, \"signing_key_path\""
+            ),
+        );
+        let v = Config::from_json(&with).expect("valid with lp_intent_ref");
+        let r = v.lp_intent_ref.expect("lp_intent_ref present");
+        assert_eq!(r.output_index, 3);
+        assert_eq!(r.transaction_id, vec![0xd1u8; 32]);
     }
 
     #[test]

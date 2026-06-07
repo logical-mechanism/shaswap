@@ -113,6 +113,14 @@ fn consume_remainder(
   // the remainder is a continuing order that will itself pay out later, so it must
   // carry the SAME payout stake credential (the solver can't swap it on the rollover)
   expect ro.owner_stake == order.owner_stake
+  // (H-01) the remainder must consent to the SAME pool as the original order. The
+  // floor `limit` is a bare count of the *bought* asset whose identity is resolved
+  // only at settlement time from the spent pool's pair (the C-02 binding). Without
+  // pinning `pool_nft` here the solver could re-point the unsold portion at an
+  // attacker pool with a worthless `asset_b` and satisfy the floor with junk — an
+  // asset-substitution rug of the remainder. This restores the C-02 binding across
+  // the partial-fill rollover (mirrors `check_one`'s `order.pool_nft == r.pool_nft`).
+  expect ro.pool_nft == order.pool_nft
   expect ro.sell_a == order.sell_a
   expect ro.sell_amount == new_sell
   expect ro.tip == tip_rem
@@ -133,6 +141,7 @@ fn check_one(
   remainders: List<Output>,
   r: SettlementRedeemer,
   tx_upper: Option<Int>,
+  account: Credential,
 ) -> (Int, Int, List<Output>) {
   expect InlineDatum(od) = input.output.datum
   expect order: OrderDatum = od
@@ -142,6 +151,17 @@ fn check_one(
   // to the pool's real pair — the solver can't settle it against a worthless-pair
   // pool or pay out a token of its own choosing.
   expect order.pool_nft == r.pool_nft
+
+  // Forbid `owner_stake == S` (the settlement credential). The owner payout lands at
+  // Address{owner, owner_stake}; if a user pinned `owner_stake` to S, that payout
+  // would itself be `is_tagged(S)` and get mis-classified as a phantom remainder,
+  // tripping `expect [] = remainders` and silently bricking the settle path (the
+  // order would stay reclaimable but never settleable). Reject it explicitly here
+  // (verify-don't-trust: don't rely on the off-chain builder to avoid this self-
+  // poisoning value). Purely additive — it only rejects an un-settleable config and
+  // can never weaken conservation. No rational owner delegates a payout to S (the
+  // undelegatable, zero-reward settlement script).
+  expect order.owner_stake != Some(account)
 
   expect deadline_ok(order.deadline, tx_upper)
   // (6) injective binding: this output is bound to THIS order's unique ref
@@ -244,6 +264,7 @@ fn process(
   remainders: List<Output>,
   r: SettlementRedeemer,
   tx_upper: Option<Int>,
+  account: Credential,
 ) -> (Int, Int) {
   when pairs is {
     [] -> {
@@ -253,8 +274,16 @@ fn process(
     }
     [(input, bound), ..rest] -> {
       expect [f, ..frest] = fills
-      let (d_a, d_b, rem2) = check_one(input, bound, f, remainders, r, tx_upper)
-      let (na, nb) = process(rest, frest, rem2, r, tx_upper)
+      let (d_a, d_b, rem2) = check_one(
+        input,
+        bound,
+        f,
+        remainders,
+        r,
+        tx_upper,
+        account,
+      )
+      let (na, nb) = process(rest, frest, rem2, r, tx_upper, account)
       (d_a + na, d_b + nb)
     }
   }
@@ -334,6 +363,7 @@ pub fn run(account: Credential, r: SettlementRedeemer, tx: Transaction) -> Bool 
     remainders,
     r,
     tx_upper,
+    account,
   )
 
   // no minting/burning in a settlement (LP mint only at create/close)

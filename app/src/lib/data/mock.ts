@@ -1,7 +1,13 @@
 import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
-import type { Pool, Quote, TokenInfo, WalletPosition } from "./types";
+import type {
+  LpIntentPosition,
+  Pool,
+  Quote,
+  TokenInfo,
+  WalletPosition,
+} from "./types";
 
 /**
  * MockProvider — static/fake data so the skeleton renders end-to-end without
@@ -90,6 +96,38 @@ const POSITIONS: WalletPosition[] = [
   },
 ];
 
+// Illustrative LP intents (a pending withdraw + a pending deposit) on the ADA/TEST pool, so
+// the LP-intent surface renders in the offline mock. Nothing here is on-chain or fulfillable.
+const LP_INTENTS: LpIntentPosition[] = [
+  {
+    ref: "aabbccddeeff00112233445566778899aabbccddeeff001122334455#0",
+    poolNft: POOLS[0].id,
+    action: "withdraw",
+    tokenA: ADA,
+    tokenB: TEST,
+    lp: "250000",
+    minA: "100000000", // ≥100 ADA
+    minB: "140000000",
+    minShares: "0",
+    tip: "1000000",
+    deadline: null,
+  },
+  {
+    ref: "00112233445566778899aabbccddeeff00112233445566778899aabb#0",
+    poolNft: POOLS[0].id,
+    action: "deposit",
+    tokenA: ADA,
+    tokenB: TEST,
+    depositA: "50000000", // 50 ADA
+    depositB: "70000000",
+    minA: "0",
+    minB: "0",
+    minShares: "60000",
+    tip: "1000000",
+    deadline: null,
+  },
+];
+
 /** Find the pool that trades exactly {inUnit, outUnit} in either direction. */
 function findPool(inUnit: string, outUnit: string): Pool | undefined {
   return POOLS.find(
@@ -130,6 +168,12 @@ export class MockProvider implements DataProvider {
     // Skeleton: return the same illustrative set regardless of address.
     void address;
     return POSITIONS;
+  }
+
+  async walletLpIntents(address: string): Promise<LpIntentPosition[]> {
+    // Skeleton: return the same illustrative set regardless of address.
+    void address;
+    return LP_INTENTS;
   }
 
   // The mock has no chain access, so it cannot supply protocol params or evaluate a

@@ -251,6 +251,40 @@ fn partial_token_seller() {
     assert_eq!(st.tip_taken_total, 800_000);
 }
 
+// ---- H-01 (audit 060426): a partial-fill remainder must consent to the SAME pool
+// it came from. `clearing.ak::consume_remainder` now requires
+// `ro.pool_nft == order.pool_nft`, so the rolled-over `OrderDatum.pool_nft` the
+// solver writes MUST equal the consumed order's `pool_nft` — else every partial-fill
+// settlement the batcher builds is rejected on-chain. This pins that invariant.
+#[test]
+fn remainder_pool_nft_pinned_to_consumed_order() {
+    let order = OrderInput {
+        output_reference: order_ref(0),
+        address: tagged(Credential::Script(o_hash())),
+        value: tok_val(TIP + 2 * MIN_ADA, SELL),
+        datum: OrderDatum {
+            partial: true,
+            ..order_datum()
+        },
+    };
+    let st = build_settlement(
+        std::slice::from_ref(&order),
+        &[400_000],
+        &pool_input(),
+        price_1_2(),
+        None,
+    )
+    .expect("partial should clear");
+    assert_eq!(st.remainders.len(), 1);
+    let Datum::Order(rem) = &st.remainders[0].datum else {
+        panic!("remainder must carry an OrderDatum");
+    };
+    // The H-01 invariant: the remainder consents to the same pool as its source order
+    // (which the anchor also asserts equals the settled pool's NFT).
+    assert_eq!(rem.pool_nft, order.datum.pool_nft);
+    assert_eq!(rem.pool_nft, pool_input().datum.nft);
+}
+
 // ---- bidirectional netting --------------------------------------------------
 
 fn ada_order_input(i: u64, sell_ada: i128, limit: i128) -> OrderInput {

@@ -61,7 +61,9 @@ mod transaction;
 
 pub use conway::BuildConway;
 pub use transaction::{
-    model::{BuiltTransaction, ExUnits, Input, Output, ScriptKind, StagingTransaction},
+    model::{
+        BuiltTransaction, ExUnits, Input, Output, RedeemerPurpose, ScriptKind, StagingTransaction,
+    },
     Bytes, Bytes32,
 };
 

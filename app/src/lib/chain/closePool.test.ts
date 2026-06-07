@@ -2,7 +2,7 @@
  * Tests for the close-pool helpers: one-shot SEED RECOVERY from the mint tx's inputs
  * (the seed isn't stored in the datum) and the seed-applied burn policy. The seed →
  * policyId mapping is the same ground truth cross-checked against aiken+cardano-cli in
- * createPool.test.ts (seed `(77×32)#3` → `68cd7477…c408d`). Run with `npm run test`.
+ * createPool.test.ts (seed `(77×32)#3` → `d695abfe…0838`, post-audit pool_mint). Run with `npm run test`.
  */
 
 import { test } from "node:test";
@@ -11,7 +11,7 @@ import { buildClosePool, recoverSeed } from "./closePool.ts";
 import { closePoolRedeemer, mintCloseRedeemer, toCbor } from "./datums.ts";
 import { LP_NAME_HEX, NFT_NAME_HEX } from "./deployment.ts";
 
-const POLICY = "68cd7477559b5702f95ca15722069fe0795445de197359acfd0c408d";
+const POLICY = "d695abfe998273ddf9724adcea4f43303f84167a47a1f30569060838";
 const NFT_UNIT = POLICY + NFT_NAME_HEX;
 const SEED = { txHash: "77".repeat(32), index: 3 };
 const PKH = "c0".repeat(28);

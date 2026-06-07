@@ -15,7 +15,7 @@ use crate::config::ValidatedConfig;
 use crate::decode::{self, DecodeError};
 use pallas_addresses::Network;
 use serde_json::{json, Value as Json};
-use solver_core::output::{Address, OrderInput, PoolInput};
+use solver_core::output::{Address, LpIntentInput, OrderInput, PoolInput};
 use solver_core::types::{Credential, OutputReference};
 use solver_core::value::Value;
 use txbuild::address as txaddr;
@@ -389,15 +389,20 @@ pub struct KupoOgmios {
     network: Network,
     order_addr: String,
     pool_addr: String,
+    /// The lp_intent **enterprise** address (payment = lp_intent script hash, stake
+    /// = `None`). NOT `S`-tagged — the settlement anchor never enumerates it.
+    lp_intent_addr: String,
 }
 
 impl KupoOgmios {
     /// Build the backend from a validated config, deriving the (bech32) order and
-    /// pool addresses Kupo matches on.
+    /// pool addresses Kupo matches on (`S`-tagged), plus the lp_intent enterprise
+    /// address (non-`S`-tagged).
     pub fn new(cfg: ValidatedConfig) -> Result<Self, ChainError> {
         let network = txaddr::network(cfg.network_id);
         let order_addr = Self::tagged_addr(network, &cfg.order_script_hash, &cfg.settlement_cred)?;
         let pool_addr = Self::tagged_addr(network, &cfg.pool_script_hash, &cfg.settlement_cred)?;
+        let lp_intent_addr = Self::enterprise_addr(network, &cfg.lp_intent_script_hash)?;
         Ok(Self {
             cfg,
             agent: ureq::AgentBuilder::new()
@@ -406,6 +411,7 @@ impl KupoOgmios {
             network,
             order_addr,
             pool_addr,
+            lp_intent_addr,
         })
     }
 
@@ -413,6 +419,18 @@ impl KupoOgmios {
         let addr = Address {
             payment: Credential::Script(payment.to_vec()),
             stake: Some(s.clone()),
+        };
+        txaddr::shelley_bech32(net, &addr).map_err(|e| ChainError::Address(format!("{e:?}")))
+    }
+
+    /// An **enterprise** Shelley address (payment script credential, no stake) — the
+    /// shape of the lp_intent UTXO address. Distinct from [`tagged_addr`], which
+    /// attaches the `S` stake credential; an lp_intent UTXO must never be `S`-tagged
+    /// (else the settlement anchor would try to enumerate it as an order/pool).
+    fn enterprise_addr(net: Network, payment: &[u8]) -> Result<String, ChainError> {
+        let addr = Address {
+            payment: Credential::Script(payment.to_vec()),
+            stake: None,
         };
         txaddr::shelley_bech32(net, &addr).map_err(|e| ChainError::Address(format!("{e:?}")))
     }
@@ -471,6 +489,16 @@ impl KupoOgmios {
         let o = self.script_size(&hex::encode(&self.cfg.order_script_hash))?;
         let p = self.script_size(&hex::encode(&self.cfg.pool_script_hash))?;
         Ok(s + o + p)
+    }
+
+    /// Total serialized byte size of the 2 scripts a fulfillment references (pool +
+    /// lp_intent) — the reference-script fee basis for an LP fulfillment tx. Errors
+    /// if the lp_intent script isn't indexed yet (not deployed pre-Phase-4); the
+    /// orchestrator treats that as "LP fulfillment disabled this session".
+    pub fn lp_fulfillment_ref_bytes(&self) -> Result<u64, ChainError> {
+        let p = self.script_size(&hex::encode(&self.cfg.pool_script_hash))?;
+        let l = self.script_size(&hex::encode(&self.cfg.lp_intent_script_hash))?;
+        Ok(p + l)
     }
 
     /// All unspent matches at a bech32 address. Kupo rejects full-address path
@@ -600,6 +628,43 @@ impl KupoOgmios {
         })
     }
 
+    /// Decode a match at the lp_intent address into an [`LpIntentInput`], or `None`
+    /// (logged) if it isn't a well-formed intent. Like the order address, the
+    /// lp_intent address is public — anyone can park junk there — so a bad UTXO is
+    /// skipped, never fatal. The address is **enterprise** (stake `None`), so the
+    /// decoded input carries `stake: None` (never the `S` tag).
+    fn try_lp_intent(&self, m: &KupoMatch) -> Option<LpIntentInput> {
+        let r = &m.output_reference;
+        let skip = |why: String| {
+            tracing::debug!(
+                utxo = format!("{}#{}", hex::encode(&r.transaction_id), r.output_index),
+                "skip lp_intent utxo: {why}"
+            );
+        };
+        let Some(hash) = m.datum_hash.as_ref() else {
+            skip("no datum".into());
+            return None;
+        };
+        match self
+            .fetch_datum(hash)
+            .and_then(|cbor| decode::lp_intent_datum_cbor(&cbor).map_err(ChainError::from))
+        {
+            Ok(datum) => Some(LpIntentInput {
+                output_reference: r.clone(),
+                address: Address {
+                    payment: Credential::Script(self.cfg.lp_intent_script_hash.clone()),
+                    stake: None,
+                },
+                value: m.value.clone(),
+                datum,
+            }),
+            Err(e) => {
+                skip(format!("not a valid LpIntentDatum ({e:?})"));
+                None
+            }
+        }
+    }
+
     /// Canonical input order, matching solver-core's `canonical_key`.
     fn sort_orders(orders: &mut [OrderInput]) {
         orders.sort_by(|a, b| {
@@ -653,6 +718,14 @@ impl ChainBackend for KupoOgmios {
             .collect())
     }
 
+    fn find_lp_intents(&self) -> Result<Vec<LpIntentInput>, ChainError> {
+        Ok(self
+            .matches_at(&self.lp_intent_addr)?
+            .iter()
+            .filter_map(|m| self.try_lp_intent(m))
+            .collect())
+    }
+
     fn find_wallet_utxos(&self, address: &str) -> Result<Vec<Utxo>, ChainError> {
         Ok(self.matches_at(address)?.iter().map(wallet_utxo).collect())
     }
@@ -665,6 +738,7 @@ impl ChainBackend for KupoOgmios {
         let all = self.all_unspent()?;
         let mut orders = Vec::new();
         let mut pools = Vec::new();
+        let mut lp_intents = Vec::new();
         let mut wallet = Vec::new();
         for m in &all {
             if m.address == self.order_addr {
@@ -675,6 +749,10 @@ impl ChainBackend for KupoOgmios {
                 if let Some(p) = self.try_pool(m) {
                     pools.push(p);
                 }
+            } else if m.address == self.lp_intent_addr {
+                if let Some(i) = self.try_lp_intent(m) {
+                    lp_intents.push(i);
+                }
             } else if m.address == wallet_addr {
                 wallet.push(wallet_utxo(m));
             }
@@ -683,6 +761,7 @@ impl ChainBackend for KupoOgmios {
         Ok(Snapshot {
             orders,
             pools,
+            lp_intents,
             wallet,
         })
     }
@@ -788,6 +867,29 @@ mod tests {
     #[test]
     fn parse_ratio_works() {
         assert_eq!(parse_ratio("577/10000").unwrap(), (577, 10_000));
+    }
+
+    #[test]
+    fn lp_intent_addr_is_enterprise_and_distinct_from_tagged() {
+        let net = Network::Testnet;
+        let s = Credential::Script(vec![0x55u8; 28]);
+        let lp_hash = vec![0xaau8; 28];
+        let lp = KupoOgmios::enterprise_addr(net, &lp_hash).unwrap();
+        // Enterprise = payment-only Shelley addr; the `S`-tagged form embeds a stake
+        // credential, so it must differ even for the SAME payment hash.
+        let tagged = KupoOgmios::tagged_addr(net, &lp_hash, &s).unwrap();
+        assert_ne!(lp, tagged);
+        // Re-derive via the address lib and confirm the stake half is absent.
+        let parsed = pallas_addresses::Address::from_bech32(&lp).unwrap();
+        match parsed {
+            pallas_addresses::Address::Shelley(sh) => {
+                assert!(matches!(
+                    sh.delegation(),
+                    pallas_addresses::ShelleyDelegationPart::Null
+                ));
+            }
+            other => panic!("expected a shelley address, got {other:?}"),
+        }
     }
 
     #[test]

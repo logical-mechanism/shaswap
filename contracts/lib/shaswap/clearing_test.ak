@@ -8,11 +8,15 @@ use aiken/fuzz
 use aiken/interval.{Interval}
 use cardano/address.{Address, Credential, Inline, Script, VerificationKey}
 use cardano/assets.{Value}
+use cardano/certificate.{
+  AlwaysAbstain, DelegateCredential, DelegateVote, RegisterCredential,
+  UnregisterCredential,
+}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
 use shaswap/clearing
-use shaswap/constants.{lp_name, order_min_ada, total_lp}
+use shaswap/constants.{lp_name, order_min_ada, pool_min_ada, total_lp}
 use shaswap/spend
 use shaswap/types.{
   AssetId, BoundDatum, OrderDatum, PoolDatum, SettlementRedeemer,
@@ -355,10 +359,40 @@ test neg_floor_breach() fail {
   clearing.run(s(), redeemer([sell]), tx)
 }
 
-// NB: `clearing.allow_registration` (settlement `publish` handler — S authorizes
-// ONLY its own registration, never dereg/deleg) is verified on-chain by the live
-// preprod bootstrap rather than here: the `RegisterCredential.deposit: Never` field
-// is impractical to construct in a unit test. See contracts/happy_path.
+// ---- settlement `publish` authority (audit I-06) --------------------------
+// `clearing.allow_registration` IS the settlement `publish` handler. S authorizes
+// ONLY its own registration — never de-registration or delegation — keeping the
+// withdraw-0 anchor immortal and undelegatable (§5.4). The prior note claimed the
+// `RegisterCredential.deposit: Never` field was impractical to construct; it is not
+// (`Never` is a prelude constructor), so the authority is unit-tested here directly.
+// (The `settlement.publish` entrypoint wiring — a 1-line delegation to this — is
+// driven through the real validator in `validators/settlement.test.ak`.)
+
+// accepts registration of S (the only path that brings the anchor into existence).
+test allow_registration_accepts_register() {
+  clearing.allow_registration(
+    RegisterCredential { credential: s(), deposit: Never },
+  )
+}
+
+// rejects de-registration: a griefer must never un-register S and brick every
+// settlement.
+test allow_registration_rejects_unregister() fail {
+  clearing.allow_registration(
+    UnregisterCredential { credential: s(), refund: Never },
+  )
+}
+
+// rejects delegation: S must stay undelegatable so its (always-zero) rewards can
+// never be captured.
+test allow_registration_rejects_delegate() fail {
+  clearing.allow_registration(
+    DelegateCredential {
+      credential: s(),
+      delegate: DelegateVote { delegate_representative: AlwaysAbstain },
+    },
+  )
+}
 
 // ---- order validator logic ------------------------------------------------
 
@@ -411,8 +445,75 @@ test reclaim_script_owner() fail {
 
 // ---- pool validator logic (owns k) ----------------------------------------
 
+// (Rev 25) The pool must pay the FAIR curve amount. The ADA reserve has pool_min_ada
+// carved out (reserve_of), so res_b_in = pool_ada_in − pool_min_ada = 999_998_000_000, and
+// get_amount_out(sell=1_000_000, res_in=1e12 token, res_out=999_998_000_000, φ=0.3%) =
+// 996_997 ADA. n_orders=1, so the pin allows ≤1 sub-unit dust; paying exactly fair clears it.
 test pool_settle_ok() {
+  let fair = spend.get_amount_out(
+    sell,
+    pool_tok_in,
+    pool_ada_in - pool_min_ada,
+    3,
+    1000,
+  )
+  let tx = build1(
+    owner_out_ada,
+    0,
+    pool_ada_in - fair,
+    pool_tok_in + sell,
+    True,
+  )
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// (Rev 25) The pre-pin floor→fair corridor: pay the trader only `received`=500_000 for
+// 1_000_000 token worth ~996_999 at the curve, banking the ~497k gap into k. The old
+// one-sided k-check accepted this (k rises); the two-sided pin REJECTS it (underpayment
+// ≫ the n_orders dust band). This is the economic fix, asserted on-chain.
+test pool_settle_corridor() fail {
   spend.pool_settle(build(1), pool_ref(), pool_datum(), s())
+}
+
+// (Rev 25) dust band — build(1) has n_orders=1, so the pin tolerates ≤1 sub-unit of
+// per-order flooring: paying fair−1 (996_996) still clears (a legitimate honest-rounding
+// solve must never be rejected).
+test pool_settle_dust_ok() {
+  let fair = spend.get_amount_out(
+    sell,
+    pool_tok_in,
+    pool_ada_in - pool_min_ada,
+    3,
+    1000,
+  )
+  let tx = build1(
+    owner_out_ada,
+    0,
+    pool_ada_in - ( fair - 1 ),
+    pool_tok_in + sell,
+    True,
+  )
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
+}
+
+// (Rev 25) one sub-unit past the band — paying fair−2 (996_995) at n_orders=1 underpays
+// beyond the dust tolerance and is REJECTED. Pins the band tight (ungameable to ≤ n_orders).
+test pool_settle_dust_reject() fail {
+  let fair = spend.get_amount_out(
+    sell,
+    pool_tok_in,
+    pool_ada_in - pool_min_ada,
+    3,
+    1000,
+  )
+  let tx = build1(
+    owner_out_ada,
+    0,
+    pool_ada_in - ( fair - 2 ),
+    pool_tok_in + sell,
+    True,
+  )
+  spend.pool_settle(tx, pool_ref(), pool_datum(), s())
 }
 
 // k decreases (pool pays out ADA without gaining token): rejected.
@@ -756,6 +857,73 @@ test partial_remainder_bad_limit() fail {
       owner_output(0, 2_200_000),
       pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
       remainder_output(False, 600_000, 3_200_000, 600_000, 100_000, 1_200_000),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// (H-01) the token-seller partial remainder (600_000 unsold token + min + leftover
+// tip 1_200_000), but with a caller-chosen `pool_nft` so we can prove the rollover
+// is re-bound to the original order's pool.
+fn partial_remainder_with_pool_nft(pn: AssetId) -> Output {
+  Output {
+    address: tagged(Script(o_hash)),
+    value: tok_val(3_200_000, 600_000),
+    datum: InlineDatum(
+      OrderDatum {
+        owner: VerificationKey(owner_vkh),
+        owner_stake: None,
+        pool_nft: pn,
+        sell_a: True,
+        sell_amount: 600_000,
+        limit: 240_000,
+        tip: 1_200_000,
+        partial: False,
+        deadline: None,
+      },
+    ),
+    reference_script: None,
+  }
+}
+
+// (H-01) the remainder re-points the unsold portion at an ATTACKER pool (`pool_nft`
+// = Q with a worthless asset_b). Before the `expect ro.pool_nft == order.pool_nft`
+// pin this passed (the bug): the solver could later settle the remainder against Q
+// and satisfy the bare-int floor with junk, rugging the unsold balance. Must be
+// rejected now.
+test partial_remainder_wrong_pool_nft() fail {
+  let attacker_nft = AssetId {
+    policy: #"7777777777777777777777777777777777777777777777777777777f",
+    name: #"4e4654",
+  }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      partial_remainder_with_pool_nft(attacker_nft),
+      solver_output(800_000),
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+  clearing.run(s(), redeemer([400_000]), tx)
+}
+
+// PROPERTY (H-01): any remainder `pool_nft` other than the original order's is
+// rejected — fuzz the remainder's target NFT policy across the whole non-matching
+// space (mirrors `prop_reject_order_wrong_pool` for the rollover site).
+test prop_partial_remainder_wrong_pool_nft(pol via nonempty_policy()) fail {
+  let other = AssetId { policy: pol, name: #"4e4654" }
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [partial_token_order(True), pool_input(True)],
+    outputs: [
+      owner_output(0, 2_200_000),
+      pool_output(pool_ada_in - 200_000, pool_tok_in + 400_000),
+      partial_remainder_with_pool_nft(other),
       solver_output(800_000),
     ],
     withdrawals: [Pair(s(), 0)],
@@ -1269,6 +1437,37 @@ test settlement_base_payout_dropped_stake() fail {
   )
 }
 
+// (self-inflicted liveness guard) an owner who pins `owner_stake == S` (the
+// settlement credential) would make their OWN payout `is_tagged(S)`, so it is
+// mis-classified as a phantom remainder and the settlement is rejected. The anchor
+// now rejects this explicitly in `check_one` (`order.owner_stake != Some(account)`)
+// rather than via the confusing `expect [] = remainders` failure. Attacker-
+// uncontrollable (owner_stake is the order's own datum); the order stays reclaimable.
+test settlement_base_payout_stake_eq_s_rejected() fail {
+  let stake = s()
+  clearing.run(
+    s(),
+    redeemer([sell]),
+    build_payout(
+      Some(stake),
+      payout_at(base_addr(VerificationKey(owner_vkh), stake)),
+    ),
+  )
+}
+
+// (coverage, audit-machine M) the settlement keystone `assets.is_zero(tx.mint)` had
+// no negative test — a regression of that single line would silently re-enable an
+// unbacked LP mint/burn folded into a settlement. Pin it: a happy 1-order settlement
+// carrying ANY mint is rejected (the order/payout/pool all pass first, so this
+// isolates the mint guard).
+test settlement_stray_mint() fail {
+  let tx = Transaction {
+    ..build_payout(None, payout_at(plain(VerificationKey(owner_vkh)))),
+    mint: assets.from_asset(nft.policy, lp_name, 5),
+  }
+  clearing.run(s(), redeemer([sell]), tx)
+}
+
 // PROPERTY (a): with the datum pinning a KEY stake, ANY script-stake payout (over
 // the whole hash space) is rejected — a Script cred can never equal the pinned VK
 // cred, so the pin bites for every sample (no need to dodge a hash collision).
@@ -1552,20 +1751,35 @@ fn fee_settle_tx(
   }
 }
 
-// pool gains 10_000 A, pays out 9_000 B: k grows well past the 0.3% fee -> ok.
+// (Rev 25) pool gains 10_000 A, pays the FAIR curve amount get_amount_out(10_000, 1e6, 1e6,
+// φ=0.3%) = 9_871 B (res_b_out = 990_129). No orders in this synthetic tx ⇒ n_orders=0 ⇒
+// the pin requires EXACTLY fair: k grows by precisely the fee, not "past" it. (The old
+// fixture paid only 9_000 B — a corridor clearing the pin now rejects; see pool_fee_corridor.)
 test pool_fee_ok() {
   spend.pool_settle(
-    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 991_000),
+    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 990_129),
     pool_ref(),
     tt_pool_datum(),
     s(),
   )
 }
 
-// same the other direction (pool gains 10_000 B, pays 9_000 A): ok.
+// same the other direction (pool gains 10_000 B, pays the fair 9_871 A): ok.
 test pool_fee_reverse_ok() {
   spend.pool_settle(
-    fee_settle_tx(1_000_000, 1_000_000, 991_000, 1_010_000),
+    fee_settle_tx(1_000_000, 1_000_000, 990_129, 1_010_000),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+}
+
+// (Rev 25) pool gains 10_000 A but pays only 9_000 B (res_b_out=991_000) — fair is 9_871, so
+// this underpays the trader by ~871 and banks it as k. Old one-sided k-check accepted it
+// ("k grows past the fee"); the two-sided pin REJECTS it (n_orders=0 ⇒ zero dust band).
+test pool_fee_corridor() fail {
+  spend.pool_settle(
+    fee_settle_tx(1_000_000, 1_000_000, 1_010_000, 991_000),
     pool_ref(),
     tt_pool_datum(),
     s(),
@@ -1591,6 +1805,52 @@ test pool_fee_no_residual() {
     tt_pool_datum(),
     s(),
   )
+}
+
+// ---- (Rev 25) two-sided price pin: boundary property (the make-or-break gate) --------
+// For any non-degenerate token/token pool and residual `dx` (n_orders=0 via fee_settle_tx,
+// so the dust band is ZERO), the pin places the pool's payout EXACTLY at the fair curve
+// amount: paying `fair` passes; paying `fair − 1` (the corridor — underpay the trader) is
+// REJECTED by the new lower floor; paying `fair + 1` (overpay) is REJECTED by the k-check.
+// Holding across the whole fuzzed space proves the corridor is closed to ≤ the dust band,
+// AND that get_amount_out is exactly the k-edge (pays_fair must also satisfy k).
+fn pin_params() -> Fuzzer<(Int, Int, Int)> {
+  fuzz.map3(
+    fuzz.int_between(1_000_000_000, 1_000_000_000_000),
+    fuzz.int_between(1_000_000_000, 1_000_000_000_000),
+    fuzz.int_between(1_000_000, 100_000_000),
+    fn(ra, rb, dx) { (ra, rb, dx) },
+  )
+}
+
+test prop_pin_fair_boundary((ra, rb, dx) via pin_params()) {
+  let fair = spend.get_amount_out(dx, ra, rb, 3, 1000)
+  let pays_fair = spend.pool_settle(
+    fee_settle_tx(ra, rb, ra + dx, rb - fair),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+  // underpay by 1 (-net_b = fair − 1): the new lower floor must reject it.
+  let underpay = spend.pool_settle(
+    fee_settle_tx(ra, rb, ra + dx, rb - fair + 1),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+  // overpay by 1 (-net_b = fair + 1): the k-check must reject it.
+  let overpay = spend.pool_settle(
+    fee_settle_tx(ra, rb, ra + dx, rb - fair - 1),
+    pool_ref(),
+    tt_pool_datum(),
+    s(),
+  )
+  and {
+    fair >= 1,
+    pays_fair?,
+    !underpay?,
+    !overpay?,
+  }
 }
 
 // pool pays out far too much B (k actually drops): rejected.
