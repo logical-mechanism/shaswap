@@ -38,7 +38,8 @@ const h = vi.hoisted(() => {
 // NB: @meshsdk/core is NOT mocked — it loads fine in jsdom (datums.ts already pulls it in)
 // and LiquidityPanel only calls `deserializeAddress` on the change address, which throws on
 // our placeholder address and is caught (walletPkh stays null; isCreator is not under test).
-vi.mock("@meshsdk/react", () => ({
+// Wallet hooks come from our mesh-free indirection (@/lib/wallet/hooks), so mock that.
+vi.mock("@/lib/wallet/hooks", () => ({
   useAddress: () => h.state.address,
   useWallet: () => ({ connected: h.state.connected, wallet: h.wallet }),
 }));

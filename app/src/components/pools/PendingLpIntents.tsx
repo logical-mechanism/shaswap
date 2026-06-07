@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useWallet } from "@meshsdk/react";
+import { useWallet } from "@/lib/wallet/hooks";
 import type { Pool } from "@/lib/data";
 import { useLpIntents } from "@/hooks/useLpIntents";
 import { useWriteGate } from "@/hooks/useWriteGate";

@@ -16,7 +16,7 @@ const h = vi.hoisted(() => ({
   collateral: { hasCollateral: false, loading: true, recheck: vi.fn() },
 }));
 
-vi.mock("@meshsdk/react", () => ({
+vi.mock("@/lib/wallet/hooks", () => ({
   useWallet: () => ({ connected: h.connected }),
   useNetwork: () => h.networkId,
 }));

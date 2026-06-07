@@ -29,7 +29,7 @@ const h = vi.hoisted(() => ({
   reclaim: vi.fn(async () => "reclaimtxhash"),
 }));
 
-vi.mock("@meshsdk/react", () => ({
+vi.mock("@/lib/wallet/hooks", () => ({
   useWallet: () => ({
     connected: true,
     wallet: { getChangeAddress: () => Promise.resolve("addr_test1_owner") },
