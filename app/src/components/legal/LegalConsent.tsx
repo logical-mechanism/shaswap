@@ -10,7 +10,6 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
-import { useWallet } from "@meshsdk/react";
 import { LEGAL } from "@/lib/legal/config";
 import { Pip } from "@/components/Pip";
 
@@ -39,6 +38,13 @@ interface LegalConsentValue {
    * give the gate a queue rather than letting a second call overwrite the first.
    */
   requireConsent: (onConsent: () => void) => void;
+  /**
+   * Whether the current terms version is already accepted (persisted or in-session).
+   * Exposed so the mesh-dependent reconcile effect (which re-gates a persisted wallet
+   * after a terms bump) can live in the deferred wallet chunk, keeping this provider
+   * mesh-free and eager. Client-only (reads `localStorage`); call from effects/handlers.
+   */
+  isAccepted: () => boolean;
 }
 
 const LegalConsentContext = createContext<LegalConsentValue | null>(null);
@@ -68,7 +74,6 @@ export function LegalConsentProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const { connected, disconnect } = useWallet();
   const [open, setOpen] = useState(false);
   const pending = useRef<(() => void) | null>(null);
   // In-memory fallback: a session where localStorage is blocked (Safari private mode,
@@ -113,17 +118,15 @@ export function LegalConsentProvider({
     setOpen(false);
   }, []);
 
-  // A persisted wallet auto-reconnects on load WITHOUT passing the connect gate, and a
-  // LEGAL.version bump won't re-prompt an already-connected user (they render the
-  // connected menu, not the gated connect button). So if we're connected while the
-  // current terms are unaccepted, disconnect — the next connect must pass the gate.
-  useEffect(() => {
-    if (connected && !isAccepted()) {
-      disconnect();
-    }
-  }, [connected, disconnect, isAccepted]);
+  // The mesh-dependent counterpart to this gate — disconnecting a persisted wallet that
+  // auto-reconnected past the gate after a terms-version bump — lives in
+  // `LegalConsentReconciler` (in the deferred wallet chunk), so this provider stays
+  // mesh-free and eager. It reads acceptance back through `isAccepted` on the context.
 
-  const value = useMemo(() => ({ requireConsent }), [requireConsent]);
+  const value = useMemo(
+    () => ({ requireConsent, isAccepted }),
+    [requireConsent, isAccepted],
+  );
 
   return (
     <LegalConsentContext.Provider value={value}>
