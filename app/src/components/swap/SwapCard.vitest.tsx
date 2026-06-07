@@ -36,7 +36,7 @@ const h = vi.hoisted(() => ({
   reloadQuote: vi.fn(),
 }));
 
-vi.mock("@meshsdk/react", () => ({
+vi.mock("@/lib/wallet/hooks", () => ({
   useWallet: () => ({ connected: h.state.connected, wallet: h.state.wallet }),
   useNetwork: () => h.state.networkId,
   useAddress: () => h.state.address,

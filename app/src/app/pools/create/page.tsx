@@ -17,7 +17,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useAssets, useWallet } from "@meshsdk/react";
+import { useAssets, useWallet } from "@/lib/wallet/hooks";
 import type { TokenInfo } from "@/lib/data";
 import { explorerTxUrl } from "@/lib/config";
 import { usePools } from "@/hooks/usePools";

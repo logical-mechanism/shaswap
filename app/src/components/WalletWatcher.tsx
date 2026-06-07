@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useNetwork, useWallet } from "@meshsdk/react";
+import { useNetwork, useWallet } from "@/lib/wallet/hooks";
 import { APP_CONFIG, networkLabel } from "@/lib/config";
 import { useToast } from "./Toast";
 

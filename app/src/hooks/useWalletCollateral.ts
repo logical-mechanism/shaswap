@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useWallet } from "@meshsdk/react";
+import { useWallet } from "@/lib/wallet/hooks";
 
 /**
  * Proactively detect whether the connected wallet has a collateral UTXO set. The

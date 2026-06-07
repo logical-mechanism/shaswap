@@ -17,7 +17,7 @@ const h = vi.hoisted(() => {
   return { state, wallet };
 });
 
-vi.mock("@meshsdk/react", () => ({
+vi.mock("@/lib/wallet/hooks", () => ({
   useWallet: () => ({ connected: h.state.connected, wallet: h.wallet }),
 }));
 

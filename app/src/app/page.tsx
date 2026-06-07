@@ -1,4 +1,4 @@
-import { SwapCardLazy } from "@/components/swap/SwapCardLazy";
+import { SwapCard } from "@/components/swap/SwapCard";
 import { Pip } from "@/components/Pip";
 import { Disclosure } from "@/components/Disclosure";
 
@@ -16,7 +16,7 @@ export default function SwapPage() {
         </p>
       </div>
 
-      <SwapCardLazy />
+      <SwapCard />
 
       <Disclosure summary="How does this work?" className="mt-6 w-full max-w-md">
         <div className="k-note k-note-info flex gap-3 text-xs leading-relaxed">

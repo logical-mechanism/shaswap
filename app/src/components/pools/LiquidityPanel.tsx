@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { deserializeAddress } from "@meshsdk/core";
-import { useAddress, useWallet } from "@meshsdk/react";
+import { useAddress, useWallet } from "@/lib/wallet/hooks";
 import type { Pool } from "@/lib/data";
 import { explorerTxUrl } from "@/lib/config";
 import { usePoolUtxo } from "@/hooks/usePoolUtxo";
