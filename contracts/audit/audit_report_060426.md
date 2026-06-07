@@ -5,7 +5,7 @@
 
 **Target:** `logicalmechanism/contracts` — ShaSwap on-chain validators (batch-auction DEX)
 
-**Target folder:** `/home/logic/Documents/LogicalMechanism/audit_machine/contracts/shaswap`
+**Target folder:** `audit_machine/contracts/shaswap`
 
 **Audit date:** 2026-06-04
 
@@ -17,7 +17,7 @@
 
 ## 1. Executive Summary
 
-- **Target folder audited:** `/home/logic/Documents/LogicalMechanism/audit_machine/contracts/shaswap`
+- **Target folder audited:** `audit_machine/contracts/shaswap`
 - **Contracts present:** five Plutus-V3 Aiken validators — `settlement` (unparameterised withdraw-0 trust anchor: `withdraw` + `publish`), `order(S)`, `pool(S)`, `lp_intent(S)` (spend validators), and `pool_mint(seed)` (minting policy). Logic factored into `lib/shaswap/{clearing,spend,mint,lp_intent,utils,types,lp_intent_types,constants}.ak`.
 - **Language / framework:** Aiken, `aiken-lang/stdlib v3.1.0`, `aiken-lang/fuzz v2`; modern stdlib (`cardano/transaction`, `cardano/assets`, `aiken/collection/list`, `aiken/interval`).
 - **Plutus version:** V3 (spend handlers receive `Option<Datum>`; all three `expect Some(d) = datum`).
@@ -1566,4 +1566,4 @@ All prompt-mandated greps (Phases 3, 5b–5g, 6, 7b, 7c, 9) executed; zero-hit r
 
 ### Appendix: Knowledge Base Version
 
-Knowledge base at `/home/logic/Documents/LogicalMechanism/audit_machine` — `taxonomy.md` (CWC-001..035, registry at lines 121-157), `attacks/` (11 clusters), `ctf/` (25 case studies), `patterns/` (10), `optimizations/` (3: `aiken_optimization_guide.md`, `stdlib_red_flags.md`, `ledger_invariants.md`), `hyperstructure.md`, `dead_ends.md`, `test_patterns.md`, `audit_checklist.md`, `search_index.md`. Audit method: `audit.prompt.improved` executed via a 45-agent workflow (17 finder lenses each adversarially verified + 5 KB extractors), with lead-auditor verification of every confirmed finding against source. Working notes preserved at `reports/shaswap/.audit_notes.md`.
+Knowledge base at `audit_machine` — `taxonomy.md` (CWC-001..035, registry at lines 121-157), `attacks/` (11 clusters), `ctf/` (25 case studies), `patterns/` (10), `optimizations/` (3: `aiken_optimization_guide.md`, `stdlib_red_flags.md`, `ledger_invariants.md`), `hyperstructure.md`, `dead_ends.md`, `test_patterns.md`, `audit_checklist.md`, `search_index.md`. Audit method: `audit.prompt.improved` executed via a 45-agent workflow (17 finder lenses each adversarially verified + 5 KB extractors), with lead-auditor verification of every confirmed finding against source. Working notes preserved at `reports/shaswap/.audit_notes.md`.

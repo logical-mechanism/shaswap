@@ -15,7 +15,7 @@
 
 ## 1. Executive Summary
 
-- **Target folder audited:** `/home/logic/Documents/LogicalMechanism/audit_machine/contracts/shaswap`
+- **Target folder audited:** `audit_machine/contracts/shaswap`
 - **Contracts present:** four validators — one withdraw-0 staking script (`settlement`), two parameterised spend validators (`order`, `pool`), one minting policy (`pool_mint`) — plus a shared `lib/shaswap/` (clearing, spend, mint, utils, types, constants).
 - **Language / framework:** Aiken, modern stdlib (`cardano/transaction`, `cardano/assets`, `aiken/collection/list`, `aiken/interval`), `aiken-lang/stdlib v3.1.0`, `aiken-lang/fuzz v2`.
 - **Plutus version:** V3 (spend datum is `Option<_>`; withdraw/mint purposes used).

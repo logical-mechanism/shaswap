@@ -10,10 +10,10 @@ set -euo pipefail
 
 # --- node / tooling (assumption: the node is already running) -----------------
 : "${NET_MAGIC:=1}"   # preprod
-: "${CARDANO_NODE_SOCKET_PATH:=/home/logic/Documents/LogicalMechanism/testnets/node-preprod/db-testnet/node.socket}"
-: "${NODE_CONFIG:=/home/logic/Documents/LogicalMechanism/testnets/node-preprod/config.json}"
-: "${TESTNET_BIN:=/home/logic/Documents/LogicalMechanism/testnets/bin}"
-: "${KEYS_DIR:=/home/logic/Documents/LogicalMechanism/testnets/keys}"
+: "${CARDANO_NODE_SOCKET_PATH:=${HOME}/cardano-preprod/node-preprod/db-testnet/node.socket}"
+: "${NODE_CONFIG:=${HOME}/cardano-preprod/node-preprod/config.json}"
+: "${TESTNET_BIN:=${HOME}/cardano-preprod/bin}"
+: "${KEYS_DIR:=${HOME}/cardano-preprod/keys}"
 export CARDANO_NODE_SOCKET_PATH
 export OGMIOS="$TESTNET_BIN/ogmios"
 export KUPO="$TESTNET_BIN/kupo"
