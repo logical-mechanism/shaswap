@@ -389,15 +389,14 @@ Tie-breakers. When two designs are otherwise comparable, the earlier principle w
 
 ## 4. Intellectual foundations
 
-Synthesis of four recent results; the source PDFs sit alongside this file in this
-folder.
+Synthesis of four recent results (cited below with arXiv links).
 
 | Source | What we take |
 |---|---|
-| **Augmenting Batch Exchanges with CFMMs** — Ramseyer, Goyal, Goel, Mazières, EC '24 ([arXiv:2210.04929](https://arxiv.org/abs/2210.04929), `batch-cfmm.pdf`) | Clear CFMM liquidity **and** limit orders together at a single **uniform price**. The paper's four batch-exchange axioms — **Asset Conservation, Uniform Prices, Best-Response for limit orders, Non-decreasing trading function** — map directly onto our §5.2 rules 1/2/4/3; ShaSwap is essentially those axioms turned into an on-chain validator. Plain constant-product is a member of the paper's **CLCP class** (Def 4.5), for which **Trading Rule S** (Def 4.3) yields a **rational, price-coherent** equilibrium (Thm 1.8) — cheap to *verify* on-chain. **JPD** (Prop 1.7) → no intra-batch front-running. *(Terminology verified against the PDF, p.5.)* |
-| **SAMM: Sharded Automated Market Maker** — Chen, Vaisman, Eyal, '25 ([arXiv:2406.05568](https://arxiv.org/abs/2406.05568), `samm.pdf`) | **Sharding** into `n` independent pool UTXOs (no dispatch contract, no global state — natural for eUTXO) as a scaling lever; rational fee function in integer math. |
-| **Automated Market Making and Loss-Versus-Rebalancing** — Milionis, Moallemi, Roughgarden, Zhang '24 ([arXiv:2208.06046](https://arxiv.org/abs/2208.06046), `lvr.pdf`) | **LVR** is the LP adverse-selection cost; proves curing it needs *external* price data (§5.6). |
-| **Partially Active Automated Market Makers** — Ko, Feb '26 ([arXiv:2602.09887](https://arxiv.org/abs/2602.09887), `partially-active-amm.pdf`) | **PA-AMM `λ`**: expose only a λ-fraction of reserves per batch — an oracle-free LVR lever. |
+| **Augmenting Batch Exchanges with CFMMs** — Ramseyer, Goyal, Goel, Mazières, EC '24 ([arXiv:2210.04929](https://arxiv.org/abs/2210.04929)) | Clear CFMM liquidity **and** limit orders together at a single **uniform price**. The paper's four batch-exchange axioms — **Asset Conservation, Uniform Prices, Best-Response for limit orders, Non-decreasing trading function** — map directly onto our §5.2 rules 1/2/4/3; ShaSwap is essentially those axioms turned into an on-chain validator. Plain constant-product is a member of the paper's **CLCP class** (Def 4.5), for which **Trading Rule S** (Def 4.3) yields a **rational, price-coherent** equilibrium (Thm 1.8) — cheap to *verify* on-chain. **JPD** (Prop 1.7) → no intra-batch front-running. *(Terminology verified against the PDF, p.5.)* |
+| **SAMM: Sharded Automated Market Maker** — Chen, Vaisman, Eyal, '25 ([arXiv:2406.05568](https://arxiv.org/abs/2406.05568)) | **Sharding** into `n` independent pool UTXOs (no dispatch contract, no global state — natural for eUTXO) as a scaling lever; rational fee function in integer math. |
+| **Automated Market Making and Loss-Versus-Rebalancing** — Milionis, Moallemi, Roughgarden, Zhang '24 ([arXiv:2208.06046](https://arxiv.org/abs/2208.06046)) | **LVR** is the LP adverse-selection cost; proves curing it needs *external* price data (§5.6). |
+| **Partially Active Automated Market Makers** — Ko, Feb '26 ([arXiv:2602.09887](https://arxiv.org/abs/2602.09887)) | **PA-AMM `λ`**: expose only a λ-fraction of reserves per batch — an oracle-free LVR lever. |
 
 **Key realization:** *batch clearing itself solves UTXO contention.* A settlement
 clears many orders against a pool in **one** pool-spend. **Batching is the primary
@@ -1051,9 +1050,8 @@ shaswap/
 ├── README.md
 ├── CLAUDE.md               ← repo guide for contributors & Claude
 ├── SECURITY.md             ← vulnerability disclosure policy
-├── documentation/          ← this blueprint (source of truth) + papers + specs
-│   ├── BLUEPRINT.md        ← the north star (this file)
-│   ├── samm.pdf  batch-cfmm.pdf  lvr.pdf  partially-active-amm.pdf
+├── documentation/          ← this blueprint (source of truth) + specs
+│   ├── BLUEPRINT.md        ← the north star (this file); §4 cites the source papers
 │   ├── spec/               ← datum/redeemer encodings + formal clearing/price/fill rules
 │   └── launch/             ← mainnet checklist + batcher-operations runbook
 ├── contracts/              ← Aiken (Plutus v3) validators & policies

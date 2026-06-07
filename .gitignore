@@ -8,6 +8,9 @@ MEMORY.md
 documentation/reviews/
 documentation/spec/review-prompt.md
 
+# Third-party academic PDFs — not redistributed; cited via arXiv in documentation/ (BLUEPRINT §4)
+documentation/*.pdf
+
 # OS / editor cruft
 .DS_Store
 *.swp
