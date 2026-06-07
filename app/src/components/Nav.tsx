@@ -1,10 +1,24 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Logo } from "./Logo";
-import { WalletBar } from "./WalletBar";
 import { ThemeToggle } from "./ThemeToggle";
+
+// WalletBar reads wallet state via `@meshsdk/react`, which transitively pulls the heavy
+// `@meshsdk/core-cst` WASM. Load it as its own client-only chunk after first paint so the
+// header chrome renders instantly; a pill-shaped skeleton holds the slot to avoid layout
+// shift until it streams in.
+const WalletBar = dynamic(() => import("./WalletBar").then((m) => m.WalletBar), {
+  ssr: false,
+  loading: () => (
+    <div
+      aria-hidden
+      className="h-9 w-36 animate-pulse rounded-full bg-surface-sunk"
+    />
+  ),
+});
 
 const LINKS = [
   { href: "/", label: "Swap" },
