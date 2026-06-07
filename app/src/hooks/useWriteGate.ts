@@ -1,6 +1,6 @@
 "use client";
 
-import { useNetwork, useWallet } from "@meshsdk/react";
+import { useNetwork, useWallet } from "@/lib/wallet/hooks";
 import { APP_CONFIG } from "@/lib/config";
 import { useWalletCollateral } from "./useWalletCollateral";
 

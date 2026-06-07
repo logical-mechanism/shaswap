@@ -6,7 +6,8 @@ import {
   useNetwork,
   useWallet,
   useWalletList,
-} from "@meshsdk/react";
+} from "@/lib/wallet/hooks";
+import { useAppWallet } from "@/lib/wallet/context";
 import { APP_CONFIG, networkLabel } from "@/lib/config";
 import { formatAda, truncate } from "@/lib/format";
 import { useMenu } from "@/hooks/useMenu";
@@ -31,6 +32,10 @@ export function WalletBar() {
 function ConnectMenu() {
   const { connect, connecting } = useWallet();
   const wallets = useWalletList();
+  // `ensureLoaded` kicks off the (lazy) wallet stack the moment the picker opens, so the
+  // wallet list is populating by the time it's on screen; `ready` distinguishes "still
+  // loading the stack" from "loaded, but no wallet installed".
+  const { ensureLoaded, ready } = useAppWallet();
   const { open, setOpen, containerRef, triggerRef } = useMenu();
   const { requireConsent } = useLegalConsent();
 
@@ -52,7 +57,12 @@ function ConnectMenu() {
         // accepting the current Terms first (or runs straight through if already
         // accepted). Closing an open picker stays a plain toggle.
         onClick={() =>
-          open ? setOpen(false) : requireConsent(() => setOpen(true))
+          open
+            ? setOpen(false)
+            : requireConsent(() => {
+                ensureLoaded();
+                setOpen(true);
+              })
         }
         disabled={connecting}
         aria-haspopup="menu"
@@ -70,7 +80,11 @@ function ConnectMenu() {
               Pick your wallet
             </span>
           </div>
-          {wallets.length === 0 ? (
+          {!ready ? (
+            <p className="px-2 py-2 text-xs leading-relaxed text-muted">
+              Pip’s waking up your wallets…
+            </p>
+          ) : wallets.length === 0 ? (
             <p className="px-2 py-2 text-xs leading-relaxed text-muted">
               Pip can’t find a Cardano wallet. Install one (like Eternl, Lace, or
               Nami), then refresh the page.

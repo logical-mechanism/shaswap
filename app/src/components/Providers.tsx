@@ -1,62 +1,51 @@
 "use client";
 
-import {
-  useEffect,
-  useState,
-  type ComponentType,
-  type ReactNode,
-} from "react";
+import { useEffect, type ReactNode } from "react";
 import { ToastProvider } from "./Toast";
-import { LegalConsentProvider } from "./legal/LegalConsent";
+import { LegalConsentProvider, useLegalConsent } from "./legal/LegalConsent";
+import { AppWalletProvider } from "@/lib/wallet/context";
+import { useWallet } from "@/lib/wallet/hooks";
+import { WalletWatcher } from "./WalletWatcher";
 
 /**
- * Client-side context providers for the app.
+ * Client-side context providers for the app — all mesh-free, so the page loads, hydrates,
+ * and settles with zero wallet code on the main thread.
  *
- * The wallet stack (`@meshsdk/react` → `@meshsdk/wallet` → `@meshsdk/core-cst`, a
- * ~7.5MB WASM serialization bundle) is by far the heaviest thing the app loads, and
- * merely importing `MeshProvider` drags all of it into the initial bundle. So the
- * wallet providers are split into their own chunk (`./WalletProviders`) and mounted
- * AFTER first paint via a dynamic `import()`: the page shell renders immediately and
- * the wallet machinery streams in behind it.
- *
- * `ToastProvider` and `LegalConsentProvider` stay eager — they're mesh-free, and the
- * legal gate must already be present for the Connect button (`WalletBar`) the moment it
- * mounts (`useLegalConsent` throws without its provider), while the toast channel is
- * needed app-wide.
- *
- * Until the wallet chunk resolves, the `@meshsdk/react` hooks return a safe disconnected
- * default (their context ships a non-throwing default value), so the wallet-aware leaves
- * (`WalletBar`, `SwapCard`) render their disconnected state and re-render once
- * `MeshProvider` mounts. The one-time re-mount when the provider is inserted happens
- * within the first beat, before any wallet interaction is possible (connecting needs the
- * same chunk).
+ * `AppWalletProvider` owns wallet state and lazily loads the heavy `@meshsdk` stack
+ * (`MeshBridge`) only on the user's first interaction (see `@/lib/wallet/context`).
+ * `ToastProvider` and `LegalConsentProvider` are mesh-free too. `WalletWatcher` (toasts)
+ * and `LegalConsentReconciler` read wallet state through the context, so they stay
+ * eager/mesh-free and simply react when the bridge later streams real state in.
  */
 export function Providers({ children }: { children: ReactNode }) {
-  const [WalletProviders, setWalletProviders] = useState<ComponentType<{
-    children: ReactNode;
-  }> | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    // Kick off the wallet chunk right after first paint. Once it resolves, MeshProvider
-    // mounts and the subtree re-renders under real wallet context.
-    void import("./WalletProviders").then((m) => {
-      if (active) setWalletProviders(() => m.default);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
   return (
     <ToastProvider>
       <LegalConsentProvider>
-        {WalletProviders ? (
-          <WalletProviders>{children}</WalletProviders>
-        ) : (
-          children
-        )}
+        <AppWalletProvider>
+          <WalletWatcher />
+          <LegalConsentReconciler />
+          {children}
+        </AppWalletProvider>
       </LegalConsentProvider>
     </ToastProvider>
   );
+}
+
+/**
+ * Re-gates a persisted wallet that auto-reconnected past the Terms click-through after a
+ * `LEGAL.version` bump: if we're connected while the current terms are unaccepted,
+ * disconnect so the next connect must pass the gate. Reads wallet state through the
+ * mesh-free context, so it carries no `@meshsdk` dependency.
+ */
+function LegalConsentReconciler() {
+  const { connected, disconnect } = useWallet();
+  const { isAccepted } = useLegalConsent();
+
+  useEffect(() => {
+    if (connected && !isAccepted()) {
+      disconnect();
+    }
+  }, [connected, disconnect, isAccepted]);
+
+  return null;
 }

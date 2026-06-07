@@ -8,7 +8,7 @@ import {
   useLovelace,
   useNetwork,
   useWallet,
-} from "@meshsdk/react";
+} from "@/lib/wallet/hooks";
 import type { Pool, TokenInfo } from "@/lib/data";
 import { APP_CONFIG, explorerTxUrl } from "@/lib/config";
 import { orderFunding } from "@/lib/chain/orderFunding";
