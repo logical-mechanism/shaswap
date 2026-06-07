@@ -34,8 +34,12 @@ export function quoteConstantProduct(
   }
 
   const feeBps = BigInt(pool.feeBps);
-  const inAfterFee = (amtIn * (10_000n - feeBps)) / 10_000n;
-  const amountOut = (reserveOut * inAfterFee) / (reserveIn + inAfterFee);
+  // Bit-exact with the on-chain pool curve `get_amount_out` (spend.ak): a SINGLE floored
+  // fraction `floor(res_out·dx·γ / (res_in·fee_den + dx·γ))`, γ = fee_den − fee_num, NOT an
+  // early-floored `inAfterFee`. Post-Rev-25 execution is PINNED to this curve price, so the
+  // displayed estimate now equals what the batcher pays. (fee_den = 10_000 here, via feeBps.)
+  const gamma = 10_000n - feeBps;
+  const amountOut = (reserveOut * amtIn * gamma) / (reserveIn * 10_000n + amtIn * gamma);
 
   const SCALE = 1_000_000n;
   // Price impact is computed on the raw BASE-unit ratios; it's dimensionless, so token

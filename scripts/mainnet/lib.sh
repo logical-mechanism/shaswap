@@ -21,12 +21,12 @@ WORK="$REPO/scripts/work-mainnet"             # tx drafts + refs.json (gitignore
 mkdir -p "$WORK"
 
 # Committed identities (must equal contracts/plutus.json + constants.ak; pinned by the
-# app's address.test.ts). Post-audit set (BLUEPRINT Rev 24). Deploy REFUSES bytecode whose
-# hash differs. lp_intent is the fifth, additive immutable hash (Rev 22).
+# app's address.test.ts). Rev 25 clearing-price-pin set (BLUEPRINT Rev 25). Deploy REFUSES
+# bytecode whose hash differs. lp_intent is the fifth, additive immutable hash (Rev 22).
 S_HASH="a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea"      # settlement = stake cred S
 ORDER_HASH="e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d"  # order(S)
-POOL_HASH="1cd27f8d56dd553e23f83e619b2202427616dbbe460bcf77cc17e4e1"   # pool(S)
-LP_INTENT_HASH="83c38b9816b01794f9336948e3e1ca38b1ff6928e174c8fa9aa360e4"  # lp_intent(S)
+POOL_HASH="34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac"   # pool(S) — Rev 25
+LP_INTENT_HASH="fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d"  # lp_intent(S) — Rev 25
 
 SETTLEMENT_SCRIPT="$SCRIPTS_DIR/settlement.plutus"
 ORDER_SCRIPT="$SCRIPTS_DIR/order.plutus"

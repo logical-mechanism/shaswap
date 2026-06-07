@@ -20,7 +20,7 @@
       quiet pool; confirm LP-intent reclaim (a withdraw reclaim returns LP tokens, §13.11).
 - [ ] **Clearing-price pin (Rev 25) in the frozen set.** The two-sided pool price pin
       (`spend.pool_settle`) + the `lp_intent` exact-proportional pin are part of the immutable
-      deployment — **`pool` and `lp_intent` carry NEW hashes** (`07332aa6…`, `f30fb448…` on
+      deployment — **`pool` and `lp_intent` carry NEW hashes** (`07332aa6…`, `05451fe2…` on
       preprod; regenerate at the mainnet RC), while `settlement`/`S` (`a305a3cf…`), `order`,
       `pool_mint` stay byte-identical (verify via the reproducible-build diff). Spec:
       [`spec/clearing-price-pin.md`](../spec/clearing-price-pin.md).

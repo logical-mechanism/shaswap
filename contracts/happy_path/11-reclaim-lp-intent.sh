@@ -11,7 +11,7 @@ source "$(dirname "${BASH_SOURCE[0]:-$0}")/env.sh"
 REF="${REF:-$(cat "$WORK/lp_intent.txid")#0}"
 echo "reclaiming intent $REF"
 
-LP_INTENT_REF_TXID="c5751d0d3f0e69acec31550753c67f379db9e12b6ff510b5d5034f271dea866f"
+LP_INTENT_REF_TXID="9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5"
 LP_INTENT_REF_IX=3
 
 echo '{"constructor":1,"fields":[]}' > "$WORK/reclaim.redeemer.json"   # LpIntentRedeemer::ReclaimLp

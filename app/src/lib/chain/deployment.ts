@@ -247,11 +247,13 @@ export const LP_INTENTS_LIVE: boolean = DEPLOYED && LP_INTENT_REF !== null;
 export const LP_INTENT_MIN_ADA = 2_000_000n;
 
 /**
- * Byte size of the S-applied `lp_intent` validator (the parameterised CBOR is 2841 bytes;
- * see `lpIntentScript.ts`). Passed to `spendingTxInReference` so the client can price the
- * Conway reference-script fee on the `ReclaimLp` spend without resolving the ref UTXO.
+ * Byte size of the S-applied `lp_intent` validator (the `cborHex` of
+ * `contracts/happy_path/scripts/lp_intent.plutus` is 5908 hex chars = 2954 bytes — re-hashed
+ * for the Rev 25 at-ratio LP pin; see `lpIntentScript.ts`). Passed to `spendingTxInReference`
+ * so the client can price the Conway reference-script fee on the `ReclaimLp` spend without
+ * resolving the ref UTXO.
  */
-export const LP_INTENT_SCRIPT_SIZE = 2841;
+export const LP_INTENT_SCRIPT_SIZE = 2954;
 
 /**
  * Narrow the `lp_intent` reference script for a tx-building path, throwing a legible error on
@@ -293,11 +295,11 @@ export const ORDER_SCRIPT_SIZE = 537;
 
 /**
  * Byte size of the deployed pool validator (the `cborHex` of
- * `contracts/happy_path/scripts/pool.plutus` is 5352 hex chars = 2676 bytes; the pool
- * validator was re-hashed in the audit, Rev 24). Same role as `ORDER_SCRIPT_SIZE` for the
- * `LpAction` spend.
+ * `contracts/happy_path/scripts/pool.plutus` is 5856 hex chars = 2928 bytes; the pool
+ * validator was re-hashed for the Rev 25 two-sided clearing-price pin). Same role as
+ * `ORDER_SCRIPT_SIZE` for the `LpAction` spend.
  */
-export const POOL_SCRIPT_SIZE = 2676;
+export const POOL_SCRIPT_SIZE = 2928;
 
 /**
  * Where orders live: a base address tagged with `S`.
@@ -348,7 +350,7 @@ export const POOL_MINT_COMPILED_CODE =
  * (`resolveScriptHash`) to get the real `lp_intent` script hash, and build its ENTERPRISE
  * (stake = None, never `S`-tagged) address from that. That derivation lives in
  * `lpIntentScript.ts` (it needs `@meshsdk/core`, so it stays out of this pure data module).
- * The unapplied hash is `656cb33bf0958ecc06e66570f95337cc12a3107be1ca8155205f8697`; the
+ * The unapplied hash is `05451fe2221473ae208676b78248af3f097155fe69ed433c8e8fa100`; the
  * S-applied hash is derived + pinned by `lpIntentScript.test.ts`.
  */
 export const LP_INTENT_COMPILED_CODE =
