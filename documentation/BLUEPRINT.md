@@ -6,7 +6,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 25 — 2026-06-05. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 26 — 2026-06-07. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -284,6 +284,17 @@
 > in parallel). The limit becomes an **abort condition**, not the execution price. Spec:
 > `documentation/spec/clearing-price-pin.md`. **Hash impact (pre-mainnet):** `pool` +
 > `lp_intent` change; `settlement`/`order`/`pool_mint` byte-identical. Ships as a relaunch.**
+>
+> **Rev 26: Scope B decision — accept the Scope A residue for v1 (no anchor change, no hash
+> impact).** The deferred full-equilibrium check that would close the *perfectly-netted,
+> zero-residual trader↔trader* split (§5.2.7/§12.2) is **signed off as a documented v1
+> residue — not shipped.** Rationale: it is a bounded trader↔trader transfer (each side
+> capped by its own limit), the pool is untouched so `k` does not move and **no solver-LP
+> harvest incentive exists**, and closing it would need a curve-aware per-order check inside
+> the immutable anchor `S` (re-hashing/re-auditing the trust root and lowering the batch
+> ceiling `N`) — disproportionate to the residue. App-side mitigation (tight default limits,
+> never a true market order) stands. `S`/`order`/`pool`/`pool_mint`/`lp_intent` all
+> byte-identical. Resolves the mainnet-checklist "Decide Scope B" gate.
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -595,13 +606,14 @@ witness — the validator checks algebra, never solves (Principle 4).
    that carries essentially all the extraction value, at ~zero added ex-units (it
    reuses the curve the pool already evaluates; the anchor stays curve-agnostic). It
    lives **only in the pool hash** — the immutable settlement anchor `S` is unchanged.
-   **Deferred (Scope B):** the *full* equilibrium that also closes the
-   **perfectly-netted (zero-residual) trader↔trader** split — that needs a curve-aware
-   per-order check in/beside the immutable anchor (changes `S`, re-audit, lowers N) and
-   is gated on its own §13.1 ex-unit spike (run in parallel, decide before mainnet).
-   The residue is a bounded trader↔trader transfer with **no solver-LP harvest
-   incentive** (the pool is untouched, so `k` does not move). This resolves the v1 fork
-   in §12.2 for the part that matters economically.
+   **Decided (Rev 26) — Scope B not shipped; the residue is accepted (Scope A):** the
+   *full* equilibrium that would also close the **perfectly-netted (zero-residual)
+   trader↔trader** split needs a curve-aware per-order check in/beside the immutable anchor
+   (changes `S`, re-audit, lowers N) — disproportionate to a bounded trader↔trader transfer
+   with **no solver-LP harvest incentive** (the pool is untouched, so `k` does not move).
+   v1 signs it off as a documented residue; the app-side mitigation (tight default limits,
+   never a true market order) stands. This resolves the v1 fork in §12.2 for the part that
+   matters economically, and the rest by acceptance.
 
 ### 5.3 Solver model — first-valid-wins, fully permissionless
 
@@ -843,7 +855,8 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
   directional surplus reaches *traders*, not LPs — the floor→fair corridor is closed
   in the pool hash (anchor unchanged). Only the **perfectly-netted (zero-residual)
   trader↔trader** split remains solver-allocated (bounded, no solver-LP incentive); the
-  full equilibrium that closes it is deferred (Scope B, §5.2.7, §13.1 spike).
+  full equilibrium that would close it (Scope B) is **not shipped — accepted as a
+  documented residue for v1** (Rev 26, §5.2.7).
 - **Partial fills — proportional tip, one-level remainder (RESOLVED, Rev 8; impl
   `clearing.ak`).** The solver declares each order's fill `f`; on a partial fill it
   collects `tip·f/sell_amount` **now** (pay-per-fill) and the remainder keeps the
@@ -925,8 +938,8 @@ deposit/close), **static trading fee (residual-only, §5.2.3/§7)**, non-custodi
 withdraw-0 wiring. **Not yet implemented:** **PA-AMM `λ`** (deferred, `λ=1` no-op).
 **Best-response (§5.2.4)** is enforced as the per-order floor **plus the pool's
 two-sided curve price pin** (Rev 25, §5.2.7) — fair curve-execution for any non-zero
-residual; only the perfectly-netted zero-residual trader↔trader split is deferred
-(Scope B).
+residual; only the perfectly-netted zero-residual trader↔trader split (Scope B) is
+**accepted as a documented residue, not shipped** (Rev 26).
 
 **Explicitly NOT in v1 / never in core:** any oracle dependency; order privacy
 (intents and limit prices are public on-chain); cross-shard price unification;
@@ -944,10 +957,10 @@ privileged operator, any mortal external dependency in the core.
 ## 12. Open design decisions
 
 1. **Solver tip mechanics.** User-set + protocol minimum vs. fixed; datum encoding.
-2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7, Rev 25): the pool's
-   two-sided curve pin returns directional surplus to traders (fair-curve execution);
-   only the perfectly-netted zero-residual trader↔trader split (Scope B) is deferred**
-   pending its own ex-unit spike.
+2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7): the pool's two-sided curve
+   pin returns directional surplus to traders (fair-curve execution, Rev 25); the
+   perfectly-netted zero-residual trader↔trader split (Scope B) is accepted as a documented
+   residue, not shipped (Rev 26).**
 3. **Order rollover** mechanics (the size *bound* is resolved: ~40/settlement, §5.3).
 4. ~~Partial-fill semantics~~ — **RESOLVED (Rev 8): proportional tip, one-level
    remainder, pre-funded 2× min-ADA, limit-price preserved** (§7; impl `clearing.ak`,

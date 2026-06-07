@@ -20,9 +20,13 @@
       quiet pool; confirm LP-intent reclaim (a withdraw reclaim returns LP tokens, §13.11).
 - [ ] **Clearing-price pin (Rev 25) in the frozen set.** The two-sided pool price pin
       (`spend.pool_settle`) + the `lp_intent` exact-proportional pin are part of the immutable
-      deployment — **`pool` and `lp_intent` carry NEW hashes** (`07332aa6…`, `05451fe2…` on
-      preprod; regenerate at the mainnet RC), while `settlement`/`S` (`a305a3cf…`), `order`,
-      `pool_mint` stay byte-identical (verify via the reproducible-build diff). Spec:
+      deployment — **`pool` and `lp_intent` carry NEW hashes.** The **deployed (`S`-applied)**
+      hashes on preprod are `pool 34b30c7a…` and `lp_intent fa885b03…`; the **unapplied
+      (parameterised)** forms in `plutus.json` are `07332aa6…`/`05451fe2…` (applying `S` yields
+      the deployed forms — do **not** confuse the two). Regenerate the applied hashes at the
+      mainnet RC. `settlement`/`S` (`a305a3cf…`), `order` (`e7fa1a38…` applied), and `pool_mint`
+      stay byte-identical (verify via the reproducible-build diff **and** the deploy's on-chain
+      hash gate, which re-hashes each published `.plutus` against these applied values). Spec:
       [`spec/clearing-price-pin.md`](../spec/clearing-price-pin.md).
 - [ ] **Corridor-fix E2E on preprod.** Confirm: a one-sided / market-limit order settles at
       the **fair AMM-curve price** (≈ `get_amount_out`, not the order floor); an attempted
@@ -31,14 +35,18 @@
       liveness regression). Re-run the differential parity (`prop_pin_fair_boundary` /
       `pin_ok_boundary_matches_contract`) against the frozen artifacts.
 - [ ] **Ex-unit headroom for the pin.** The §13.1 full-tx run confirms the (O(1)) pin +
-      `get_amount_out` per pool-spend does not lower the ~40–50 order ceiling. **Decide
-      Scope B** (the deferred equilibrium check closing the perfectly-netted trader↔trader
-      residue) here: ship it (changes `S` → re-audit the anchor) or sign it off as a
-      documented residue. `lp_intent` being non-frozen does NOT extend to `S`.
+      `get_amount_out` per pool-spend does not lower the ~40–50 order ceiling.
+      **Scope B — DECIDED (Rev 26): not shipped.** The perfectly-netted zero-residual
+      trader↔trader split is **accepted as a documented Scope A residue** (a bounded
+      trader↔trader transfer, pool untouched so no solver-LP harvest; closing it would change
+      `S` → re-audit the anchor + lower `N` — disproportionate). App-side mitigation (tight
+      default limits, never a true market order) stands. `lp_intent` being non-frozen does NOT
+      extend to `S`.
 - [ ] **Audit current.** [`contracts/audit/audit_report.md`](../../contracts/audit/audit_report.md)
-      header pins the audited `BLUEPRINT Rev` (now **Rev 25**) and date, and no contract change
-      has landed since (else re-audit). The Rev 25 pin is **new value-protecting code outside
-      the audited anchor** — it must be in the audited scope before mainnet.
+      header pins the audited `BLUEPRINT Rev` (**Rev 25**) and date, and no contract change has
+      landed since (else re-audit). **Rev 26 is a docs-only Scope B decision — no contract
+      change — so the Rev 25 audit remains current.** The Rev 25 pin is **new value-protecting
+      code outside the audited anchor** — it must be in the audited scope before mainnet.
 
 ## 1. Deploy the immutable artifacts (mainnet)
 
