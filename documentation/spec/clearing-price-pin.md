@@ -1,9 +1,9 @@
 # Spec — Clearing-price pin: close the floor→fair corridor on-chain (BLUEPRINT §5.2.5/§5.2.7/§5.4)
 
-> **Status:** active design, pre-mainnet. Implements the fix for the economic-soundness
-> finding in [`reviews/economic-soundness-2026-06-05.md`](../reviews/economic-soundness-2026-06-05.md)
-> (memory `econ-corridor-finding`). This phase **defines correctness**; do it before the
-> contract change. Branch `contracts/clearing-price-pin`; ships as a pre-mainnet relaunch.
+> **Status:** active design, pre-mainnet. Implements the fix for an internal
+> economic-soundness review finding (the solver-LP floor→fair corridor). This phase
+> **defines correctness**; do it before the contract change. Branch
+> `contracts/clearing-price-pin`; ships as a pre-mainnet relaunch.
 
 ## 1. The problem, exactly
 

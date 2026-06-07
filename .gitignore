@@ -3,6 +3,10 @@ CLAUDE.local.md
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 
+# Local-only project log + internal review reports (not part of the public repo)
+MEMORY.md
+documentation/reviews/
+
 # OS / editor cruft
 .DS_Store
 *.swp

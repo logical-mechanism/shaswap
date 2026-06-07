@@ -39,5 +39,3 @@ everything else elaborates or operationalizes it.
 ## Other
 
 - [`app-data-caching.md`](app-data-caching.md) — the dApp's no-background-polling read model.
-- [`reviews/`](reviews/) — internal multi-agent review reports.
-- [`prompts/`](prompts/) — feature-integration working notes.
