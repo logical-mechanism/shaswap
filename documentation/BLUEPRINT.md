@@ -1,8 +1,9 @@
 # ShaSwap — Protocol Blueprint
 
-> **Status:** Design blueprint / north star. No code yet. This document is the
-> authoritative description of *what we are building and why*. Everything in the
-> monorepo (contracts, batcher, website, docs) must trace back to this file.
+> **Status:** Authoritative design / north star — implemented across the monorepo and
+> deployed to preprod (mainnet pending). This document is the authoritative description
+> of *what we are building and why*; everything in the monorepo (contracts, batcher,
+> website, docs) must trace back to this file.
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
@@ -263,8 +264,8 @@
 > property). No Critical/High/theft/unbacked-mint/lock path found in the re-review.**
 >
 > **Rev 25: close the clearing-price corridor — two-sided pool price pin (§5.2.5/§5.2.7/
-> §5.4).** A post-Rev-24 economic-soundness review (`reviews/economic-soundness-2026-06-05.md`,
-> memory `econ-corridor`) confirmed the anchor verifies **validity, not optimality**: the
+> §5.4).** A post-Rev-24 economic-soundness review confirmed the anchor verifies
+> **validity, not optimality**: the
 > per-order floor (full `sell_amount` vs `limit`) + the pool's **one-sided** `k ≥ k_in`
 > leave the uniform price free in a **`[floor, fair-curve]` corridor**; underpaying a trader
 > *raises* `k`, so the `k`-check caps only the top. A solver-LP banks the gap as
@@ -1049,22 +1050,23 @@ strictly rejected (no `True` branch).
 shaswap/
 ├── README.md
 ├── CLAUDE.md               ← repo guide for contributors & Claude
-├── MEMORY.md               ← project state / decision log
+├── SECURITY.md             ← vulnerability disclosure policy
 ├── documentation/          ← this blueprint (source of truth) + papers + specs
 │   ├── BLUEPRINT.md        ← the north star (this file)
 │   ├── samm.pdf  batch-cfmm.pdf  lvr.pdf  partially-active-amm.pdf
-│   └── spec/               ← (planned) datum/redeemer formats; formal §5.2 rules
-├── contracts/              ← Aiken validators & policies (aiken.toml, lib/, validators/)
-│   ├── order/              ← (planned) order validator (trust anchor) + reclaim
-│   ├── settlement/         ← (planned) withdraw-0 once-per-tx validator (§5.2; checks every input)
-│   └── pool/               ← (planned) curve-agnostic core pool + variants; NFT & LP policies
-├── batcher/                ← standalone Rust + Pallas solver binary (permissionless role)
-│   └── (planned) indexer · solver · submit
+│   ├── spec/               ← datum/redeemer encodings + formal clearing/price/fill rules
+│   └── launch/             ← mainnet checklist + batcher-operations runbook
+├── contracts/              ← Aiken (Plutus v3) validators & policies
+│   ├── validators/         ← settlement, order, pool, pool_mint, lp_intent
+│   ├── lib/shaswap/        ← clearing, spend, mint, types, utils, constants
+│   └── audit/              ← contract audit reports
+├── batcher/                ← standalone Rust + Pallas reference solver (permissionless role)
+│   └── crates/             ← solver-core · txbuild · txbuilder · chain · orchestrator
 └── app/                    ← TS + React + MeshJS website (hosts the data-access abstraction)
 ```
 
 `batcher/` is a **reference** solver so the role is genuinely permissionless.
-`documentation/spec/` holds precise encodings once we pass blueprint stage.
+`documentation/spec/` holds the precise encodings and formal settlement rules.
 
 ---
 
