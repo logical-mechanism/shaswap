@@ -8,9 +8,10 @@
 
 - [ ] **Reproducible build.** `cd contracts && aiken build && git diff --exit-code plutus.json`
       is clean with the pinned compiler (`plutus.json` `compiler.version`). CI enforces this.
-- [ ] **Full-tx ex-unit confirmation.** An emulator / real Plutus evaluator run of
-      1..N-order settlements with a real CBOR `ScriptContext` confirms the ~40–50 order
-      ceiling holds (typed-value tests under-count decoding — BLUEPRINT §13.1 caveat).
+- [x] **Full-tx ex-unit confirmation.** A real **30-order** settlement settles on preprod
+      (a live settle is a real-CBOR `ScriptContext` evaluation), confirming the chosen per-tx
+      cap (30) holds well within budget and closing the BLUEPRINT §13.1 typed-value
+      under-count caveat for the shipped N. Re-confirm against the frozen RC if the hashes change.
 - [ ] **End-to-end on preprod, byte-identical artifacts.** A real CIP-30 in-browser order
       post → reference batcher settles → owner receives payout, against the exact script
       hashes about to ship. Also exercise reclaim, partial fill, LP add/remove, pool create,
