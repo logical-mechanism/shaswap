@@ -1,6 +1,8 @@
 /**
- * Pip — ShaSwap's mascot: a small, chubby, lavender sasquatch who represents
- * liquidity and swapping. One vector component, rendered consistently everywhere
+ * Pip — ShaSwap's mascot: a small, chubby, lavender forest creature who runs the
+ * woodland market — tending the liquidity gardens (pools) and gathering everyone's
+ * orders into baskets that settle together at one fair price. One vector component,
+ * rendered consistently everywhere
  * (hero, empty states, loading, success, toasts, badges, the logo mark). Expression
  * is driven by `mood`; `sparkles` adds twinkles; `size` scales the whole thing.
  *

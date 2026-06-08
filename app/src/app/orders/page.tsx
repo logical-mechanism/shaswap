@@ -31,7 +31,7 @@ import { RefreshIcon } from "@/components/RefreshIcon";
 import { CollateralNote } from "@/components/CollateralNote";
 
 const STATUS_STYLE: Record<RowStatus, string> = {
-  pending: "k-chip-warn",
+  pending: "k-chip-info",
   open: "k-chip-accent",
   completed: "k-chip-muted",
   reclaimed: "k-chip-success",
@@ -42,7 +42,7 @@ const STATUS_HELP: Record<RowStatus, string> = {
   pending: "On its way onto the chain (~20–40s). Refresh in a moment to see it rest.",
   open: "Resting in the next batch, held at your floor — a solver may settle it at the batch price. Yours to grab back anytime.",
   completed:
-    "Out of the basket. Settled by a solver, or grabbed back elsewhere — check the explorer for the outcome.",
+    "Left the basket. Settled by a solver, or grabbed back elsewhere — check the explorer for the outcome.",
   reclaimed: "You grabbed this order back; the funds are home in your wallet.",
 };
 
@@ -50,7 +50,7 @@ const STATUS_HELP: Record<RowStatus, string> = {
 const STATUS_LABEL: Record<RowStatus, string> = {
   pending: "arriving",
   open: "resting",
-  completed: "out of the basket",
+  completed: "left the basket",
   reclaimed: "grabbed back",
 };
 

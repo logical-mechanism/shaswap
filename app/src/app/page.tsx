@@ -16,8 +16,8 @@ export default function SwapPage() {
           </span>
         </h1>
         <p className="mt-2 max-w-sm text-sm text-muted">
-          A cozy batch swap on Cardano. Drop off an order and Pip helps settle
-          everyone at one fair price.
+          Drop off an order and Pip settles everyone together at one fair price —
+          so no one can jump the queue ahead of you.
         </p>
       </div>
 

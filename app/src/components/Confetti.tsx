@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 
 /**
- * A small one-shot celebratory burst (hearts / stars / confetti dots in candy
+ * A small one-shot celebratory burst (hearts / stars / confetti dots in pastel
  * colors) that emanates from its container. Mounts with a success moment and plays
  * once; decorative and non-interactive. Disabled (invisible) under
  * prefers-reduced-motion via the global animation opt-out.

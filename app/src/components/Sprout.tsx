@@ -2,7 +2,7 @@
  * A tiny garden motif for the "liquidity gardens" pool cards — a data-honest growth cue:
  * `growing` (a green sprout) for a pool that holds liquidity, `seed` (a resting seed) for a
  * pool still waiting for its first deposit. Pure SVG in Pip's soft, rounded vector language,
- * reusing the candy palette (mint/peach/sun). Static by design: it sits next to live numbers,
+ * reusing the pastel palette (mint/peach/sun). Static by design: it sits next to live numbers,
  * so it never loops or bobs. Decorative (aria-hidden) — the card's text carries the meaning.
  */
 export function Sprout({

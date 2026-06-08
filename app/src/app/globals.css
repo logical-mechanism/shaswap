@@ -1,11 +1,12 @@
 @import "tailwindcss";
 
 /*
- * ShaSwap theme — "Pip's candy shop": a kawaii DeFi look. Soft pastel field,
- * cream/white cards, bubblegum-rose → lavender accents, chunky pill buttons,
- * rounded-everything, soft drop shadows, gentle outlines and a sprinkle of
- * sparkle. Premium cute, not childish — trust-critical numbers stay crisp and
- * readable.
+ * ShaSwap theme — "Pip's woodland market": one cozy world for the whole app. Pip, a
+ * gentle forest creature, tends the liquidity gardens (pools) and gathers everyone's
+ * orders into baskets that settle together at the batch market. A kawaii DeFi look —
+ * soft pastel field, cream/white cards, bubblegum-rose → lavender accents, chunky pill
+ * buttons, rounded-everything, soft drop shadows, gentle outlines and a sprinkle of
+ * sparkle. Premium cute, not childish — trust-critical numbers stay crisp and readable.
  *
  * Raw values live in :root; `@theme inline` exposes them to Tailwind v4 as
  * utilities (bg-surface, text-muted, bg-pink, text-accent, animate-float, …).
@@ -29,7 +30,7 @@
   --disabled-bg: #ece4f3; /* disabled pill fill */
   --disabled-bg-soft: #f4eef8;
 
-  /* Candy palette — fills, gradients, blobs, badge tints (low opacity) */
+  /* Pastel palette — fills, gradients, blobs, badge tints (low opacity) */
   --pink: #ff8fbf;
   --lavender: #b79cf2;
   --mint: #7fe0c0;
@@ -215,7 +216,7 @@ h3 {
 }
 
 /* ---- Cozy night: dark theme -----------------------------------------------
-   Same candy accents (brightened for contrast) on a deep-plum field. Toggled by
+   Same pastel accents (brightened for contrast) on a deep-plum field. Toggled by
    adding `.dark` to <html>; tints mix toward --tint-base (now a dark plum) so the
    whole .k-* kit adapts without per-component changes. */
 .dark {
@@ -464,6 +465,12 @@ h3 {
   .k-chip-accent {
     color: var(--accent);
     background: color-mix(in srgb, var(--accent) 12%, var(--tint-base));
+  }
+  /* Neutral-positive "in transit" tint (e.g. an arriving order) — a soft lilac pill with
+     readable plum text, distinct from the amber warn chip and the grayer muted chip. */
+  .k-chip-info {
+    color: var(--muted);
+    background: color-mix(in srgb, var(--lavender) 20%, var(--tint-base));
   }
   .k-chip-success {
     color: var(--success);
