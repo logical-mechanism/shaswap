@@ -3,6 +3,11 @@
 import { useEffect } from "react";
 import { Pip } from "@/components/Pip";
 
+// How many overlays are currently signing. The data-signing flag is page-wide (it pauses
+// decorative motion everywhere), so ref-count it: the LAST overlay to close clears it, not
+// the first — robust if two overlays are ever open at once.
+let signingCount = 0;
+
 /**
  * A blocking "Pip is working" overlay for transaction flows. It covers the gap between
  * clicking an action (post / reclaim / deposit / withdraw / create / close) and the
@@ -32,10 +37,11 @@ export function PipOverlay({
   // hide/unmount so motion resumes the moment the flow resolves.
   useEffect(() => {
     if (!show) return;
-    const root = document.documentElement;
-    root.dataset.signing = "true";
+    signingCount += 1;
+    document.documentElement.dataset.signing = "true";
     return () => {
-      delete root.dataset.signing;
+      signingCount = Math.max(0, signingCount - 1);
+      if (signingCount === 0) delete document.documentElement.dataset.signing;
     };
   }, [show]);
 

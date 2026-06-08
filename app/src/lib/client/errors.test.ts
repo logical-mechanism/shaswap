@@ -59,3 +59,23 @@ test("unknown errors fall back to a trimmed original", () => {
   const long = "x".repeat(400);
   assert.ok(toUserMessage(long).length <= 181);
 });
+
+test("a readable sentence is not hidden just because it embeds a brace/bracket", () => {
+  // Regression guard: looksMachine must only hide PURE machine output, not a useful
+  // leading sentence with a structured suffix.
+  assert.equal(
+    toUserMessage("Build failed: outputs [too many]"),
+    "Build failed: outputs [too many]",
+  );
+  assert.equal(toUserMessage("Submit error: { code 5 }"), "Submit error: { code 5 }");
+});
+
+test("a pure object dump / bare code IS hidden behind the calm line", () => {
+  assert.match(toUserMessage("{ code: 99, info: 'x' }"), /Pip hit a snag|snag/i);
+  assert.match(toUserMessage("500"), /Pip hit a snag|snag/i);
+});
+
+test("a non-Latin (localized) wallet message is NOT treated as gibberish", () => {
+  const jp = "ウォレットの残高が不足しています"; // "insufficient wallet balance"
+  assert.equal(toUserMessage(jp), jp);
+});

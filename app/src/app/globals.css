@@ -617,11 +617,17 @@ h3 {
 
 /* ---- Calm during signing -------------------------------------------------------
    When a tx/signing overlay is open it sets data-signing on <html> (PipOverlay). The
-   brand rule is "no motion during signing", so freeze the ambient backdrop in place —
-   this is the brand's own guarantee, separate from the OS prefers-reduced-motion below
-   (which a focused user signing a tx may not have enabled). Freeze (paused), don't snap. */
-:root[data-signing] .backdrop-decor,
-:root[data-signing] .backdrop-decor * {
+   brand rule is "no motion during signing", so freeze every decorative looping animation
+   in place — the ambient backdrop AND any floating/bobbing/twinkling Pip or sparkle on the
+   page behind the overlay (e.g. the home hero). This is the brand's own guarantee, separate
+   from the OS prefers-reduced-motion below (which a focused user signing a tx may not have
+   enabled). One-shot entrances (animate-pop) and the spinner are left alone. Freeze
+   (paused), don't snap. */
+:root[data-signing] .animate-float,
+:root[data-signing] .animate-float-slow,
+:root[data-signing] .animate-bob,
+:root[data-signing] .animate-twinkle,
+:root[data-signing] .animate-wiggle {
   animation-play-state: paused !important;
 }
 

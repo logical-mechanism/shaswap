@@ -464,7 +464,7 @@ export function SwapCard() {
       {quoteFailed && (
         <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-2">
-            <Pip size={22} mood="worried" />
+            <Pip size={22} mood="calm" still />
             Pip couldn’t get a price just now. Try again in a sec.
           </span>
           <button
@@ -639,7 +639,7 @@ function Advanced({
           {tipLow && (
             <p className="-mt-1 text-[11px] text-warning">
               That tip is on the low side — a solver may skip it (a small batch pays the
-              whole network fee). 1–2 ADA settles reliably.
+              whole network fee). 0.5 ₳ covers a solo batch; a higher tip settles sooner.
             </p>
           )}
           <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">

@@ -87,12 +87,14 @@ const RULES: { match: RegExp; message: string }[] = [
  * a bare numeric code, or a spaceless CamelCase ledger identifier like `BadInputsUTxO`) rather
  * than a readable sentence. We hide gibberish behind a calm line so the brand never leaks a
  * cryptic string the moment an unmapped error fires — but still let a genuine human message
- * through (truncated), since those are often the most useful thing to show.
+ * through (truncated), since those are often the most useful thing to show. Kept deliberately
+ * NARROW so a readable sentence that merely embeds a brace ("Build failed: { code 5 }") or is
+ * written in a non-Latin script still reaches the user — only pure machine output is hidden.
  */
 function looksMachine(text: string): boolean {
-  if (/[{}[\]]/.test(text)) return true; // JSON / object dump
+  if (/^[{[]/.test(text)) return true; // STARTS as a JSON/object/array dump
   if (/0x[0-9a-f]{6,}/i.test(text)) return true; // hex blob
-  if (/^[^a-z]*$/i.test(text)) return true; // no letters at all → a bare code/number
+  if (!/\p{L}/u.test(text)) return true; // no letters in ANY script → a bare code/number
   if (!/\s/.test(text) && /[a-z][A-Z]/.test(text)) return true; // spaceless CamelCase id
   return false;
 }

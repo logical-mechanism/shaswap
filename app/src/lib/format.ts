@@ -160,6 +160,7 @@ export function withinDecimals(value: string, decimals: number): boolean {
  * coarse (one unit, rounded) — it's reassurance, not a countdown. Pure: pass `now` in.
  */
 export function relativeFuture(targetMs: number, now: number): string | null {
+  if (!Number.isFinite(targetMs)) return null; // a malformed deadline must not render "~NaNd"
   const ms = targetMs - now;
   if (ms <= 0) return null;
   const mins = Math.round(ms / 60_000);

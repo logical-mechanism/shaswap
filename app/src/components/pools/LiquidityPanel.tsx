@@ -869,9 +869,9 @@ function IntentControls({
         </div>
       </div>
       {lowTip && (
-        <p className="mt-1 px-1 text-[11px] text-warn">
+        <p className="mt-1 px-1 text-[11px] text-warning">
           A low tip may not be picked up — a batcher only fulfils intents whose tip covers its
-          fee. ~1 ₳ is a safe floor.
+          fee. ~0.5 ₳ is a safe floor.
         </p>
       )}
     </div>
@@ -1379,7 +1379,7 @@ function CloseEmptyPool({
     : wrongNetwork
       ? "Wrong network"
       : needsCollateral
-        ? "Set a collateral UTXO"
+        ? "Set wallet collateral"
         : null;
   const gated = !networkReady || !collateralReady;
 
