@@ -457,12 +457,21 @@ mod tests {
                             };
                             let need_a = (sra + circ - 1) / circ;
                             let need_b = (srb + circ - 1) / circ;
-                            assert_eq!(dep_a, need_a, "dep_a≠need_a s={shares} ra={res_a} c={circ}");
-                            assert_eq!(dep_b, need_b, "dep_b≠need_b s={shares} rb={res_b} c={circ}");
+                            assert_eq!(
+                                dep_a, need_a,
+                                "dep_a≠need_a s={shares} ra={res_a} c={circ}"
+                            );
+                            assert_eq!(
+                                dep_b, need_b,
+                                "dep_b≠need_b s={shares} rb={res_b} c={circ}"
+                            );
                             // over-supply rides back to the owner (the pool absorbs ≤ available).
                             assert!(dep_a <= da && dep_b <= db, "absorbed more than available");
                             // the pool's per-share backing holds (dep·circ ≥ res·shares).
-                            assert!(dep_a * circ >= sra && dep_b * circ >= srb, "backing breached");
+                            assert!(
+                                dep_a * circ >= sra && dep_b * circ >= srb,
+                                "backing breached"
+                            );
                         }
                     }
                 }
