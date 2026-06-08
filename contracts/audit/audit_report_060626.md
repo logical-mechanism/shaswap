@@ -5,7 +5,7 @@
 
 **Target:** `logicalmechanism/contracts` — ShaSwap on-chain validators (batch-auction DEX)
 
-**Target folder:** `/home/logic/Documents/LogicalMechanism/audit_machine/shaswap`
+**Target folder:** `audit_machine/shaswap`
 
 **Audit date:** 2026-06-06
 
@@ -17,7 +17,7 @@
 
 ## 1. Executive Summary
 
-- **Target folder audited:** `/home/logic/Documents/LogicalMechanism/audit_machine/shaswap` (provided as a standalone subtree at the KB repo root, not under `contracts/`).
+- **Target folder audited:** `audit_machine/shaswap` (provided as a standalone subtree at the KB repo root, not under `contracts/`).
 - **Contracts present:** five Plutus-V3 Aiken validators — `settlement` (unparameterised withdraw-0 trust anchor: `withdraw` + `publish`), `order(S)`, `pool(S)`, `lp_intent(S)` (spend validators), and `pool_mint(seed)` (minting policy). Logic is factored into `lib/shaswap/{clearing,spend,mint,lp_intent,lp_intent_types,types,constants,utils}.ak`. Also in the target: a `happy_path/` suite of **testnet (preprod) demo builders** (cardano-cli + Python) and two prior in-tree audit reports under `audit/`.
 - **Language / framework:** Aiken, modern stdlib only (`cardano/transaction`, `cardano/assets`, `aiken/collection/list`, `aiken/interval`); `aiken-lang/stdlib v3.1.0`, `aiken-lang/fuzz v2`.
 - **Plutus version:** V3 (every spend handler receives `Option<Datum>` and does `expect Some(d) = datum`; withdraw / publish / mint purposes are all used).

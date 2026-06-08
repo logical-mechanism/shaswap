@@ -30,7 +30,7 @@
     "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 3
   },
-  "signing_key_path": "/home/logic/Documents/LogicalMechanism/testnets/keys/solver.skey",
+  "signing_key_path": "/path/to/your/solver.skey",
   "max_orders_per_tx": 20,
   "strategy": "round-robin"
 }

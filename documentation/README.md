@@ -32,12 +32,14 @@ everything else elaborates or operationalizes it.
 
 ## Source papers
 
-- [`batch-cfmm.pdf`](batch-cfmm.pdf), [`samm.pdf`](samm.pdf),
-  [`partially-active-amm.pdf`](partially-active-amm.pdf), [`lvr.pdf`](lvr.pdf) —
-  the academic basis (batch auctions, MEV/LVR, PA-AMM).
+The academic basis (batch auctions, MEV / LVR, PA-AMM). [`BLUEPRINT.md`](BLUEPRINT.md) §4
+explains how each maps onto ShaSwap.
+
+- **Augmenting Batch Exchanges with CFMMs** — Ramseyer, Goyal, Goel, Mazières (EC '24) — [arXiv:2210.04929](https://arxiv.org/abs/2210.04929)
+- **SAMM: Sharded Automated Market Maker** — Chen, Vaisman, Eyal ('25) — [arXiv:2406.05568](https://arxiv.org/abs/2406.05568)
+- **Automated Market Making and Loss-Versus-Rebalancing** — Milionis, Moallemi, Roughgarden, Zhang ('24) — [arXiv:2208.06046](https://arxiv.org/abs/2208.06046)
+- **Partially Active Automated Market Makers** — Ko ('26) — [arXiv:2602.09887](https://arxiv.org/abs/2602.09887)
 
 ## Other
 
 - [`app-data-caching.md`](app-data-caching.md) — the dApp's no-background-polling read model.
-- [`reviews/`](reviews/) — internal multi-agent review reports.
-- [`prompts/`](prompts/) — feature-integration working notes.

@@ -14,7 +14,6 @@ clearings off-chain; the on-chain validators only *verify* them.
 | Network | Contracts live | dApp |
 |---|---|---|
 | **preprod** | ✅ deployed | `NEXT_PUBLIC_NETWORK=preprod` (current default for app.shaswap.org) |
-| **preview** | ⚪ not deployed | reads only |
 | **mainnet** | ⚪ pending launch | scaffolded (`deployed: false`) until contracts ship |
 
 Mainnet identities are pre-computed and pinned by tests, but the reference scripts are

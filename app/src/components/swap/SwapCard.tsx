@@ -646,7 +646,8 @@ function Advanced({
             <span className="text-muted">
               Expiry
               <span className="block text-[11px] text-muted">
-                a solver can only settle before this deadline (reclaim anytime)
+                a solver can only settle before this deadline (reclaim anytime); a
+                resting order can fill whenever the price reaches your floor
               </span>
             </span>
             <select

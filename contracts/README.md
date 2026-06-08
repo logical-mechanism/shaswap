@@ -55,7 +55,7 @@ Core guarantees enforced on-chain (BLUEPRINT §5.2):
 | Module | Purpose |
 |---|---|
 | [`types.ak`](lib/shaswap/types.ak) | Datum/redeemer encodings. `OrderDatum` (9 fields, incl. `pool_nft`) and `PoolDatum` (6 fields) are deliberately distinct shapes so an order can never be relabelled as the pool (§5.4). |
-| [`clearing.ak`](lib/shaswap/clearing.ak) | The once-per-tx settlement check — the heart of the protocol (§5.2). |
+| [`clearing.ak`](lib/shaswap/clearing.ak) | The once-per-tx settlement check — the core batch-validation logic (§5.2). |
 | [`spend.ak`](lib/shaswap/spend.ak) | Spend-path logic for the order and pool validators (settle deferral, reclaim, `k`+fee check, value-derived LP, pool teardown), factored out so it is unit-testable. |
 | [`mint.ak`](lib/shaswap/mint.ak) | Pool create/close mint logic, including fail-fast `PoolDatum` validation at creation. |
 | [`utils.ak`](lib/shaswap/utils.ak) | Shared helpers (the `S` stake-tag check, withdraw-0 presence, asset quantity). |
