@@ -68,12 +68,12 @@ describe("PendingLpIntents", () => {
     expect(
       screen.getByText(/returns your LP tokens \(not the underlying\)/i),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reclaim" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Grab back" })).toBeEnabled();
   });
 
   it("Reclaim spends the intent via reclaimLpIntent(ref)", async () => {
     render(<PendingLpIntents pool={POOL} refreshKey={0} />);
-    const btn = await screen.findByRole("button", { name: "Reclaim" });
+    const btn = await screen.findByRole("button", { name: "Grab back" });
     fireEvent.click(btn);
     await waitFor(() => expect(h.reclaim).toHaveBeenCalledTimes(1));
     expect(h.reclaim.mock.calls[0][1]).toBe("abc123#0");

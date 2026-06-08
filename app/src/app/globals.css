@@ -534,6 +534,54 @@ h3 {
     background: color-mix(in srgb, var(--accent) 12%, var(--tint-base));
   }
 
+  /* Pip speech bubble — a soft rounded card with a little tail, for one-time Pip
+     coachmarks (PipCoachmark). The tail is a rotated square pinned to a corner; callers
+     pick the side via a modifier. Kept in the kit so every bubble matches. */
+  .k-bubble {
+    position: relative;
+    border-radius: 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: 0 18px 40px -22px rgba(150, 110, 190, 0.55);
+  }
+  .k-bubble::before {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: var(--surface);
+    transform: rotate(45deg);
+  }
+  /* Tail pointing LEFT — bubble sits to the right of Pip (the coachmark layout). */
+  .k-bubble-l::before {
+    left: -8px;
+    top: 20px;
+    border-left: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  /* Tail pointing UP — bubble sits below its anchor. */
+  .k-bubble-t::before {
+    top: -8px;
+    left: 24px;
+    border-left: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+  }
+
+  /* Soft rose halo — deploys the --shadow-glow token to make a hero/"magical" surface
+     feel lit. Decorative only; never on warning/danger/destructive surfaces. */
+  .k-glow {
+    box-shadow:
+      var(--shadow-glow),
+      0 24px 50px -28px rgba(150, 110, 190, 0.5),
+      0 2px 0 rgba(255, 255, 255, 0.9) inset;
+  }
+  .dark .k-glow {
+    box-shadow:
+      var(--shadow-glow),
+      0 24px 50px -30px rgba(0, 0, 0, 0.55),
+      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  }
+
   /* ---- Focus visibility (WCAG 2.4.7) -------------------------------------------
      One shared, brand-colored indicator so keyboard focus is ALWAYS visible. Modern
      browsers render `outline` following border-radius, so pills get a rounded ring and
@@ -565,6 +613,16 @@ h3 {
     border-color: color-mix(in srgb, var(--accent) 50%, var(--tint-base));
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
   }
+}
+
+/* ---- Calm during signing -------------------------------------------------------
+   When a tx/signing overlay is open it sets data-signing on <html> (PipOverlay). The
+   brand rule is "no motion during signing", so freeze the ambient backdrop in place —
+   this is the brand's own guarantee, separate from the OS prefers-reduced-motion below
+   (which a focused user signing a tx may not have enabled). Freeze (paused), don't snap. */
+:root[data-signing] .backdrop-decor,
+:root[data-signing] .backdrop-decor * {
+  animation-play-state: paused !important;
 }
 
 /* Respect reduced-motion: still pretty, just still. */

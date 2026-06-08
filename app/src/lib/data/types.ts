@@ -93,6 +93,12 @@ export interface WalletPosition {
   status: OrderStatus;
   /** Whether the order allows partial fills (a partial leaves a reclaimable remainder). */
   partial: boolean;
+  /**
+   * Optional settle-by deadline (POSIX ms), decoded from the order datum, or null. A solver
+   * can only settle the order before this; past it the order just rests, owner-reclaimable.
+   * Surfaced so a resting order reads as a finite, cozy wait rather than open-ended.
+   */
+  deadline: string | null;
 }
 
 /** Which LP action an intent requests. Mirrors `LpIntentAction` on-chain. */

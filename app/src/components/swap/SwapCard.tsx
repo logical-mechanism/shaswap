@@ -30,6 +30,7 @@ import {
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { PipOverlay } from "@/components/PipOverlay";
+import { PipCoachmark } from "@/components/PipCoachmark";
 import { Confetti } from "@/components/Confetti";
 import { TokenSelect } from "./TokenSelect";
 import { SlippageSettings } from "./SlippageSettings";
@@ -57,7 +58,9 @@ export function SwapCard() {
   const [toUnit, setToUnit] = useState<string>("");
   const [amount, setAmount] = useState<string>("");
   const [slippage, setSlippage] = useState<number>(0.5);
-  const [tip, setTip] = useState<string>("2"); // solver tip, in ADA
+  // Default to the solo-batch floor: 0.5 ₳ covers a single-order settlement's tx fee, so the
+  // order is always self-funding even if it never batches with others (RECOMMENDED_MIN_TIP).
+  const [tip, setTip] = useState<string>("0.5"); // solver tip, in ADA
   const [partial, setPartial] = useState<boolean>(false);
   const [expiry, setExpiry] = useState<string>("none"); // none|1h|6h|1d|1w
   const [advanced, setAdvanced] = useState<boolean>(false);
@@ -308,7 +311,7 @@ export function SwapCard() {
                     : { label: "Post order", disabled: false };
 
   return (
-    <div className="k-card w-full max-w-md p-5 sm:p-6">
+    <div className="k-card k-glow w-full max-w-md p-5 sm:p-6">
       <div className="mb-4 flex items-start justify-between gap-2 px-1">
         <div>
           <div className="flex items-center gap-2">
@@ -322,6 +325,12 @@ export function SwapCard() {
         </div>
         <SlippageSettings value={slippage} onChange={setSlippage} context="swap" />
       </div>
+
+      <PipCoachmark id="batch-intro" mood="wave" className="mb-4">
+        Heads up: you don’t trade on the spot. You drop off an order, and every little while
+        the whole batch settles together at one fair price — so nobody can jump the queue
+        ahead of you. Your order rests until then, and it’s always yours to grab back.
+      </PipCoachmark>
 
       {tokensError && (
         <div className="k-note k-note-danger mb-3 text-xs">
@@ -528,26 +537,31 @@ function PostResult({ state }: { state: PostState }) {
       <div className="k-note k-note-success relative mt-3 text-xs">
         <Confetti />
         <div className="relative flex items-center gap-2">
-          <Pip size={26} mood="love" />
+          <Pip size={26} mood="cheer" />
           <div className="font-bold text-success">Order posted ✓</div>
         </div>
         <p className="mt-1 text-muted">
-          It’ll appear under{" "}
+          Pip’s tucked it into the next batch. It’ll appear under{" "}
           <a href="/orders" className="k-link">
             Orders
           </a>{" "}
-          once the network confirms (~20–40s). From there the batch settles at one fair
-          price (never below your floor), or you can grab it back anytime, which returns
-          your input plus the small ADA deposit and tip.
+          once the network confirms (~20–40s), resting at your floor until the batch settles —
+          or grab it back anytime, which returns your input plus the small ADA deposit and
+          tip.
         </p>
-        <a
-          href={explorerTxUrl(state.hash)}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-1 inline-block font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
-        >
-          {truncate(state.hash, 10, 8)} ↗
-        </a>
+        <div className="mt-1.5 flex flex-col items-start gap-1">
+          <a href="/orders" className="k-link font-semibold">
+            Watch it rest in Orders →
+          </a>
+          <a
+            href={explorerTxUrl(state.hash)}
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono text-muted underline decoration-dotted underline-offset-2 hover:text-accent"
+          >
+            {truncate(state.hash, 10, 8)} ↗
+          </a>
+        </div>
       </div>
     );
   }
@@ -555,7 +569,7 @@ function PostResult({ state }: { state: PostState }) {
     return (
       <div className="k-note k-note-danger mt-3 text-xs">
         <div className="flex items-center gap-2">
-          <Pip size={26} mood="worried" />
+          <Pip size={26} mood="calm" still />
           <div className="font-bold">Hmm, that didn’t go through</div>
         </div>
         <div className="mt-1 break-words opacity-90">{state.message}</div>
@@ -882,7 +896,10 @@ function RateLine({
           </DetailRow>
           <DetailRow label="Max slippage">{slippage.toFixed(1)}%</DetailRow>
           <div className="flex items-center justify-between font-bold text-ink">
-            <span>Minimum received</span>
+            <span>
+              Your floor{" "}
+              <span className="font-normal text-muted">(min. received)</span>
+            </span>
             <span className="tabular-nums">
               {floorDisplay && toToken ? `${floorDisplay} ${toToken.ticker}` : "—"}
             </span>

@@ -140,7 +140,11 @@ function ConnectedMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={mismatch ? "Wallet network differs from app network" : undefined}
+        title={
+          mismatch
+            ? `Your wallet is on a different network. Switch it to ${networkLabel()} to continue.`
+            : undefined
+        }
         className="flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-2.5 pr-2 text-sm transition-colors hover:border-accent/40"
       >
         <span className={`k-chip ${mismatch ? "k-chip-danger" : "k-chip-accent"}`}>

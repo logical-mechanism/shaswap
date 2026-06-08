@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@/lib/wallet/hooks";
 import { useOrders } from "@/hooks/useOrders";
@@ -20,10 +21,12 @@ import {
 } from "@/lib/client/orderRows";
 import { toUserMessage } from "@/lib/client/errors";
 import { explorerTxUrl } from "@/lib/config";
-import { formatUnits, truncate } from "@/lib/format";
+import { formatUnits, relativeFuture, truncate } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
 import { PipOverlay } from "@/components/PipOverlay";
+import { PipEmptyState } from "@/components/PipEmptyState";
+import { Disclosure } from "@/components/Disclosure";
 import { RefreshIcon } from "@/components/RefreshIcon";
 import { CollateralNote } from "@/components/CollateralNote";
 
@@ -36,18 +39,19 @@ const STATUS_STYLE: Record<RowStatus, string> = {
 
 /** Honest, plain-language explanation of each row state (badge tooltip + legend). */
 const STATUS_HELP: Record<RowStatus, string> = {
-  pending: "Submitted, waiting to be confirmed on-chain.",
-  open: "Live on-chain and reclaimable by you. A solver may settle it at the batch price.",
+  pending: "On its way onto the chain (~20–40s). Refresh in a moment to see it rest.",
+  open: "Resting in the next batch, held at your floor — a solver may settle it at the batch price. Yours to grab back anytime.",
   completed:
-    "No longer on-chain. Settled by a solver, or reclaimed elsewhere. Confirm the outcome on the explorer.",
-  reclaimed: "You reclaimed this order; the funds are back in your wallet.",
+    "Out of the basket. Settled by a solver, or grabbed back elsewhere — check the explorer for the outcome.",
+  reclaimed: "You grabbed this order back; the funds are home in your wallet.",
 };
 
+/** Cozy, honest labels for each state. "resting" is the dominant waiting state. */
 const STATUS_LABEL: Record<RowStatus, string> = {
-  pending: "pending",
-  open: "open",
-  completed: "completed",
-  reclaimed: "reclaimed",
+  pending: "arriving",
+  open: "resting",
+  completed: "out of the basket",
+  reclaimed: "grabbed back",
 };
 
 /**
@@ -298,8 +302,8 @@ export default function OrdersPage() {
             <h1 className="font-display text-2xl font-extrabold text-ink">Orders</h1>
           </div>
           <p className="mt-1 text-sm text-muted">
-            Everything you’ve dropped off, plus recent activity. While an order’s
-            live, it’s always yours to grab back.
+            Everything you’ve dropped off. While an order’s resting, it’s always
+            yours to grab back.
           </p>
         </div>
         {connected && (
@@ -320,15 +324,18 @@ export default function OrdersPage() {
 
       {connected && needsCollateral && (
         <CollateralNote onRecheck={recheckCollateral}>
-          Reclaiming needs a collateral set in your wallet. Add one, then re-check.
+          Grabbing an order back needs a collateral set in your wallet. Add one, then
+          re-check.
         </CollateralNote>
       )}
 
-      {!connected && <Empty>Connect a wallet and Pip will round up your orders.</Empty>}
+      {!connected && (
+        <PipEmptyState mood="wave" body="Connect a wallet and Pip will gather your resting orders." />
+      )}
 
       {ownerError && (
         <div className="k-note k-note-danger flex items-center gap-2 p-4 text-sm">
-          <Pip size={24} mood="worried" />
+          <Pip size={24} mood="calm" still />
           <span>Pip couldn’t read your wallet address. Reconnect and try again.</span>
         </div>
       )}
@@ -336,7 +343,7 @@ export default function OrdersPage() {
       {connected && error && (
         <div className="k-note k-note-danger p-4 text-sm">
           <div className="flex items-center gap-2">
-            <Pip size={24} mood="worried" />
+            <Pip size={24} mood="calm" still />
             <span className="font-bold">Pip couldn’t gather your orders just now.</span>
           </div>
           <div className="mt-1 break-words text-xs text-muted">{error}</div>
@@ -351,33 +358,31 @@ export default function OrdersPage() {
       )}
 
       {connected && showLoading && rows.length === 0 && (
-        <PipLoading label="Pip’s gathering your orders…" />
+        <PipLoading label="Pip’s checking the basket…" />
       )}
 
       {connected && !showLoading && !error && rows.length === 0 && (
-        <Empty>No orders yet. Drop one off from the Swap page.</Empty>
+        <PipEmptyState
+          mood="sleepy"
+          title="Your basket’s empty"
+          body="Drop off an order from the Swap page and Pip will tuck it into the next batch."
+        >
+          <Link href="/" className="k-btn mt-4 px-4 py-2 text-sm">
+            Drop off an order →
+          </Link>
+        </PipEmptyState>
       )}
 
       {connected && rows.length > 0 && (
-        <ul className="space-y-2">
-          {rows.map((row) => (
-            <OrderRowItem
-              key={row.ref}
-              row={row}
-              busy={reclaim.kind === "busy" && reclaim.ref === row.ref}
-              anyBusy={reclaim.kind === "busy"}
-              error={
-                reclaim.kind === "error" && reclaim.ref === row.ref
-                  ? reclaim.message
-                  : undefined
-              }
-              baseReason={baseReason}
-              networkReady={networkReady}
-              collateralReady={collateralReady}
-              onReclaim={() => onReclaim(row)}
-            />
-          ))}
-        </ul>
+        <OrderGroups
+          rows={rows}
+          now={now}
+          reclaim={reclaim}
+          baseReason={baseReason}
+          networkReady={networkReady}
+          collateralReady={collateralReady}
+          onReclaim={onReclaim}
+        />
       )}
 
       <PipOverlay
@@ -388,8 +393,104 @@ export default function OrdersPage() {
   );
 }
 
+/**
+ * Lay the orders out as a cozy "batch basket": resting orders get their own grouped section
+ * (the waiting state, made to feel intentional) above a quieter "Recent activity" list. The
+ * basket is a VISUAL grouping only — never a fabricated "basket #N", since the app can't know
+ * which batch an order lands in (that would break the honest-labels invariant).
+ */
+function OrderGroups({
+  rows,
+  now,
+  reclaim,
+  baseReason,
+  networkReady,
+  collateralReady,
+  onReclaim,
+}: {
+  rows: OrderRow[];
+  now: number;
+  reclaim: ReclaimState;
+  baseReason: string | null;
+  networkReady: boolean;
+  collateralReady: boolean;
+  onReclaim: (row: OrderRow) => void;
+}) {
+  const resting = rows.filter((r) => r.status === "open");
+  const others = rows.filter((r) => r.status !== "open");
+
+  const renderRow = (row: OrderRow) => (
+    <OrderRowItem
+      key={row.ref}
+      row={row}
+      now={now}
+      busy={reclaim.kind === "busy" && reclaim.ref === row.ref}
+      anyBusy={reclaim.kind === "busy"}
+      error={
+        reclaim.kind === "error" && reclaim.ref === row.ref ? reclaim.message : undefined
+      }
+      baseReason={baseReason}
+      networkReady={networkReady}
+      collateralReady={collateralReady}
+      onReclaim={() => onReclaim(row)}
+    />
+  );
+
+  return (
+    <div className="space-y-6">
+      {resting.length > 0 && (
+        <section>
+          <div className="mb-2 flex items-center gap-2">
+            <Pip size={26} mood="sleepy" />
+            <h2 className="font-display text-base font-extrabold text-ink">
+              Resting in the next batch
+            </h2>
+            <span className="k-chip k-chip-accent">{resting.length}</span>
+          </div>
+          <p className="mb-3 text-xs text-muted">
+            Pip’s holding {resting.length === 1 ? "it" : `all ${resting.length}`} at your
+            floor until the next batch settles. Waiting is normal here — and they’re always
+            yours to grab back.
+          </p>
+          <Disclosure summary="Why is my order just resting?" className="mb-3">
+            <div className="k-note k-note-info flex gap-3 text-xs leading-relaxed">
+              <span className="shrink-0">
+                <Pip size={30} mood="thinking" />
+              </span>
+              <div className="space-y-2">
+                <p>
+                  You don’t trade on the spot. Every little while, all the orders for a pair
+                  settle together at one shared price — so everyone in a batch trades at the
+                  same price, and no one can sneak in front of you to move it.
+                </p>
+                <p>
+                  Your order rests at the floor you set until that happens, or until you grab
+                  it back. It can fill whenever the market reaches your floor.
+                </p>
+              </div>
+            </div>
+          </Disclosure>
+          <ul className="space-y-2">{resting.map(renderRow)}</ul>
+        </section>
+      )}
+
+      {others.length > 0 && (
+        <section>
+          {resting.length > 0 && (
+            <h2 className="mb-2 font-display text-base font-extrabold text-ink">
+              Recent activity
+            </h2>
+          )}
+          <ul className="space-y-2">{others.map(renderRow)}</ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function OrderRowItem({
   row,
+  now,
   busy,
   anyBusy,
   error,
@@ -399,6 +500,7 @@ function OrderRowItem({
   onReclaim,
 }: {
   row: OrderRow;
+  now: number;
   busy: boolean;
   anyBusy: boolean;
   error?: string;
@@ -414,6 +516,17 @@ function OrderRowItem({
   // Reclaims are serialized (one global in-flight latch), so disable EVERY row's button
   // while any reclaim is running — otherwise other rows look clickable but silently no-op.
   const reclaimDisabled = busy || anyBusy || !networkReady || !collateralReady;
+  // Resting orders carry a settle-by deadline: a finite, cozy wait. `null` once it's past
+  // (or when there's no deadline / it isn't a resting row) — and a passed deadline is a
+  // calm, honest "window closed" note, never an alarm (the order still rests, reclaimable).
+  // `now` is 0 until the first refresh stamps it; don't compute a bogus duration in that beat.
+  const hasDeadline = row.deadline !== null && row.deadline !== undefined;
+  const restsFor =
+    row.status === "open" && hasDeadline && now > 0
+      ? relativeFuture(Number(row.deadline), now)
+      : null;
+  const windowClosed =
+    row.status === "open" && hasDeadline && now > 0 ? Number(row.deadline) <= now : false;
   return (
     <li className="k-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -440,7 +553,7 @@ function OrderRowItem({
             >
               {truncate(row.ref, 10, 4)} ↗
             </a>{" "}
-            · min {formatUnits(row.minOut, row.outDecimals)} {row.outTicker}
+            · floor {formatUnits(row.minOut, row.outDecimals)} {row.outTicker}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -460,21 +573,35 @@ function OrderRowItem({
               title={reclaimReason ?? undefined}
               className="k-btn-ghost px-3 py-1.5 text-xs"
             >
-              {busy ? "Reclaiming…" : (reclaimReason ?? "Reclaim")}
+              {busy ? "Grabbing back…" : (reclaimReason ?? "Grab back")}
             </button>
           )}
         </div>
       </div>
 
-      {row.canReclaim && (
+      {/* A calm, static "still here, on purpose" signal for a resting order — works without
+          motion (so reduced-motion + screen-reader users get the same reassurance). */}
+      {row.status === "open" && (
         <div className="mt-1.5 text-[11px] text-muted">
-          Reclaim returns your input plus the order’s min-ADA and tip to your wallet.
+          {windowClosed
+            ? "Its settle window has closed — still resting, and yours to grab back anytime."
+            : restsFor
+              ? `Resting in the next batch · snug for ${restsFor} more`
+              : "Resting in the next batch · grab it back anytime"}
+        </div>
+      )}
+
+      {row.canReclaim && (
+        <div className="mt-1 text-[11px] text-muted">
+          Grabbing it back returns your input plus the small ADA deposit and tip to your
+          wallet.
         </div>
       )}
 
       {row.reclaimTx && (
         <div className="mt-2 text-xs text-success">
-          Reclaimed ✓. Your input, min-ADA and tip are back in your wallet.{" "}
+          Grabbed back ✓. Your input, the small ADA deposit and tip are home in your
+          wallet.{" "}
           <a
             href={explorerTxUrl(row.reclaimTx)}
             target="_blank"
@@ -487,19 +614,10 @@ function OrderRowItem({
       )}
       {error && (
         <div className="mt-2 flex items-center gap-1.5 break-words text-xs text-danger">
-          <Pip size={18} mood="worried" />
+          <Pip size={18} mood="calm" still />
           <span>{error}</span>
         </div>
       )}
     </li>
-  );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="k-card px-4 py-12 text-center text-sm text-muted">
-      <Pip size={56} mood="sleepy" className="mb-3" />
-      <div>{children}</div>
-    </div>
   );
 }

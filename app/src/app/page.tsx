@@ -1,5 +1,6 @@
 import { SwapCard } from "@/components/swap/SwapCard";
 import { Pip } from "@/components/Pip";
+import { Sparkles } from "@/components/decor";
 import { Disclosure } from "@/components/Disclosure";
 
 export default function SwapPage() {
@@ -8,7 +9,11 @@ export default function SwapPage() {
       <div className="mb-7 flex flex-col items-center text-center">
         <Pip size={96} mood="wave" float sparkles label="Pip, the ShaSwap mascot" />
         <h1 className="mt-4 font-display text-3xl font-extrabold text-ink sm:text-4xl">
-          Swap with <span className="text-accent">Pip</span>
+          Swap with{" "}
+          <span className="relative inline-block text-accent">
+            Pip
+            <Sparkles className="absolute -right-3 -top-1" />
+          </span>
         </h1>
         <p className="mt-2 max-w-sm text-sm text-muted">
           A cozy batch swap on Cardano. Drop off an order and Pip helps settle

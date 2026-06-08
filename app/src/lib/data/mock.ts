@@ -84,6 +84,8 @@ const POSITIONS: WalletPosition[] = [
     minOut: "50000000",
     status: "open",
     partial: false,
+    // ~6h out, so the resting-order "snug until …" caption is visible in the offline mock.
+    deadline: (Date.now() + 6 * 60 * 60 * 1000).toString(),
   },
   {
     ref: "05d99063…#0",
@@ -93,6 +95,7 @@ const POSITIONS: WalletPosition[] = [
     minOut: "40000000",
     status: "settled",
     partial: false,
+    deadline: null,
   },
 ];
 
