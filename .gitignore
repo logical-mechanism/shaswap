@@ -6,6 +6,7 @@ CLAUDE.local.md
 # Local-only project log + internal review reports / prompts (not part of the public repo)
 MEMORY.md
 documentation/reviews/
+documentation/prompts/
 documentation/spec/review-prompt.md
 
 # Third-party academic PDFs — not redistributed; cited via arXiv in documentation/ (BLUEPRINT §4)
