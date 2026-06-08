@@ -78,3 +78,26 @@ jobs:
           path: app/playwright-report/
           retention-days: 7
           if-no-files-found: ignore
+
+  batcher:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: batcher
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned (matches .tool-versions) so fmt/clippy don't drift with new stable releases.
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          components: rustfmt, clippy
+      # Cache the cargo registry + target/ (Pallas is a heavy dep tree) so reruns are fast.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: batcher
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # `cargo test` also runs the deterministic solver-parity gates: solver-core's
+      # tests/golden.rs (solver outputs match the on-chain clearing.ak fixtures to the
+      # lovelace) and tests/property.rs (5k-iteration conservation / no-skim). The chain
+      # crate's live.rs is #[ignore]d (needs a node), so it's skipped here.
+      - run: cargo test --workspace --locked
