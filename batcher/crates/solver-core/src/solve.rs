@@ -343,6 +343,14 @@ pub fn solve_capped(
 ) -> Option<SolveResult> {
     let d = &pool.datum;
     let fee = Fee::from_datum(d);
+    // Defense-in-depth against a junk pool datum. `pool_mint` validates the fee at
+    // creation, but a *discovered* pool is read straight off-chain, so re-check at the
+    // solver entry: an out-of-range fee (num<0, den<=0, or num>=den) would otherwise
+    // produce a wrong clearing or a divide-by-zero in the curve math (`gamma = den−num`
+    // hits the denominator). Refuse to solve such a pool — the orchestrator skips it.
+    if !fee.is_valid() {
+        return None;
+    }
     let res_a = curve::reserve_of(&pool.value, &d.asset_a);
     let res_b = curve::reserve_of(&pool.value, &d.asset_b);
 
@@ -577,6 +585,43 @@ mod cap_tests {
             paid > 900_000,
             "clearing at the floor would pay far less ({paid})"
         );
+    }
+
+    #[test]
+    fn rejects_pool_with_invalid_fee() {
+        // A junk pool datum whose fee is out of range must be skipped (None), not
+        // solved — guards the curve math against divide-by-zero / nonsense clearing.
+        let orders = vec![token_seller(0, 1_000_000, 800_000)];
+        for (fee_num, fee_den) in [(0i128, 0i128), (1000, 1000), (1001, 1000), (-1, 1000)] {
+            let mut p = pool(1_000_000_000_000, 1_000_000_000_000);
+            p.datum.fee_num = fee_num;
+            p.datum.fee_den = fee_den;
+            assert!(
+                solve(&orders, &p).is_none(),
+                "fee {fee_num}/{fee_den} is invalid and must yield no clearing"
+            );
+        }
+        // sanity: the same orders against a valid-fee pool DO clear.
+        assert!(solve(&orders, &pool(1_000_000_000_000, 1_000_000_000_000)).is_some());
+    }
+
+    #[test]
+    fn capped_solve_holds_across_the_operating_range() {
+        // Deep pool so floors never bind; 35 loosely-priced sellers. solve_capped must
+        // include EXACTLY the cap N across the live operating range (the proven ceiling
+        // is N≈30) and re-verify each result. Guards against a refactor silently breaking
+        // capped solving at a particular size — the §13.1 ceiling has no emulator gate, so
+        // this solver-level regression is the standing guard for the cap path.
+        let pool = pool(1_000_000_000_000, 1_000_000_000_000);
+        let orders: Vec<OrderInput> = (0..35u8)
+            .map(|i| token_seller(i, 1_000_000, 500_000))
+            .collect();
+        for n in [1usize, 10, 20, 30] {
+            let s = solve_capped(&orders, &pool, n).unwrap_or_else(|| panic!("cap {n} must clear"));
+            assert_eq!(s.orders.len(), n, "cap {n} must include exactly {n} orders");
+            // owner outputs line up 1:1 with the included orders (build_settlement verified).
+            assert_eq!(s.settlement.owner_outputs.len(), n);
+        }
     }
 
     #[test]

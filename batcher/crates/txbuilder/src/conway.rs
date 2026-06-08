@@ -195,13 +195,16 @@ impl BuildConway for StagingTransaction {
 
         if let Some(rdmrs) = self.redeemers {
             for (purpose, (pd, ex_units)) in rdmrs.deref().iter() {
-                let ex_units = if let Some(ExUnits { mem, steps }) = ex_units {
-                    PallasExUnits {
+                // The builder never solves for ex-units; a redeemer must arrive with
+                // them already filled (the orchestrator copies them from the Ogmios
+                // `EvaluateTx` gate before building). A `None` here is a caller bug, so
+                // return a typed error rather than panicking on a live-funds path.
+                let ex_units = match ex_units {
+                    Some(ExUnits { mem, steps }) => PallasExUnits {
                         mem: *mem,
                         steps: *steps,
-                    }
-                } else {
-                    todo!("ExUnits budget calculation not yet implement") // TODO
+                    },
+                    None => return Err(TxBuilderError::MissingExUnits),
                 };
 
                 let data = PlutusData::decode_fragment(pd.as_ref())

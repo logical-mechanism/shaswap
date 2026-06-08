@@ -83,6 +83,12 @@ pub enum TxBuilderError {
     /// transaction
     #[error("Input/policy pointed to by redeemer not found in tx")]
     RedeemerTargetMissing,
+    /// A redeemer was staged without execution units. The builder does not solve
+    /// for ex-units; callers must fill them from an `EvaluateTx` result before
+    /// building (the ShaSwap orchestrator always does). Returned instead of
+    /// panicking so a misuse surfaces as a recoverable error, not a process abort.
+    #[error("Redeemer is missing execution units (fill them from EvaluateTx first)")]
+    MissingExUnits,
     /// Provided network ID is invalid (must be 0 or 1)
     #[error("Invalid network ID")]
     InvalidNetworkId,

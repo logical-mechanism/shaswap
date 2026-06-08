@@ -24,7 +24,9 @@ it on [`../../batcher/config/deployment.mainnet.example.json`](../../batcher/con
   ex-unit limit — see [`../spec/ex-unit-spike.md`](../spec/ex-unit-spike.md)).
 
 Runtime env: `SHASWAP_SUBMIT=1` (actually submit), `SHASWAP_INTERVAL_MS` (daemon poll
-cadence), `SHASWAP_STRATEGY` (`round-robin` | `profit-greedy`), `RUST_LOG`.
+cadence), `SHASWAP_STRATEGY` (`round-robin` | `profit-greedy`), `SHASWAP_METRICS_ADDR` /
+`SHASWAP_HEALTH_ADDR` (expose Prometheus `/metrics` + `/health`,`/ready` — see
+[Monitoring & alerts](#monitoring--alerts)), `RUST_LOG`.
 
 ## systemd service
 
@@ -42,6 +44,7 @@ Environment=SHASWAP_DEPLOYMENT=/opt/shaswap/config/deployment.mainnet.json
 Environment=SHASWAP_SUBMIT=1
 Environment=SHASWAP_INTERVAL_MS=500
 Environment=SHASWAP_STRATEGY=round-robin
+Environment=SHASWAP_METRICS_ADDR=127.0.0.1:9100
 Environment=RUST_LOG=info
 ExecStart=/opt/shaswap/batcher/target/release/shaswap-batcher
 Restart=always
@@ -65,17 +68,39 @@ with timestamps and levels. Each pass logs a running wallet-balance P&L
 
 ## Monitoring & alerts
 
-The binary emits structured logs today (no metrics endpoint yet — Prometheus/OTel export
-is a tracked post-launch enhancement). Until then, derive alerts from the log stream:
+Set `SHASWAP_METRICS_ADDR=127.0.0.1:9100` to expose a Prometheus endpoint (`GET /metrics`)
+plus `GET /health` (liveness) and `GET /ready` (returns `503` until a pass has completed
+within ~90 s — a *hung*-daemon signal a crash-only `Restart=always` never catches; wire it
+to a systemd/k8s watchdog). It is a std-only HTTP server with no effect on the settle loop;
+bind it to localhost or a private network. Key series:
+
+| Metric | Use |
+|---|---|
+| `shaswap_last_pass_unixtime`, `shaswap_passes_total` | liveness — alert if it stops advancing (or use `/ready`) |
+| `shaswap_settlements_total`, `shaswap_orders_settled_total`, `shaswap_lp_fulfillments_total` | throughput |
+| `shaswap_pnl_lovelace`, `shaswap_fees_lovelace_total`, `shaswap_tips_taken_lovelace_total` | economics — alert on a sustained P&L drawdown |
+| `shaswap_wallet_balance_lovelace` | funding — alert before it nears `collateral + one fee` |
+| `shaswap_submit_failures_total`, `shaswap_pass_failures_total`, `shaswap_backend_errors_total` | error rates — alert on a rising slope |
+| `shaswap_reorgs_total` | rollbacks (rare; a spike is worth a look) |
+| `shaswap_pending_count`, `shaswap_pools_active`, `shaswap_orders_resting` | book / in-flight depth |
+
+Without a scraper, the **structured logs carry the same signals** (most failure lines now
+carry a `category=` field — `transient` / `config` / `data` / `critical`):
 
 | Condition | Signal in logs | Alert |
 |---|---|---|
-| Settlement failures | repeated `EvaluateTx` rejects / submit errors | page if sustained > a few passes |
-| Funding depleted | `balance_ada` trending to ~0; "insufficient funding" | top up the solver address |
-| Collateral lost | collateral-provisioning re-runs / collateral-missing errors | investigate; ensure ≥2 UTXOs |
-| Backend down | Kupo/Ogmios connection errors; passes aborting | restore the node/index |
+| Config / critical error | a failure line tagged `category=critical` or `category=config` | page (deploy / contract / endpoint problem) |
+| Script-validation failure | `assemble [...]` / `submit [...]` containing `SCRIPT VALIDATION failure` | **page** — a gated tx must never fail validation (contract/constant drift) |
+| UTXO race / ex-unit limit | `[utxo race ...]` / `[ex-unit/size limit ...]` on a skipped pool | normal under competition / lower `SHASWAP_MAX_ORDERS_PER_TX` |
+| Backend down | `checkpoint poll failing repeatedly — backend may be down` (ERROR after 5) | restore the node/index |
+| Backend recovered | `backend recovered; checkpoint poll OK again` | clears the above |
+| Transient blip | `category=transient`; `transient chain error; retrying` | ignore unless sustained |
+| Indexer lag | `Kupo index trails the node tip` | check Kupo is keeping up |
+| Funding low | `solver wallet balance is low` (or `balance_ada` / `delta_ada` trend) | top up the solver address |
+| Thin margin | `thin batch margin: tips barely cover the fee` | review tip economics / `max_orders_per_tx` |
+| Reorg | `chain rolled back (reorg); clearing in-flight pending state` | usually self-heals; investigate if frequent |
 | Stalled book | passes run but settle 0 while orders rest | check competing solvers / cadence |
-| Negative P&L drift | `delta_ada` persistently negative | review tip economics / `max_orders_per_tx` |
+| Wrong network / anchor | startup `era-anchor sanity: ... from the node tip` | stop; fix `network_id`/`network_magic`/refs |
 
 For **liveness defense-in-depth**, run **≥2 independent batchers** on different
 hosts/regions so one outage doesn't stall the book. They compete safely: every tx is
