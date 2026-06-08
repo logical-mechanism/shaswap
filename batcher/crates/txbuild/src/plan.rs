@@ -32,6 +32,14 @@ pub enum PlanError {
     Address(AddressError),
     Value(ValueError),
     BadTxIdLength(usize),
+    /// `orders` and `settlement.owner_outputs` disagree in length — the caller passed
+    /// orders that don't line up 1:1 with the settled owner payouts, so the injective
+    /// order→output binding the validator checks would be wrong. A caller bug, caught
+    /// here rather than emitted as a malformed tx.
+    OrderOutputMismatch {
+        orders: usize,
+        owner_outputs: usize,
+    },
 }
 
 impl From<AddressError> for PlanError {
@@ -106,6 +114,24 @@ pub fn plan(
     s_cred: &Credential,
 ) -> Result<SettlementPlan, PlanError> {
     let net = address::network(network_id);
+
+    // The settlement's owner payouts are positionally bound to `orders` (owner_outputs[i]
+    // is the payout for orders[i]) — the injective binding the validator enforces. A
+    // length mismatch means the caller desynced the two, so refuse to plan rather than
+    // emit a tx with a wrong order→output mapping.
+    if orders.len() != settlement.owner_outputs.len() {
+        return Err(PlanError::OrderOutputMismatch {
+            orders: orders.len(),
+            owner_outputs: settlement.owner_outputs.len(),
+        });
+    }
+    // The settlement anchor `S` is always the settlement validator's *script* hash
+    // (withdraw-0). A verification-key credential here would silently build the wrong
+    // reward account; in debug builds, catch that caller bug loudly.
+    debug_assert!(
+        matches!(s_cred, Credential::Script(_)),
+        "settlement anchor S must be a script credential"
+    );
 
     // outputs: owners [0,N), pool, remainders — exactly the anchor's layout.
     let mut outputs = Vec::new();
@@ -339,6 +365,29 @@ mod tests {
             .map(|r| r.index)
             .collect();
         assert_eq!(reward, vec![0]);
+    }
+
+    #[test]
+    fn plan_rejects_order_output_length_mismatch() {
+        // A settlement built for 2 orders, but only 1 order passed to plan(): the
+        // positional order→output binding would be wrong, so plan() refuses.
+        let orders = [order(0), order(1)];
+        let st = build_settlement(
+            &orders,
+            &[1_000_000, 1_000_000],
+            &pool(),
+            Price { num: 1, den: 2 },
+            None,
+        )
+        .unwrap();
+        let only_one = [order(0)];
+        assert_eq!(
+            plan(&st, &only_one, &pool(), 0, &s_cred()),
+            Err(PlanError::OrderOutputMismatch {
+                orders: 1,
+                owner_outputs: 2
+            })
+        );
     }
 
     #[test]
