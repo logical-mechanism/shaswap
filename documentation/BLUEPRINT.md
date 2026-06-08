@@ -1,12 +1,13 @@
 # ShaSwap — Protocol Blueprint
 
-> **Status:** Design blueprint / north star. No code yet. This document is the
-> authoritative description of *what we are building and why*. Everything in the
-> monorepo (contracts, batcher, website, docs) must trace back to this file.
+> **Status:** Authoritative design / north star — implemented across the monorepo and
+> deployed to preprod (mainnet pending). This document is the authoritative description
+> of *what we are building and why*; everything in the monorepo (contracts, batcher,
+> website, docs) must trace back to this file.
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 25 — 2026-06-05. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 26 — 2026-06-07. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -263,8 +264,8 @@
 > property). No Critical/High/theft/unbacked-mint/lock path found in the re-review.**
 >
 > **Rev 25: close the clearing-price corridor — two-sided pool price pin (§5.2.5/§5.2.7/
-> §5.4).** A post-Rev-24 economic-soundness review (`reviews/economic-soundness-2026-06-05.md`,
-> memory `econ-corridor`) confirmed the anchor verifies **validity, not optimality**: the
+> §5.4).** A post-Rev-24 economic-soundness review confirmed the anchor verifies
+> **validity, not optimality**: the
 > per-order floor (full `sell_amount` vs `limit`) + the pool's **one-sided** `k ≥ k_in`
 > leave the uniform price free in a **`[floor, fair-curve]` corridor**; underpaying a trader
 > *raises* `k`, so the `k`-check caps only the top. A solver-LP banks the gap as
@@ -284,6 +285,17 @@
 > in parallel). The limit becomes an **abort condition**, not the execution price. Spec:
 > `documentation/spec/clearing-price-pin.md`. **Hash impact (pre-mainnet):** `pool` +
 > `lp_intent` change; `settlement`/`order`/`pool_mint` byte-identical. Ships as a relaunch.**
+>
+> **Rev 26: Scope B decision — accept the Scope A residue for v1 (no anchor change, no hash
+> impact).** The deferred full-equilibrium check that would close the *perfectly-netted,
+> zero-residual trader↔trader* split (§5.2.7/§12.2) is **signed off as a documented v1
+> residue — not shipped.** Rationale: it is a bounded trader↔trader transfer (each side
+> capped by its own limit), the pool is untouched so `k` does not move and **no solver-LP
+> harvest incentive exists**, and closing it would need a curve-aware per-order check inside
+> the immutable anchor `S` (re-hashing/re-auditing the trust root and lowering the batch
+> ceiling `N`) — disproportionate to the residue. App-side mitigation (tight default limits,
+> never a true market order) stands. `S`/`order`/`pool`/`pool_mint`/`lp_intent` all
+> byte-identical. Resolves the mainnet-checklist "Decide Scope B" gate.
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -377,15 +389,14 @@ Tie-breakers. When two designs are otherwise comparable, the earlier principle w
 
 ## 4. Intellectual foundations
 
-Synthesis of four recent results; the source PDFs sit alongside this file in this
-folder.
+Synthesis of four recent results (cited below with arXiv links).
 
 | Source | What we take |
 |---|---|
-| **Augmenting Batch Exchanges with CFMMs** — Ramseyer, Goyal, Goel, Mazières, EC '24 ([arXiv:2210.04929](https://arxiv.org/abs/2210.04929), `batch-cfmm.pdf`) | Clear CFMM liquidity **and** limit orders together at a single **uniform price**. The paper's four batch-exchange axioms — **Asset Conservation, Uniform Prices, Best-Response for limit orders, Non-decreasing trading function** — map directly onto our §5.2 rules 1/2/4/3; ShaSwap is essentially those axioms turned into an on-chain validator. Plain constant-product is a member of the paper's **CLCP class** (Def 4.5), for which **Trading Rule S** (Def 4.3) yields a **rational, price-coherent** equilibrium (Thm 1.8) — cheap to *verify* on-chain. **JPD** (Prop 1.7) → no intra-batch front-running. *(Terminology verified against the PDF, p.5.)* |
-| **SAMM: Sharded Automated Market Maker** — Chen, Vaisman, Eyal, '25 ([arXiv:2406.05568](https://arxiv.org/abs/2406.05568), `samm.pdf`) | **Sharding** into `n` independent pool UTXOs (no dispatch contract, no global state — natural for eUTXO) as a scaling lever; rational fee function in integer math. |
-| **Automated Market Making and Loss-Versus-Rebalancing** — Milionis, Moallemi, Roughgarden, Zhang '24 ([arXiv:2208.06046](https://arxiv.org/abs/2208.06046), `lvr.pdf`) | **LVR** is the LP adverse-selection cost; proves curing it needs *external* price data (§5.6). |
-| **Partially Active Automated Market Makers** — Ko, Feb '26 ([arXiv:2602.09887](https://arxiv.org/abs/2602.09887), `partially-active-amm.pdf`) | **PA-AMM `λ`**: expose only a λ-fraction of reserves per batch — an oracle-free LVR lever. |
+| **Augmenting Batch Exchanges with CFMMs** — Ramseyer, Goyal, Goel, Mazières, EC '24 ([arXiv:2210.04929](https://arxiv.org/abs/2210.04929)) | Clear CFMM liquidity **and** limit orders together at a single **uniform price**. The paper's four batch-exchange axioms — **Asset Conservation, Uniform Prices, Best-Response for limit orders, Non-decreasing trading function** — map directly onto our §5.2 rules 1/2/4/3; ShaSwap is essentially those axioms turned into an on-chain validator. Plain constant-product is a member of the paper's **CLCP class** (Def 4.5), for which **Trading Rule S** (Def 4.3) yields a **rational, price-coherent** equilibrium (Thm 1.8) — cheap to *verify* on-chain. **JPD** (Prop 1.7) → no intra-batch front-running. *(Terminology verified against the PDF, p.5.)* |
+| **SAMM: Sharded Automated Market Maker** — Chen, Vaisman, Eyal, '25 ([arXiv:2406.05568](https://arxiv.org/abs/2406.05568)) | **Sharding** into `n` independent pool UTXOs (no dispatch contract, no global state — natural for eUTXO) as a scaling lever; rational fee function in integer math. |
+| **Automated Market Making and Loss-Versus-Rebalancing** — Milionis, Moallemi, Roughgarden, Zhang '24 ([arXiv:2208.06046](https://arxiv.org/abs/2208.06046)) | **LVR** is the LP adverse-selection cost; proves curing it needs *external* price data (§5.6). |
+| **Partially Active Automated Market Makers** — Ko, Feb '26 ([arXiv:2602.09887](https://arxiv.org/abs/2602.09887)) | **PA-AMM `λ`**: expose only a λ-fraction of reserves per batch — an oracle-free LVR lever. |
 
 **Key realization:** *batch clearing itself solves UTXO contention.* A settlement
 clears many orders against a pool in **one** pool-spend. **Batching is the primary
@@ -595,13 +606,14 @@ witness — the validator checks algebra, never solves (Principle 4).
    that carries essentially all the extraction value, at ~zero added ex-units (it
    reuses the curve the pool already evaluates; the anchor stays curve-agnostic). It
    lives **only in the pool hash** — the immutable settlement anchor `S` is unchanged.
-   **Deferred (Scope B):** the *full* equilibrium that also closes the
-   **perfectly-netted (zero-residual) trader↔trader** split — that needs a curve-aware
-   per-order check in/beside the immutable anchor (changes `S`, re-audit, lowers N) and
-   is gated on its own §13.1 ex-unit spike (run in parallel, decide before mainnet).
-   The residue is a bounded trader↔trader transfer with **no solver-LP harvest
-   incentive** (the pool is untouched, so `k` does not move). This resolves the v1 fork
-   in §12.2 for the part that matters economically.
+   **Decided (Rev 26) — Scope B not shipped; the residue is accepted (Scope A):** the
+   *full* equilibrium that would also close the **perfectly-netted (zero-residual)
+   trader↔trader** split needs a curve-aware per-order check in/beside the immutable anchor
+   (changes `S`, re-audit, lowers N) — disproportionate to a bounded trader↔trader transfer
+   with **no solver-LP harvest incentive** (the pool is untouched, so `k` does not move).
+   v1 signs it off as a documented residue; the app-side mitigation (tight default limits,
+   never a true market order) stands. This resolves the v1 fork in §12.2 for the part that
+   matters economically, and the rest by acceptance.
 
 ### 5.3 Solver model — first-valid-wins, fully permissionless
 
@@ -843,7 +855,8 @@ absent/stale → fall back to trustless behavior; never brick; LPs always withdr
   directional surplus reaches *traders*, not LPs — the floor→fair corridor is closed
   in the pool hash (anchor unchanged). Only the **perfectly-netted (zero-residual)
   trader↔trader** split remains solver-allocated (bounded, no solver-LP incentive); the
-  full equilibrium that closes it is deferred (Scope B, §5.2.7, §13.1 spike).
+  full equilibrium that would close it (Scope B) is **not shipped — accepted as a
+  documented residue for v1** (Rev 26, §5.2.7).
 - **Partial fills — proportional tip, one-level remainder (RESOLVED, Rev 8; impl
   `clearing.ak`).** The solver declares each order's fill `f`; on a partial fill it
   collects `tip·f/sell_amount` **now** (pay-per-fill) and the remainder keeps the
@@ -925,8 +938,8 @@ deposit/close), **static trading fee (residual-only, §5.2.3/§7)**, non-custodi
 withdraw-0 wiring. **Not yet implemented:** **PA-AMM `λ`** (deferred, `λ=1` no-op).
 **Best-response (§5.2.4)** is enforced as the per-order floor **plus the pool's
 two-sided curve price pin** (Rev 25, §5.2.7) — fair curve-execution for any non-zero
-residual; only the perfectly-netted zero-residual trader↔trader split is deferred
-(Scope B).
+residual; only the perfectly-netted zero-residual trader↔trader split (Scope B) is
+**accepted as a documented residue, not shipped** (Rev 26).
 
 **Explicitly NOT in v1 / never in core:** any oracle dependency; order privacy
 (intents and limit prices are public on-chain); cross-shard price unification;
@@ -944,10 +957,10 @@ privileged operator, any mortal external dependency in the core.
 ## 12. Open design decisions
 
 1. **Solver tip mechanics.** User-set + protocol minimum vs. fixed; datum encoding.
-2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7, Rev 25): the pool's
-   two-sided curve pin returns directional surplus to traders (fair-curve execution);
-   only the perfectly-netted zero-residual trader↔trader split (Scope B) is deferred**
-   pending its own ex-unit spike.
+2. ~~Surplus-distribution rule~~ — **resolved for v1 (§5.2.7): the pool's two-sided curve
+   pin returns directional surplus to traders (fair-curve execution, Rev 25); the
+   perfectly-netted zero-residual trader↔trader split (Scope B) is accepted as a documented
+   residue, not shipped (Rev 26).**
 3. **Order rollover** mechanics (the size *bound* is resolved: ~40/settlement, §5.3).
 4. ~~Partial-fill semantics~~ — **RESOLVED (Rev 8): proportional tip, one-level
    remainder, pre-funded 2× min-ADA, limit-price preserved** (§7; impl `clearing.ak`,
@@ -1036,22 +1049,22 @@ strictly rejected (no `True` branch).
 shaswap/
 ├── README.md
 ├── CLAUDE.md               ← repo guide for contributors & Claude
-├── MEMORY.md               ← project state / decision log
-├── documentation/          ← this blueprint (source of truth) + papers + specs
-│   ├── BLUEPRINT.md        ← the north star (this file)
-│   ├── samm.pdf  batch-cfmm.pdf  lvr.pdf  partially-active-amm.pdf
-│   └── spec/               ← (planned) datum/redeemer formats; formal §5.2 rules
-├── contracts/              ← Aiken validators & policies (aiken.toml, lib/, validators/)
-│   ├── order/              ← (planned) order validator (trust anchor) + reclaim
-│   ├── settlement/         ← (planned) withdraw-0 once-per-tx validator (§5.2; checks every input)
-│   └── pool/               ← (planned) curve-agnostic core pool + variants; NFT & LP policies
-├── batcher/                ← standalone Rust + Pallas solver binary (permissionless role)
-│   └── (planned) indexer · solver · submit
+├── SECURITY.md             ← vulnerability disclosure policy
+├── documentation/          ← this blueprint (source of truth) + specs
+│   ├── BLUEPRINT.md        ← the north star (this file); §4 cites the source papers
+│   ├── spec/               ← datum/redeemer encodings + formal clearing/price/fill rules
+│   └── launch/             ← mainnet checklist + batcher-operations runbook
+├── contracts/              ← Aiken (Plutus v3) validators & policies
+│   ├── validators/         ← settlement, order, pool, pool_mint, lp_intent
+│   ├── lib/shaswap/        ← clearing, spend, mint, types, utils, constants
+│   └── audit/              ← contract audit reports
+├── batcher/                ← standalone Rust + Pallas reference solver (permissionless role)
+│   └── crates/             ← solver-core · txbuild · txbuilder · chain · orchestrator
 └── app/                    ← TS + React + MeshJS website (hosts the data-access abstraction)
 ```
 
 `batcher/` is a **reference** solver so the role is genuinely permissionless.
-`documentation/spec/` holds precise encodings once we pass blueprint stage.
+`documentation/spec/` holds the precise encodings and formal settlement rules.
 
 ---
 

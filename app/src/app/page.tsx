@@ -27,11 +27,18 @@ export default function SwapPage() {
             <p>
               You don’t swap on the spot. You drop off an order, and Pip does the
               rest. Every little while, all the orders for a pair settle
-              together at one shared, fair price, so nobody can jump the line ahead of you.
+              together at one shared price — so everyone in a batch trades at the
+              same price and no one can sneak in front of you to move it.
             </p>
             <p>
               You always get at least the floor you set. Changed your mind? Grab your
               order back anytime. Your tokens never leave your control.
+            </p>
+            <p>
+              One honest note: your order rests on a public chain until it settles
+              or you grab it back — so its price is visible, and it can fill whenever
+              the market reaches your floor. A tight floor and a shorter expiry keep
+              it snug.
             </p>
             <p className="text-muted">
               Prices come from live pool reserves, so a quote is just a friendly

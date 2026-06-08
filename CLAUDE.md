@@ -105,11 +105,11 @@ These are distilled from BLUEPRINT §3 (principles) and §5.2 (settlement rules)
   (BLUEPRINT §13.1): measure real per-order verification cost in a withdraw-0
   settlement validator. That number bounds the whole design.
 - When you make or change a decision, update `BLUEPRINT.md` (and bump its Revision)
-  and, if it changes project state/next-steps, `MEMORY.md`.
+  and, if it changes project state/next-steps, your local `MEMORY.md`.
 
 ## Local vs shared
 
-- `CLAUDE.md`, `MEMORY.md`, `BLUEPRINT.md` — committed, shared.
-- `CLAUDE.local.md` — your personal, machine-local notes (gitignored).
+- `CLAUDE.md`, `BLUEPRINT.md` — committed, shared.
+- `CLAUDE.local.md`, `MEMORY.md` — personal, machine-local notes (gitignored).
 - `.claude/settings.local.json` — local settings/permissions (gitignored).
 </content>
