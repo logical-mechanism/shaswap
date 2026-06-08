@@ -47,7 +47,15 @@ Common settings (env vars override the deployment JSON):
 | `SHASWAP_INTERVAL_MS` / `_SECS` | run as a daemon at this poll cadence (else one-shot) |
 | `SHASWAP_MAX_ORDERS_PER_TX` | per-tx order cap (default 20) |
 | `SHASWAP_STRATEGY` | drain order: `round-robin` (default) or `profit-greedy` |
+| `SHASWAP_METRICS_ADDR` | serve Prometheus `/metrics` (+ `/health`, `/ready`) on this `host:port` (off by default) |
+| `SHASWAP_HEALTH_ADDR` | serve `/health`, `/ready` (+ `/metrics`) on this `host:port` (off by default) |
 | `RUST_LOG` | log verbosity (default `info`) |
+
+When `SHASWAP_METRICS_ADDR` / `SHASWAP_HEALTH_ADDR` are set, a tiny std-only HTTP server
+exposes `GET /metrics` (Prometheus text), `GET /health` (liveness), and `GET /ready`
+(`503` until a settle pass has run recently — catches a *hung*, not just crashed,
+daemon). Both vars may point at the same address. See the operations runbook for the
+metric list and alert rules.
 
 ## How it behaves
 
