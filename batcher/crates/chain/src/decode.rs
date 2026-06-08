@@ -320,6 +320,46 @@ mod tests {
     }
 
     #[test]
+    fn decoder_never_panics_on_malformed_input() {
+        // The order/pool/lp_intent addresses are PUBLIC — anyone can park junk there, and
+        // `try_order`/`try_pool`/`try_lp_intent` rely on a malformed datum becoming an
+        // Err (→ skip the UTXO), NEVER a panic that would crash the daemon. Exhaustive
+        // adversarial battery: empties, garbage, every truncation, and every single-byte
+        // corruption of a valid datum. NB: the decoder is structural — it rejects bad CBOR
+        // SHAPE, not degenerate field *values* (e.g. sell_amount<1); those are the on-chain
+        // validator's job, so we don't assert the decoder rejects them.
+        let valid = plutus::to_cbor(&plutus::order_datum(&order()));
+
+        // Obvious structural junk MUST be an explicit error (not just non-panicking).
+        for bad in [&b""[..], &[0x00][..], &[0xff][..], b"not cbor at all"] {
+            assert!(
+                order_datum_cbor(bad).is_err(),
+                "garbage must be DecodeError"
+            );
+            assert!(pool_datum_cbor(bad).is_err());
+            assert!(lp_intent_datum_cbor(bad).is_err());
+        }
+
+        // Build the corruption battery: every prefix (truncation) + every byte flipped.
+        let mut battery: Vec<Vec<u8>> = (0..=valid.len()).map(|n| valid[..n].to_vec()).collect();
+        for i in 0..valid.len() {
+            let mut m = valid.clone();
+            m[i] ^= 0xff;
+            battery.push(m);
+        }
+        // The invariant under test: each decoder RETURNS (Ok or Err) for every input — a
+        // panic here fails the test, which is exactly the regression we guard against.
+        for bytes in &battery {
+            let _ = order_datum_cbor(bytes);
+            let _ = pool_datum_cbor(bytes);
+            let _ = lp_intent_datum_cbor(bytes);
+        }
+        // sanity: the unmodified datum still decodes (the battery didn't trivially pass
+        // because everything errored).
+        assert!(order_datum_cbor(&valid).is_ok());
+    }
+
+    #[test]
     fn lp_intent_datum_round_trips() {
         for action in [LpIntentAction::LpDeposit, LpIntentAction::LpWithdraw] {
             let d = lp_intent(action);
