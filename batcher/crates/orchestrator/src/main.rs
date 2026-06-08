@@ -50,6 +50,8 @@
 //!
 //! Config path: `$SHASWAP_DEPLOYMENT` or argv[1].
 
+mod metrics;
+
 use chain::assemble::{self, AssembleInputs};
 use chain::backend::{ChainBackend, Snapshot, Utxo};
 use chain::config::{Config, ValidatedConfig};
@@ -343,6 +345,33 @@ fn run() -> Result<(), Err> {
         );
     }
 
+    // Optional metrics + health/readiness endpoints (BR-5/BR-6): std-only HTTP, OFF
+    // unless an addr is set. The settle loop is instrumented unconditionally (cheap
+    // atomics); only the servers are gated here. A bind failure is non-fatal — the
+    // batcher runs without the endpoint. Distinct addrs each get a server; the same
+    // addr for both vars binds once.
+    metrics::registry()
+        .start_unixtime
+        .store(metrics::now_unix(), Ordering::Relaxed);
+    let mut http_addrs: Vec<String> = ["SHASWAP_METRICS_ADDR", "SHASWAP_HEALTH_ADDR"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty())
+        .collect();
+    http_addrs.sort();
+    http_addrs.dedup();
+    for addr in &http_addrs {
+        match metrics::serve(addr) {
+            Ok(bound) => {
+                info!(addr = %bound, "metrics/health endpoint serving (/metrics, /health, /ready)")
+            }
+            Err(e) => {
+                warn!(%addr, "failed to start metrics/health endpoint (continuing without it): {e}")
+            }
+        }
+    }
+
     // The reference-script sizes never change for a fixed deployment — fetch once.
     let ref_bytes = backend
         .ref_script_total_bytes()
@@ -511,6 +540,9 @@ fn run() -> Result<(), Err> {
                                 "chain rolled back (reorg); clearing in-flight pending state"
                             );
                             state.pending.clear();
+                            metrics::registry()
+                                .reorgs_total
+                                .fetch_add(1, Ordering::Relaxed);
                         }
                     }
                     if let Err(e) = settle_once(
@@ -526,12 +558,18 @@ fn run() -> Result<(), Err> {
                         &mut state,
                     ) {
                         warn!("pass failed (will retry next block): {e}");
+                        metrics::registry()
+                            .pass_failures_total
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                     last_block = Some(cp);
                 }
             }
             Err(e) => {
                 consec_errors += 1;
+                metrics::registry()
+                    .backend_errors_total
+                    .fetch_add(1, Ordering::Relaxed);
                 // A single hiccup is a warn; sustained failure (the backend is likely
                 // down) escalates to error so it pages rather than scrolling past.
                 if consec_errors >= 5 {
@@ -710,6 +748,28 @@ fn settle_once(
             threshold = LOW_BALANCE_WARN_LOVELACE,
             "solver wallet balance is low — top up the solver address or settlements will stall"
         );
+    }
+    // Refresh the metrics gauges + pass heartbeat (cheap atomics; instrumented even
+    // when no HTTP server runs). `last_pass_unixtime` is what `/ready` watches.
+    {
+        let r = metrics::registry();
+        r.passes_total.fetch_add(1, Ordering::Relaxed);
+        r.wallet_balance_lovelace.store(
+            i64::try_from(balance).unwrap_or(i64::MAX),
+            Ordering::Relaxed,
+        );
+        r.pnl_lovelace.store(
+            i64::try_from(balance - start).unwrap_or(i64::MAX),
+            Ordering::Relaxed,
+        );
+        r.pending_count
+            .store(state.pending.len() as u64, Ordering::Relaxed);
+        r.pools_active.store(pools.len() as u64, Ordering::Relaxed);
+        r.orders_resting
+            .store(orders.len() as u64, Ordering::Relaxed);
+        r.last_pass_slot.store(tip.slot, Ordering::Relaxed);
+        r.last_pass_unixtime
+            .store(metrics::now_unix(), Ordering::Relaxed);
     }
 
     // Group settleable orders by their target pool NFT.
@@ -1114,12 +1174,25 @@ fn settle_pool(
                 // can't re-select and double-spend it (the grace window frees it if the
                 // submit truly failed). Then classify the error for the operator.
                 pending.insert(key(&chain.funding.0), submit_slot);
+                metrics::registry()
+                    .submit_failures_total
+                    .fetch_add(1, Ordering::Relaxed);
                 let s = format!("{e:?}");
                 PassError::AbortPass(format!("submit [{}]: {s}", classify_tx_error(&s)).into())
             })?;
             for o in &solved.orders {
                 pending.insert(key(&o.output_reference), submit_slot);
             }
+            let r = metrics::registry();
+            r.settlements_total.fetch_add(1, Ordering::Relaxed);
+            r.orders_settled_total
+                .fetch_add(solved.orders.len() as u64, Ordering::Relaxed);
+            r.fees_lovelace_total
+                .fetch_add(built.fee, Ordering::Relaxed);
+            r.tips_taken_lovelace_total.fetch_add(
+                u64::try_from(solved.settlement.tip_taken_total.max(0)).unwrap_or(0),
+                Ordering::Relaxed,
+            );
             info!(nft, tx = hex::encode(&txid), "SUBMITTED");
         } else {
             info!(
@@ -1276,10 +1349,16 @@ fn fulfill_pool(
                 // funding input pending so the next pass can't double-spend it (the grace
                 // window frees it if the submit truly failed).
                 pending.insert(key(&chain.funding.0), submit_slot);
+                metrics::registry()
+                    .submit_failures_total
+                    .fetch_add(1, Ordering::Relaxed);
                 let s = format!("{e:?}");
                 PassError::AbortPass(format!("lp submit [{}]: {s}", classify_tx_error(&s)).into())
             })?;
             pending.insert(key(&intent.output_reference), submit_slot);
+            metrics::registry()
+                .lp_fulfillments_total
+                .fetch_add(1, Ordering::Relaxed);
             info!(nft, tx = hex::encode(&txid), "LP FULFILLED");
         } else {
             info!(
