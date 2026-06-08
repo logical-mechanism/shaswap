@@ -953,7 +953,7 @@ function AddIntentForm({
   onPosted: () => void;
 }) {
   const [amountA, setAmountA] = useState("");
-  const [tipAda, setTipAda] = useState("1");
+  const [tipAda, setTipAda] = useState("0.5");
   const [deadlineHours, setDeadlineHours] = useState(0);
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
@@ -1153,7 +1153,7 @@ function RemoveIntentForm({
   onPosted: () => void;
 }) {
   const [lpInput, setLpInput] = useState("");
-  const [tipAda, setTipAda] = useState("1");
+  const [tipAda, setTipAda] = useState("0.5");
   const [deadlineHours, setDeadlineHours] = useState(0);
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
