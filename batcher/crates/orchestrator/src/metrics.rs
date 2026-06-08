@@ -260,11 +260,24 @@ fn handle_conn(mut stream: TcpStream) {
     // Bound a slow/idle client so it can't wedge the accept loop.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-    let mut buf = [0u8; 1024];
-    let n = stream.read(&mut buf).unwrap_or(0);
-    let req = String::from_utf8_lossy(&buf[..n]);
-    // Request line: "GET /path HTTP/1.1" — the path is the second token.
-    let path = req.split_whitespace().nth(1).unwrap_or("/");
+    // Read until we have the full request LINE (terminated by \r\n or \n) — a single
+    // read() can return a fragment that lacks the path token, so loop rather than assume
+    // the whole request arrived in one packet. Capped so a client can't stream forever.
+    let mut buf = Vec::with_capacity(256);
+    let mut chunk = [0u8; 256];
+    while buf.len() < 4096 && !buf.contains(&b'\n') {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+    }
+    let req = String::from_utf8_lossy(&buf);
+    // Request line: "GET /path HTTP/1.1" — take the path from the FIRST line's 2nd token.
+    let path = req
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .unwrap_or("/");
     let reg = registry();
     let (status, ctype, body) = match path {
         "/metrics" => (

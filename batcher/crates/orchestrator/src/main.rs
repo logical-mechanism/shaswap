@@ -204,21 +204,20 @@ fn classify_tx_error(msg: &str) -> &'static str {
         || m.contains("exceed")
     {
         "ex-unit/size limit — batch too big; lower SHASWAP_MAX_ORDERS_PER_TX"
-    } else if m.contains("already")
-        || m.contains("spent")
+    } else if m.contains("spent")
         || m.contains("unknown output")
         || m.contains("unknownoutput")
         || m.contains("unknown input")
         || m.contains("unknowninput")
         || m.contains("inputsnotpresent")
-        || m.contains("not present")
-        || m.contains("does not exist")
-        || m.contains("missing")
-        || m.contains("not found")
     {
-        // NB: input-not-found phrases are matched specifically (not a bare "input"),
-        // so a script-validation message that merely references "input N" still falls
-        // through to the alarming branch below rather than being downgraded to a race.
+        // Only input/output/spend-ANCHORED phrases match here — deliberately NOT bare
+        // generic words ("missing", "not found", "already", "does not exist", "not
+        // present"), which also appear in script-validation traces (e.g. "validator
+        // rejected: missing required field"). Keeping the race patterns specific means
+        // such a message falls through to the alarming branch below instead of being
+        // downgraded to a benign race. A race phrased only with a generic word is left
+        // "unclassified" (the raw error is still logged) — the safe direction.
         "utxo race — another tx won the input (normal under competition)"
     } else if m.contains("validation")
         || m.contains("validator")
@@ -230,6 +229,37 @@ fn classify_tx_error(msg: &str) -> &'static str {
     } else {
         "unclassified"
     }
+}
+
+/// Format a tx build/submit error into the operator-facing `<label> [<class>]: <err>`
+/// detail string used in every skip/abort message (so the format + classification live
+/// in one place).
+fn tx_error_detail(label: &str, e: &impl std::fmt::Debug) -> String {
+    let s = format!("{e:?}");
+    format!("{label} [{}]: {s}", classify_tx_error(&s))
+}
+
+/// Record an ambiguous submit failure: the tx MAY have reached the mempool, so hold the
+/// link's funding input `pending` (the next pass can't re-select and double-spend it; the
+/// grace window frees it if the submit truly failed) and bump the failure counter. The
+/// caller separately holds the tx's order/intent inputs (see the submit blocks).
+fn record_submit_failure(pending: &mut HashMap<Key, u64>, funding: &OutputReference, slot: u64) {
+    pending.insert(key(funding), slot);
+    metrics::registry()
+        .submit_failures_total
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Saturating `i128 -> i64` for a signed gauge (correct in BOTH directions, unlike
+/// `try_from(..).unwrap_or(i64::MAX)` which clamps a large *negative* to `i64::MAX`).
+fn sat_i64(v: i128) -> i64 {
+    v.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
+/// Saturating `i128 -> u64` for a counter increment (negatives floor to 0, large
+/// positives saturate to `u64::MAX` rather than truncating to 0).
+fn sat_u64(v: i128) -> u64 {
+    v.clamp(0, u64::MAX as i128) as u64
 }
 
 /// Warn if the signing-key file is group/world-accessible (should be `0600`).
@@ -754,14 +784,10 @@ fn settle_once(
     {
         let r = metrics::registry();
         r.passes_total.fetch_add(1, Ordering::Relaxed);
-        r.wallet_balance_lovelace.store(
-            i64::try_from(balance).unwrap_or(i64::MAX),
-            Ordering::Relaxed,
-        );
-        r.pnl_lovelace.store(
-            i64::try_from(balance - start).unwrap_or(i64::MAX),
-            Ordering::Relaxed,
-        );
+        r.wallet_balance_lovelace
+            .store(sat_i64(balance), Ordering::Relaxed);
+        r.pnl_lovelace
+            .store(sat_i64(balance - start), Ordering::Relaxed);
         r.pending_count
             .store(state.pending.len() as u64, Ordering::Relaxed);
         r.pools_active.store(pools.len() as u64, Ordering::Relaxed);
@@ -1126,10 +1152,8 @@ fn settle_pool(
         // failure carries an `EvaluateTx` error: classify it so a normal UTXO race is
         // distinguishable from an ex-unit breach or an alarming script-validation
         // failure (which would indicate contract drift).
-        let built = assemble::build_signed(&inp, backend, skey, &chain.resolved).map_err(|e| {
-            let s = format!("{e:?}");
-            PassError::SkipPool(format!("assemble [{}]: {s}", classify_tx_error(&s)).into())
-        })?;
+        let built = assemble::build_signed(&inp, backend, skey, &chain.resolved)
+            .map_err(|e| PassError::SkipPool(tx_error_detail("assemble", &e).into()))?;
 
         // Economically rational: don't burn ADA on a batch whose tips don't cover
         // its fee. Stop draining this pool here (the remaining orders defer to a
@@ -1166,23 +1190,20 @@ fn settle_pool(
         }
 
         if submit {
-            // A submit failure is pass-fatal: the tx may already be in the mempool
-            // (spending this link's funding), so no later link may reuse it.
-            let txid = backend.submit(&built.signed.tx_bytes.0).map_err(|e| {
-                // The tx MAY have reached the mempool despite the error, so this link's
-                // funding input could already be spent — mark it pending so the next pass
-                // can't re-select and double-spend it (the grace window frees it if the
-                // submit truly failed). Then classify the error for the operator.
-                pending.insert(key(&chain.funding.0), submit_slot);
-                metrics::registry()
-                    .submit_failures_total
-                    .fetch_add(1, Ordering::Relaxed);
-                let s = format!("{e:?}");
-                PassError::AbortPass(format!("submit [{}]: {s}", classify_tx_error(&s)).into())
-            })?;
+            // Commit this tx's order inputs to `pending` BEFORE submitting: a submit
+            // failure is ambiguous (the tx may already be in the mempool), so its orders
+            // must be held just like its funding — otherwise the next pass re-discovers
+            // them and builds a conflicting settlement. Symmetric with submit success;
+            // the grace window frees them if the tx never confirms.
             for o in &solved.orders {
                 pending.insert(key(&o.output_reference), submit_slot);
             }
+            // A submit failure is pass-fatal: the tx may already be in the mempool
+            // (spending this link's funding), so no later link may reuse it.
+            let txid = backend.submit(&built.signed.tx_bytes.0).map_err(|e| {
+                record_submit_failure(pending, &chain.funding.0, submit_slot);
+                PassError::AbortPass(tx_error_detail("submit", &e).into())
+            })?;
             let r = metrics::registry();
             r.settlements_total.fetch_add(1, Ordering::Relaxed);
             r.orders_settled_total
@@ -1190,7 +1211,7 @@ fn settle_pool(
             r.fees_lovelace_total
                 .fetch_add(built.fee, Ordering::Relaxed);
             r.tips_taken_lovelace_total.fetch_add(
-                u64::try_from(solved.settlement.tip_taken_total.max(0)).unwrap_or(0),
+                sat_u64(solved.settlement.tip_taken_total),
                 Ordering::Relaxed,
             );
             info!(nft, tx = hex::encode(&txid), "SUBMITTED");
@@ -1342,20 +1363,16 @@ fn fulfill_pool(
         );
 
         if submit {
+            // Hold the intent input `pending` BEFORE submitting: an ambiguous submit
+            // failure (tx may be in the mempool) must hold it just like its funding, or
+            // the next pass re-discovers the intent and builds a conflicting fulfillment.
+            pending.insert(key(&intent.output_reference), submit_slot);
             // A submit failure is pass-fatal: the tx may already be in the mempool
             // (spending this link's funding), so no later link may reuse it.
             let txid = backend.submit(&built.signed.tx_bytes.0).map_err(|e| {
-                // The tx may have reached the mempool despite the error → mark this link's
-                // funding input pending so the next pass can't double-spend it (the grace
-                // window frees it if the submit truly failed).
-                pending.insert(key(&chain.funding.0), submit_slot);
-                metrics::registry()
-                    .submit_failures_total
-                    .fetch_add(1, Ordering::Relaxed);
-                let s = format!("{e:?}");
-                PassError::AbortPass(format!("lp submit [{}]: {s}", classify_tx_error(&s)).into())
+                record_submit_failure(pending, &chain.funding.0, submit_slot);
+                PassError::AbortPass(tx_error_detail("lp submit", &e).into())
             })?;
-            pending.insert(key(&intent.output_reference), submit_slot);
             metrics::registry()
                 .lp_fulfillments_total
                 .fetch_add(1, Ordering::Relaxed);
@@ -1539,30 +1556,54 @@ mod tests {
     fn classify_tx_error_routes_the_alarming_case() {
         // A UTXO race is normal; an ex-unit breach is actionable; a script-validation
         // failure on a gated tx is the one that must read as UNEXPECTED.
+        // Races: input/output/spend-anchored phrasings reach the race bucket.
         assert!(
             classify_tx_error("Some inputs of the transaction are already spent")
                 .contains("utxo race")
         );
         assert!(classify_tx_error("UnknownOutputReferences in inputs").contains("utxo race"));
+        assert!(classify_tx_error("UnknownInputs in transaction").contains("utxo race"));
+        assert!(classify_tx_error("InputsNotPresent in ledger").contains("utxo race"));
+        // Ex-unit / size.
         assert!(
             classify_tx_error("The transaction exceeds the maximum execution units")
                 .contains("ex-unit")
         );
+        // Script-validation — the alarming bucket. A message that references an input
+        // index OR contains a generic word like "missing" must NOT be downgraded to a
+        // race (the regression this guards: bare "missing"/"not found" used to win).
         assert!(
             classify_tx_error("validation failed: the validator returned false")
                 .contains("SCRIPT VALIDATION")
         );
-        // Input-side races (Ogmios v6 phrasings) must reach the utxo-race bucket too.
-        assert!(classify_tx_error("UnknownInputs in transaction").contains("utxo race"));
-        assert!(classify_tx_error("InputsNotPresent in ledger").contains("utxo race"));
-        assert!(classify_tx_error("Some inputs are not present in the UTxO").contains("utxo race"));
-        // But a script-validation message that merely references an input index must
-        // STILL read as the alarming case (not be downgraded to a benign race).
         assert!(
             classify_tx_error("validation failed for input 2: validator returned false")
                 .contains("SCRIPT VALIDATION")
         );
+        assert!(
+            classify_tx_error("validator rejected: missing required field in datum")
+                .contains("SCRIPT VALIDATION")
+        );
+        // Generic phrasings with no anchored race/validation marker are left
+        // unclassified (the raw error still logs) — the safe direction.
+        assert_eq!(
+            classify_tx_error("the required datum does not exist"),
+            "unclassified"
+        );
         assert_eq!(classify_tx_error("something totally novel"), "unclassified");
+    }
+
+    #[test]
+    fn saturating_casts_clamp_both_directions() {
+        // i128 -> i64 gauge: clamps both ways (the bug was a large negative -> i64::MAX).
+        assert_eq!(sat_i64(5), 5);
+        assert_eq!(sat_i64(-5), -5);
+        assert_eq!(sat_i64(i128::MAX), i64::MAX);
+        assert_eq!(sat_i64(i128::MIN), i64::MIN);
+        // i128 -> u64 counter: negatives floor to 0, big positives saturate (not 0).
+        assert_eq!(sat_u64(7), 7);
+        assert_eq!(sat_u64(-7), 0);
+        assert_eq!(sat_u64(i128::MAX), u64::MAX);
     }
 
     #[test]
