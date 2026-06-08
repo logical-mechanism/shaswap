@@ -180,6 +180,76 @@ fn key(r: &OutputReference) -> Key {
     (r.transaction_id.clone(), r.output_index)
 }
 
+/// Slots the Kupo index may trail the node tip before we flag it: past this, the
+/// solver is likely building against stale state (txs will fail phase-2). ~1 block.
+const KUPO_LAG_WARN_SLOTS: u64 = 30;
+/// Below this wallet balance we warn the operator to top up: enough to fund the
+/// collateral plus a couple of settlement fees. A silent stall otherwise.
+const LOW_BALANCE_WARN_LOVELACE: i128 = COLLATERAL_LOVELACE as i128 + 3_000_000;
+
+/// Classify an Ogmios `EvaluateTx`/submit error into a coarse operator diagnostic.
+/// A UTXO race (another tx won our input) is normal under competition; an
+/// ex-unit/size breach means the batch was too big; a *script-validation* failure
+/// must NEVER happen on an `EvaluateTx`-gated tx and would point at contract/constant
+/// drift — surface that one loudly.
+fn classify_tx_error(msg: &str) -> &'static str {
+    let m = msg.to_ascii_lowercase();
+    if m.contains("exunit")
+        || m.contains("ex units")
+        || m.contains("execution unit")
+        || m.contains("budget")
+        || m.contains("maximum")
+        || m.contains("exceed")
+    {
+        "ex-unit/size limit — batch too big; lower SHASWAP_MAX_ORDERS_PER_TX"
+    } else if m.contains("already")
+        || m.contains("spent")
+        || m.contains("unknown output")
+        || m.contains("unknownoutput")
+        || m.contains("unknown input")
+        || m.contains("unknowninput")
+        || m.contains("inputsnotpresent")
+        || m.contains("not present")
+        || m.contains("does not exist")
+        || m.contains("missing")
+        || m.contains("not found")
+    {
+        // NB: input-not-found phrases are matched specifically (not a bare "input"),
+        // so a script-validation message that merely references "input N" still falls
+        // through to the alarming branch below rather than being downgraded to a race.
+        "utxo race — another tx won the input (normal under competition)"
+    } else if m.contains("validation")
+        || m.contains("validator")
+        || m.contains("script")
+        || m.contains("phase-2")
+        || m.contains("phase 2")
+    {
+        "SCRIPT VALIDATION failure — UNEXPECTED on a gated tx; check for contract/constant drift"
+    } else {
+        "unclassified"
+    }
+}
+
+/// Warn if the signing-key file is group/world-accessible (should be `0600`).
+/// Best-effort and Unix-only; `None` when fine or perms can't be read.
+#[cfg(unix)]
+fn key_perms_warning(path: &str) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        Some(format!(
+            "signing key {path} has permissions {mode:o} (group/world-accessible) — \
+             restrict it: `chmod 600 {path}`"
+        ))
+    } else {
+        None
+    }
+}
+#[cfg(not(unix))]
+fn key_perms_warning(_path: &str) -> Option<String> {
+    None
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -204,7 +274,7 @@ fn run() -> Result<(), Err> {
     let network_id = raw.network_id;
     let mut cfg = raw
         .validate()
-        .map_err(|e| format!("config validation: {e:?}"))?;
+        .map_err(|e| format!("config validation: {e}"))?;
     // `SHASWAP_MAX_ORDERS_PER_TX` overrides the deployment JSON's cap (handy for
     // tuning/testing without editing the file). Ignored if 0 / unparseable.
     if let Some(n) = std::env::var("SHASWAP_MAX_ORDERS_PER_TX")
@@ -230,6 +300,9 @@ fn run() -> Result<(), Err> {
         .preflight_deployment(&raw.settlement_hash)
         .map_err(|e| format!("kupo preflight: {e:?}"))?;
     let skey = assemble::load_signing_key(&signing_key_path).map_err(|e| format!("skey: {e:?}"))?;
+    if let Some(w) = key_perms_warning(&signing_key_path) {
+        warn!("{w}");
+    }
     let solver_addr = solver_address(network_id, &skey)?;
     let submit = std::env::var("SHASWAP_SUBMIT").as_deref() == Ok("1");
     // Daemon poll cadence (ms): `SHASWAP_INTERVAL_MS` preferred; `SHASWAP_INTERVAL_SECS`
@@ -313,6 +386,63 @@ fn run() -> Result<(), Err> {
     // The Shelley-era anchor for deadline → slot TTL conversion (network-specific).
     let anchor = era_anchor(network_id, raw.network_magic);
 
+    // Startup diagnostics (best-effort — a transient chain hiccup here must not block
+    // startup; the loop retries). Dump the deployment identities an operator needs to
+    // confirm they're pointed at the right contracts, the fixed reference-script fee,
+    // and a sanity-check that the hard-coded era anchor matches this network's tip.
+    info!(
+        settlement_s = %raw.settlement_hash,
+        pool_mint = %raw.pool_mint_policy,
+        order_script = %raw.order_script_hash,
+        pool_script = %raw.pool_script_hash,
+        settlement_ref = %format!("{}#{}", raw.settlement_ref.tx_id, raw.settlement_ref.index),
+        order_ref = %format!("{}#{}", raw.order_ref.tx_id, raw.order_ref.index),
+        pool_ref = %format!("{}#{}", raw.pool_ref.tx_id, raw.pool_ref.index),
+        ref_script_bytes = ref_bytes,
+        "deployment"
+    );
+    match backend.protocol_params() {
+        // The fixed reference-script fee for a 3-script settlement (Conway tiered
+        // pricing) — logged once so an operator can sanity-check it against a live node
+        // before mainnet (a params drift would under/over-charge every settlement).
+        Ok(p) => info!(
+            ref_script_fee = fees::reference_script_fee(&p, ref_bytes),
+            "reference-script fee (per settlement build)"
+        ),
+        Err(e) => warn!(
+            category = e.category().as_str(),
+            "startup: protocol params unavailable: {e:?}"
+        ),
+    }
+    // Era-anchor sanity: the anchor is hard-coded per network, so a preprod config run
+    // against mainnet (or vice versa) silently converts deadlines to the wrong slots and
+    // fails every settlement on-chain. Cross-check the slot derived for "now" against the
+    // actual node tip and warn loudly on a large drift (network mismatch / stale anchor /
+    // host clock skew).
+    if let Ok(tip) = backend.tip() {
+        if let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            let derived = anchor.deadline_slot(now.as_millis() as i64);
+            let drift = derived.abs_diff(tip.slot);
+            if drift > 600 {
+                warn!(
+                    derived_slot = derived,
+                    tip_slot = tip.slot,
+                    drift,
+                    "era-anchor sanity: the slot derived for now is {drift} slots (>10 min) from \
+                     the node tip — likely a wrong network in the deployment, a stale era anchor, \
+                     or host clock skew. A network mismatch makes every settlement fail on-chain."
+                );
+            } else {
+                debug!(
+                    derived_slot = derived,
+                    tip_slot = tip.slot,
+                    drift,
+                    "era-anchor sanity OK"
+                );
+            }
+        }
+    }
+
     // Turnkey bootstrap: a settlement needs a funding input AND a distinct
     // collateral input (≥2 wallet UTXOs). If the operator funded the address as a
     // single lump, self-provision a dedicated collateral UTXO once. After that the
@@ -353,27 +483,70 @@ fn run() -> Result<(), Err> {
     // the node tip); otherwise just cheaply re-poll. A transient failure logs and
     // waits for the next block rather than killing the daemon.
     let mut last_block: Option<u64> = None;
+    // Backend-health heartbeat: consecutive checkpoint-poll failures. A recovery after
+    // ≥1 failures is logged so degradation→recovery is an observable, alertable edge.
+    let mut consec_errors: u32 = 0;
     while !term.load(Ordering::Relaxed) {
         match backend.kupo_checkpoint() {
-            Ok(cp) if last_block != Some(cp) => {
-                if let Err(e) = settle_once(
-                    &backend,
-                    &cfg,
-                    &skey,
-                    &solver_addr,
-                    ref_bytes,
-                    lp,
-                    anchor,
-                    submit,
-                    strategy,
-                    &mut state,
-                ) {
-                    warn!("pass failed (will retry next block): {e}");
+            Ok(cp) => {
+                if consec_errors > 0 {
+                    info!(
+                        after_errors = consec_errors,
+                        "backend recovered; checkpoint poll OK again"
+                    );
+                    consec_errors = 0;
                 }
-                last_block = Some(cp);
+                if last_block != Some(cp) {
+                    // Reorg / rollback: Kupo's checkpoint moved BACKWARDS. Any in-flight
+                    // `pending` assumptions are now suspect (a tx we thought was landing
+                    // may have been rolled back), so clear them and re-discover from the
+                    // post-rollback chain state — the safe default. (Pending would also
+                    // self-heal after the grace window; this just avoids the ~3-min wait.)
+                    if let Some(prev) = last_block {
+                        if cp < prev {
+                            warn!(
+                                prev_slot = prev,
+                                new_slot = cp,
+                                pending = state.pending.len(),
+                                "chain rolled back (reorg); clearing in-flight pending state"
+                            );
+                            state.pending.clear();
+                        }
+                    }
+                    if let Err(e) = settle_once(
+                        &backend,
+                        &cfg,
+                        &skey,
+                        &solver_addr,
+                        ref_bytes,
+                        lp,
+                        anchor,
+                        submit,
+                        strategy,
+                        &mut state,
+                    ) {
+                        warn!("pass failed (will retry next block): {e}");
+                    }
+                    last_block = Some(cp);
+                }
             }
-            Ok(_) => {} // no new block since last pass
-            Err(e) => warn!("checkpoint poll failed (will retry): {e:?}"),
+            Err(e) => {
+                consec_errors += 1;
+                // A single hiccup is a warn; sustained failure (the backend is likely
+                // down) escalates to error so it pages rather than scrolling past.
+                if consec_errors >= 5 {
+                    error!(
+                        category = e.category().as_str(),
+                        consec_errors,
+                        "checkpoint poll failing repeatedly — backend may be down: {e:?}"
+                    );
+                } else {
+                    warn!(
+                        category = e.category().as_str(),
+                        consec_errors, "checkpoint poll failed (will retry): {e:?}"
+                    );
+                }
+            }
         }
         sleep_responsive(poll, &term);
     }
@@ -415,9 +588,13 @@ struct LoopState {
 impl LoopState {
     /// Drop pending entries whose grace window has elapsed (relative to the current
     /// tip slot), freeing their inputs to be retried if the tx never confirmed.
-    fn expire_pending(&mut self, tip_slot: u64) {
+    /// Returns the number expired (for observability — a non-zero count means a
+    /// submitted tx never confirmed and its inputs are being retried).
+    fn expire_pending(&mut self, tip_slot: u64) -> usize {
+        let before = self.pending.len();
         self.pending
             .retain(|_, &mut submitted| tip_slot.saturating_sub(submitted) <= PENDING_GRACE_SLOTS);
+        before - self.pending.len()
     }
 }
 
@@ -452,6 +629,23 @@ fn settle_once(
     state: &mut LoopState,
 ) -> Result<(), Err> {
     let tip = backend.tip().map_err(|e| format!("tip: {e:?}"))?;
+    // Kupo-lag preflight: discovery reads Kupo, but the validity bound reads the Ogmios
+    // tip — if Kupo trails the tip we'd solve against stale state and build txs that fail
+    // phase-2. Funds are safe (rejected on-chain), but warn so an indexer hang surfaces
+    // early instead of as silent unproductive passes.
+    match backend.kupo_checkpoint() {
+        Ok(cp) if tip.slot > cp + KUPO_LAG_WARN_SLOTS => warn!(
+            tip_slot = tip.slot,
+            kupo_slot = cp,
+            lag = tip.slot - cp,
+            "Kupo index trails the node tip; discovery may be stale this pass"
+        ),
+        Ok(_) => {}
+        Err(e) => debug!(
+            category = e.category().as_str(),
+            "kupo checkpoint lag-probe failed: {e:?}"
+        ),
+    }
     let params = backend
         .protocol_params()
         .map_err(|e| format!("params: {e:?}"))?;
@@ -467,7 +661,14 @@ fn settle_once(
     // Expire stale pending entries (failed/never-confirmed txs → retry), then
     // exclude still-pending orders/intents so an in-flight chain is never
     // double-spent before it confirms.
-    state.expire_pending(tip.slot);
+    let expired = state.expire_pending(tip.slot);
+    if expired > 0 {
+        info!(
+            expired,
+            "pending entries expired (grace elapsed); a submitted tx never confirmed — \
+             its inputs are retryable again"
+        );
+    }
     let orders: Vec<OrderInput> = all_orders
         .into_iter()
         .filter(|o| !state.pending.contains_key(&key(&o.output_reference)))
@@ -501,6 +702,15 @@ fn settle_once(
         delta_ada = balance - start,
         "discovered"
     );
+    // Low-balance early warning: below this the wallet may not be able to fund the
+    // collateral plus the next settlement's fee, which would stall settlement silently.
+    if balance < LOW_BALANCE_WARN_LOVELACE {
+        warn!(
+            balance_ada = balance,
+            threshold = LOW_BALANCE_WARN_LOVELACE,
+            "solver wallet balance is low — top up the solver address or settlements will stall"
+        );
+    }
 
     // Group settleable orders by their target pool NFT.
     let mut by_pool: HashMap<NftKey, Vec<OrderInput>> = HashMap::new();
@@ -852,9 +1062,14 @@ fn settle_pool(
             invalid_after_slot,
         };
         // Resolve this tx's not-yet-confirmed ancestors (funding + rolled pool).
-        // A build/gate failure submits nothing, so the chain is untouched → skip.
-        let built = assemble::build_signed(&inp, backend, skey, &chain.resolved)
-            .map_err(|e| PassError::SkipPool(format!("assemble: {e:?}").into()))?;
+        // A build/gate failure submits nothing, so the chain is untouched → skip. The
+        // failure carries an `EvaluateTx` error: classify it so a normal UTXO race is
+        // distinguishable from an ex-unit breach or an alarming script-validation
+        // failure (which would indicate contract drift).
+        let built = assemble::build_signed(&inp, backend, skey, &chain.resolved).map_err(|e| {
+            let s = format!("{e:?}");
+            PassError::SkipPool(format!("assemble [{}]: {s}", classify_tx_error(&s)).into())
+        })?;
 
         // Economically rational: don't burn ADA on a batch whose tips don't cover
         // its fee. Stop draining this pool here (the remaining orders defer to a
@@ -873,17 +1088,35 @@ fn settle_pool(
             batch = batches + 1,
             tx = hex::encode(built.signed.tx_hash.0),
             fee = built.fee,
+            tip_take = solved.settlement.tip_taken_total,
             mem = built.total_ex_units.mem,
             steps = built.total_ex_units.steps,
             "built + evaluated OK (gate passed)"
         );
+        // Per-batch economics: how comfortably tips cleared the fee. The fee-cover gate
+        // above already defers a fee-negative batch; a margin under 1.1× is an early
+        // signal that on-chain tip economics are shifting against the solver.
+        if solved.settlement.tip_taken_total * 10 < built.fee as i128 * 11 {
+            warn!(
+                nft,
+                tip_take = solved.settlement.tip_taken_total,
+                fee = built.fee,
+                "thin batch margin: tips barely cover the fee (<1.1x)"
+            );
+        }
 
         if submit {
             // A submit failure is pass-fatal: the tx may already be in the mempool
             // (spending this link's funding), so no later link may reuse it.
-            let txid = backend
-                .submit(&built.signed.tx_bytes.0)
-                .map_err(|e| PassError::AbortPass(format!("submit: {e:?}").into()))?;
+            let txid = backend.submit(&built.signed.tx_bytes.0).map_err(|e| {
+                // The tx MAY have reached the mempool despite the error, so this link's
+                // funding input could already be spent — mark it pending so the next pass
+                // can't re-select and double-spend it (the grace window frees it if the
+                // submit truly failed). Then classify the error for the operator.
+                pending.insert(key(&chain.funding.0), submit_slot);
+                let s = format!("{e:?}");
+                PassError::AbortPass(format!("submit [{}]: {s}", classify_tx_error(&s)).into())
+            })?;
             for o in &solved.orders {
                 pending.insert(key(&o.output_reference), submit_slot);
             }
@@ -1038,9 +1271,14 @@ fn fulfill_pool(
         if submit {
             // A submit failure is pass-fatal: the tx may already be in the mempool
             // (spending this link's funding), so no later link may reuse it.
-            let txid = backend
-                .submit(&built.signed.tx_bytes.0)
-                .map_err(|e| PassError::AbortPass(format!("lp submit: {e:?}").into()))?;
+            let txid = backend.submit(&built.signed.tx_bytes.0).map_err(|e| {
+                // The tx may have reached the mempool despite the error → mark this link's
+                // funding input pending so the next pass can't double-spend it (the grace
+                // window frees it if the submit truly failed).
+                pending.insert(key(&chain.funding.0), submit_slot);
+                let s = format!("{e:?}");
+                PassError::AbortPass(format!("lp submit [{}]: {s}", classify_tx_error(&s)).into())
+            })?;
             pending.insert(key(&intent.output_reference), submit_slot);
             info!(nft, tx = hex::encode(&txid), "LP FULFILLED");
         } else {
@@ -1217,6 +1455,36 @@ fn solver_address(network_id: u8, skey: &SecretKey) -> Result<String, Err> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_tx_error_routes_the_alarming_case() {
+        // A UTXO race is normal; an ex-unit breach is actionable; a script-validation
+        // failure on a gated tx is the one that must read as UNEXPECTED.
+        assert!(
+            classify_tx_error("Some inputs of the transaction are already spent")
+                .contains("utxo race")
+        );
+        assert!(classify_tx_error("UnknownOutputReferences in inputs").contains("utxo race"));
+        assert!(
+            classify_tx_error("The transaction exceeds the maximum execution units")
+                .contains("ex-unit")
+        );
+        assert!(
+            classify_tx_error("validation failed: the validator returned false")
+                .contains("SCRIPT VALIDATION")
+        );
+        // Input-side races (Ogmios v6 phrasings) must reach the utxo-race bucket too.
+        assert!(classify_tx_error("UnknownInputs in transaction").contains("utxo race"));
+        assert!(classify_tx_error("InputsNotPresent in ledger").contains("utxo race"));
+        assert!(classify_tx_error("Some inputs are not present in the UTxO").contains("utxo race"));
+        // But a script-validation message that merely references an input index must
+        // STILL read as the alarming case (not be downgraded to a benign race).
+        assert!(
+            classify_tx_error("validation failed for input 2: validator returned false")
+                .contains("SCRIPT VALIDATION")
+        );
+        assert_eq!(classify_tx_error("something totally novel"), "unclassified");
+    }
 
     #[test]
     fn network_label_distinguishes_mainnet_from_testnets() {
