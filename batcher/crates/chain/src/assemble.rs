@@ -256,10 +256,13 @@ fn build_staging(
     let change = change_value(inp, fee)?;
     let solver_addr = PallasAddress::from_bech32(inp.solver_addr_bech32)
         .map_err(|e| ChainError::Address(format!("{e:?}")))?;
-    let change_out = apply_assets(
-        Output::new(solver_addr, u64::try_from(change.lovelace_of()).unwrap()),
-        &change,
-    )?;
+    // `change_value` already guarantees a non-negative balance, but convert (don't
+    // `unwrap`) so an invariant slip surfaces as a skipped pool, never a daemon panic
+    // on live funds.
+    let change_lovelace = u64::try_from(change.lovelace_of()).map_err(|_| {
+        ChainError::Shape(format!("negative change lovelace {}", change.lovelace_of()))
+    })?;
+    let change_out = apply_assets(Output::new(solver_addr, change_lovelace), &change)?;
     tx = tx.output(change_out);
 
     // Tie the actual built layout to the index helpers used for chaining: the
