@@ -70,14 +70,14 @@ describe("useWriteGate — baseReason ladder + derivations", () => {
     expect(result.current.baseReason).toBeNull();
   });
 
-  it("collateral required + absent (check done) → Set a collateral UTXO", () => {
+  it("collateral required + absent (check done) → Set wallet collateral", () => {
     h.connected = true;
     h.networkId = OK;
     h.collateral = { hasCollateral: false, loading: false, recheck: vi.fn() };
     const { result } = renderHook(() => useWriteGate({ requireCollateral: true }));
     expect(result.current.needsCollateral).toBe(true);
     expect(result.current.collateralReady).toBe(false);
-    expect(result.current.baseReason).toBe("Set a collateral UTXO");
+    expect(result.current.baseReason).toBe("Set wallet collateral");
   });
 
   it("collateral required but check still in flight → ready (not blocked prematurely)", () => {

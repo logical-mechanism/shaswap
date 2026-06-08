@@ -9,6 +9,8 @@ import { formatCompactUnits } from "@/lib/format";
 import { toBigInt as toBig } from "@/lib/bigint";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { PipEmptyState } from "@/components/PipEmptyState";
+import { Sprout } from "@/components/Sprout";
 import { RefreshIcon } from "@/components/RefreshIcon";
 
 type SortKey = "liquidity" | "pair" | "fee";
@@ -101,7 +103,8 @@ export default function PoolsPage() {
             <h1 className="font-display text-2xl font-extrabold text-ink">Pools</h1>
           </div>
           <p className="mt-1 text-sm text-muted">
-            Every pair Pip looks after. Pop one open to add or pull out liquidity.
+            Liquidity gardens — every pair Pip tends. Pop one open to add or pull out
+            liquidity.
           </p>
           {!loading && !error && poolCount > 0 && (
             <p className="mt-1 text-xs text-muted">
@@ -131,7 +134,7 @@ export default function PoolsPage() {
       {error && (
         <div className="k-note k-note-danger text-sm">
           <div className="flex items-center gap-2">
-            <Pip size={24} mood="worried" />
+            <Pip size={24} mood="calm" still />
             <span className="font-bold">Pip couldn’t round up the pools.</span>
           </div>
           <div className="mt-1 break-words text-xs text-muted">{error}</div>
@@ -145,18 +148,18 @@ export default function PoolsPage() {
         </div>
       )}
 
-      {loading && <PipLoading label="Pip’s rounding up the pools…" />}
+      {loading && <PipLoading label="Pip’s tending the gardens…" />}
 
       {!loading && !error && poolCount === 0 && (
-        <Empty
+        <PipEmptyState
           mood="sleepy"
-          title="No pools yet"
-          body="Be the first to open one. Pip will keep it cozy."
+          title="No gardens planted yet"
+          body="Be the first to plant one. Pip will help it grow."
         >
           <Link href="/pools/create" className="k-btn mt-4 px-4 py-2 text-sm">
-            Create the first pool →
+            Plant the first pool →
           </Link>
-        </Empty>
+        </PipEmptyState>
       )}
 
       {!loading && !error && poolCount > 0 && (
@@ -177,7 +180,7 @@ export default function PoolsPage() {
           />
 
           {filtered.length === 0 ? (
-            <Empty
+            <PipEmptyState
               mood="thinking"
               title="No pairs match"
               body={
@@ -310,7 +313,14 @@ function PairCard({ group }: { group: PairGroup }) {
             </div>
           </div>
         </div>
-        <span className="k-chip k-chip-muted shrink-0">{feeLabel}</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Sprout
+            state={liveCount > 0 ? "growing" : "seed"}
+            size={18}
+            className="shrink-0"
+          />
+          <span className="k-chip k-chip-muted">{feeLabel}</span>
+        </div>
       </div>
 
       <div className="mt-3 space-y-1.5 border-t border-border pt-3">
@@ -334,7 +344,7 @@ function PairCard({ group }: { group: PairGroup }) {
               )}
             </span>
             <span className="shrink-0 text-xs font-bold text-muted transition-colors group-hover:text-accent">
-              Manage →
+              Tend →
             </span>
           </Link>
         ))}
@@ -373,23 +383,3 @@ function TokenAvatar({ token, size = 30 }: { token: TokenInfo; size?: number }) 
   );
 }
 
-function Empty({
-  mood,
-  title,
-  body,
-  children,
-}: {
-  mood: "sleepy" | "thinking";
-  title: string;
-  body: string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="k-card flex flex-col items-center px-4 py-12 text-center">
-      <Pip size={64} mood={mood} />
-      <div className="mt-3 font-display text-lg font-extrabold text-ink">{title}</div>
-      <p className="mt-1 max-w-xs text-sm text-muted">{body}</p>
-      {children}
-    </div>
-  );
-}

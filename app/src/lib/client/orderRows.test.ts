@@ -14,7 +14,7 @@ const tok = (ticker: string, decimals = 0) => ({
   decimals,
 });
 
-const live = (ref: string, partial = false) => ({
+const live = (ref: string, partial = false, deadline: string | null = null) => ({
   ref,
   tokenIn: tok("TEST"),
   tokenOut: tok("ADA", 6),
@@ -22,6 +22,7 @@ const live = (ref: string, partial = false) => ({
   minOut: "50",
   status: "open" as const,
   partial,
+  deadline,
 });
 
 const recent = (
@@ -50,6 +51,15 @@ test("live order → open + reclaimable", () => {
   assert.equal(rows[0].status, "open");
   assert.equal(rows[0].canReclaim, true);
   assert.equal(rows[0].partial, true);
+});
+
+test("a live order's settle-by deadline is carried onto the row", () => {
+  const rows = mergeRows([live("a#0", false, "1750000000000")], [], 1_000_000);
+  assert.equal(rows[0].deadline, "1750000000000");
+
+  // A recent-log-only row (no live counterpart) carries no deadline — the log doesn't store it.
+  const pendingOnly = mergeRows([], [recent("b#0", 999_000)], 1_000_000);
+  assert.equal(pendingOnly[0].deadline, undefined);
 });
 
 test("recent post never observed on-chain stays pending past the old 3-min cutoff", () => {

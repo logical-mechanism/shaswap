@@ -152,3 +152,22 @@ export function withinDecimals(value: string, decimals: number): boolean {
   const mask = d > 0 ? new RegExp(`^\\d*\\.?\\d{0,${d}}$`) : /^\d*$/;
   return mask.test(value);
 }
+
+/**
+ * A short, cozy relative duration for a future POSIX-ms instant (e.g. an order's settle-by
+ * deadline): "~5h", "~3d", "~12m", or "<1m". Returns null once the instant has passed, so the
+ * caller can switch to an honest "window closed" note rather than a negative time. Deliberately
+ * coarse (one unit, rounded) — it's reassurance, not a countdown. Pure: pass `now` in.
+ */
+export function relativeFuture(targetMs: number, now: number): string | null {
+  if (!Number.isFinite(targetMs)) return null; // a malformed deadline must not render "~NaNd"
+  const ms = targetMs - now;
+  if (ms <= 0) return null;
+  const mins = Math.round(ms / 60_000);
+  if (mins < 1) return "<1m";
+  if (mins < 60) return `~${mins}m`;
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 24) return `~${hours}h`;
+  const days = Math.round(ms / 86_400_000);
+  return `~${days}d`;
+}

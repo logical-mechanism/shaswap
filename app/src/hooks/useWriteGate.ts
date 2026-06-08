@@ -57,7 +57,7 @@ export function useWriteGate({
       : !networkReady
         ? "Checking network…"
         : needsCollateral
-          ? "Set a collateral UTXO"
+          ? "Set wallet collateral"
           : null;
 
   return {

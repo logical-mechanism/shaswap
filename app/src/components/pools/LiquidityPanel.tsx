@@ -869,9 +869,9 @@ function IntentControls({
         </div>
       </div>
       {lowTip && (
-        <p className="mt-1 px-1 text-[11px] text-warn">
+        <p className="mt-1 px-1 text-[11px] text-warning">
           A low tip may not be picked up — a batcher only fulfils intents whose tip covers its
-          fee. ~1 ₳ is a safe floor.
+          fee. ~0.5 ₳ is a safe floor.
         </p>
       )}
     </div>
@@ -953,7 +953,7 @@ function AddIntentForm({
   onPosted: () => void;
 }) {
   const [amountA, setAmountA] = useState("");
-  const [tipAda, setTipAda] = useState("1");
+  const [tipAda, setTipAda] = useState("0.5");
   const [deadlineHours, setDeadlineHours] = useState(0);
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
@@ -1121,7 +1121,10 @@ function AddIntentForm({
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Deposit intent posted" intent />
 
-      <PipOverlay show={state.kind === "busy"} title="Posting your deposit intent…" />
+      <PipOverlay
+        show={state.kind === "busy"}
+        title="Tucking your deposit into the garden…"
+      />
     </div>
   );
 }
@@ -1150,7 +1153,7 @@ function RemoveIntentForm({
   onPosted: () => void;
 }) {
   const [lpInput, setLpInput] = useState("");
-  const [tipAda, setTipAda] = useState("1");
+  const [tipAda, setTipAda] = useState("0.5");
   const [deadlineHours, setDeadlineHours] = useState(0);
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
@@ -1335,7 +1338,7 @@ function RemoveIntentForm({
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
       <ResultBanner state={state} verb="Withdraw intent posted" intent />
 
-      <PipOverlay show={state.kind === "busy"} title="Posting your withdraw intent…" />
+      <PipOverlay show={state.kind === "busy"} title="Lining up your withdrawal…" />
     </div>
   );
 }
@@ -1376,7 +1379,7 @@ function CloseEmptyPool({
     : wrongNetwork
       ? "Wrong network"
       : needsCollateral
-        ? "Set a collateral UTXO"
+        ? "Set wallet collateral"
         : null;
   const gated = !networkReady || !collateralReady;
 
@@ -1518,10 +1521,15 @@ function PositionLine({
     sharePct === 0 ? "—" : sharePct < 0.01 ? "<0.01%" : `${sharePct.toFixed(2)}%`;
   return (
     <div className="k-field p-3 text-xs">
-      <div className="mb-2 text-muted">Your position</div>
+      <div className="mb-2 text-muted">Your patch</div>
       {lpBalance > 0n ? (
         <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 tabular-nums">
-          <dt className="text-muted">LP</dt>
+          <dt
+            className="cursor-help text-muted"
+            title="LP — your share of the garden (the pool's liquidity tokens you hold)"
+          >
+            LP
+          </dt>
           <dd className="text-right font-medium text-ink">{lpBalance.toLocaleString()}</dd>
           <dt className="text-muted">Share</dt>
           <dd className="text-right text-ink">{shareText}</dd>
@@ -1652,12 +1660,12 @@ function ResultBanner({
       <div className="k-note k-note-success relative mt-3 text-xs">
         <Confetti />
         <div className="relative flex items-center gap-2">
-          <Pip size={26} mood="love" />
+          <Pip size={26} mood={intent ? "love" : "cheer"} />
           <div className="font-bold text-success">{verb} ✓</div>
         </div>
         <p className="mt-0.5 text-muted">
           {intent
-            ? "A batcher will fulfil it shortly. It appears under “Your LP intents” below — you can reclaim it anytime until then."
+            ? "A batcher will fulfil it shortly. It appears under “Your LP intents” below — you can grab it back anytime until then."
             : "Settling in (~20–40s). Hit ↻ above to refresh your position once it lands."}
         </p>
         <a
@@ -1675,7 +1683,7 @@ function ResultBanner({
     return (
       <div className="k-note k-note-danger mt-3 text-xs">
         <div className="flex items-center gap-2">
-          <Pip size={26} mood="worried" />
+          <Pip size={26} mood="calm" still />
           <div className="font-bold">Hmm, that didn’t go through</div>
         </div>
         <div className="mt-1 break-words opacity-90">{state.message}</div>
