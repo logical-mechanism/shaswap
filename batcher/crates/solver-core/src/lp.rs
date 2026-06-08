@@ -511,4 +511,46 @@ mod tests {
             Err(LpError::DeadlineUnhonorable)
         );
     }
+
+    #[test]
+    fn deadline_boundary_and_deposit_path() {
+        // The EXACT boundary: tx_upper == deadline is honored (the rule is u <= d); one
+        // slot over is rejected; and a deadline with NO upper bound can never be honored
+        // (an unbounded tx could land arbitrarily late). The existing `deadline_honored`
+        // only checked loose values on a withdraw.
+        let wpool = pool_input(200_000_000, 100_000_000, TOTAL_LP - 1_000_000);
+        let mut wd = wd_intent(100_000, 1_000_000, 19_000_000, 9_000_000);
+        wd.datum.deadline = Some(1000);
+        assert!(
+            build_fulfillment(&wd, &wpool, Some(1000)).is_ok(),
+            "tx_upper == deadline is honored"
+        );
+        assert_eq!(
+            build_fulfillment(&wd, &wpool, Some(1001)),
+            Err(LpError::DeadlineUnhonorable)
+        );
+        assert_eq!(
+            build_fulfillment(&wd, &wpool, None),
+            Err(LpError::DeadlineUnhonorable)
+        );
+
+        // The DEPOSIT path enforces the same rule (prior coverage was withdraw-only).
+        // Uses the proven `deposit_matches_aiken_fixture` params so the only variable is
+        // the deadline.
+        let dpool = pool_input(200_000_000, 100_000_000, TOTAL_LP - 1_000_000);
+        let mut dep = dep_intent(20_000_000, 10_000_000, 1_000_000, 90_000);
+        dep.datum.deadline = Some(2000);
+        assert!(
+            build_fulfillment(&dep, &dpool, Some(2000)).is_ok(),
+            "deposit tx_upper == deadline is honored"
+        );
+        assert_eq!(
+            build_fulfillment(&dep, &dpool, Some(2001)),
+            Err(LpError::DeadlineUnhonorable)
+        );
+        assert_eq!(
+            build_fulfillment(&dep, &dpool, None),
+            Err(LpError::DeadlineUnhonorable)
+        );
+    }
 }

@@ -147,6 +147,136 @@ fn ada_seller(sell: i128, tip: i128, partial: bool) -> OrderInput {
     }
 }
 
+/// A SECOND native token, so the pool's `asset_b` is NOT ADA — exercises the
+/// token/token pool path the other generator never reaches (it hardcodes asset_b=ADA).
+fn tok_b() -> AssetId {
+    AssetId::new(vec![0x77u8; 28], vec![0x42])
+}
+
+/// A token/token pool (asset_a = `tok`, asset_b = `tok_b`). Its ADA is pure min-ADA
+/// overhead (neither reserve is ADA); the two reserves are the native tokens.
+fn tt_pool() -> PoolInput {
+    PoolInput {
+        output_reference: OutputReference {
+            transaction_id: vec![0xd2u8; 32],
+            output_index: 0,
+        },
+        address: tagged(Credential::Script(vec![0x99u8; 28])),
+        value: Value::from_lovelace(2_000_000)
+            .add(&tok().policy, &tok().name, POOL_RES)
+            .add(&tok_b().policy, &tok_b().name, POOL_RES)
+            .add(&nft().policy, &nft().name, 1),
+        datum: PoolDatum {
+            nft: nft(),
+            asset_a: tok(),
+            asset_b: tok_b(),
+            fee_num: 3,
+            fee_den: 1000,
+            creator: owner(),
+        },
+    }
+}
+
+/// A seller of `asset_a` (`tok`) into the token/token pool (mirror of `token_seller`).
+fn tt_a_seller(sell: i128, tip: i128, partial: bool) -> OrderInput {
+    OrderInput {
+        output_reference: OutputReference {
+            transaction_id: vec![0xa3u8; 32],
+            output_index: 0,
+        },
+        address: tagged(Credential::Script(vec![0x0bu8; 28])),
+        value: Value::from_lovelace(tip + 2 * ORDER_MIN_ADA).add(&tok().policy, &tok().name, sell),
+        datum: OrderDatum {
+            owner: owner(),
+            owner_stake: None,
+            pool_nft: nft(),
+            sell_a: true,
+            sell_amount: sell,
+            limit: 0,
+            tip,
+            partial,
+            deadline: None,
+        },
+    }
+}
+
+/// A seller of `asset_b` (`tok_b`) into the token/token pool — the sold asset is a
+/// native token here, NOT ADA (the UTXO still carries 2×min-ADA + the ADA tip).
+fn tt_b_seller(sell: i128, tip: i128, partial: bool) -> OrderInput {
+    OrderInput {
+        output_reference: OutputReference {
+            transaction_id: vec![0xa4u8; 32],
+            output_index: 0,
+        },
+        address: tagged(Credential::Script(vec![0x0bu8; 28])),
+        value: Value::from_lovelace(tip + 2 * ORDER_MIN_ADA).add(
+            &tok_b().policy,
+            &tok_b().name,
+            sell,
+        ),
+        datum: OrderDatum {
+            owner: owner(),
+            owner_stake: None,
+            pool_nft: nft(),
+            sell_a: false,
+            sell_amount: sell,
+            limit: 0,
+            tip,
+            partial,
+            deadline: None,
+        },
+    }
+}
+
+#[test]
+fn conservation_holds_for_token_token_pool() {
+    // The same conservation + exact-tip-take invariant must hold when NEITHER traded
+    // side is ADA (asset_b is a second native token). Guards the token/token path the
+    // ADA-pool generator never touches.
+    let mut rng = Rng::new(0xB0B_CAFE);
+    let (mut full, mut partial) = (0, 0);
+    for _ in 0..3_000 {
+        let sell = rng.range(1, 5_000_000);
+        let f = rng.range(1, 5_000_000).min(sell);
+        let pn = rng.range(1, 1000);
+        let pd = rng.range(1, 1000);
+        let tip = rng.range(0, 10_000_000);
+        let sell_a = rng.next() & 1 == 0;
+        let is_partial = f < sell;
+
+        let order = if sell_a {
+            tt_a_seller(sell, tip, is_partial)
+        } else {
+            tt_b_seller(sell, tip, is_partial)
+        };
+        let pool = tt_pool();
+        let st = match build_settlement(
+            std::slice::from_ref(&order),
+            &[f],
+            &pool,
+            Price { num: pn, den: pd },
+            None,
+        ) {
+            Ok(s) => s,
+            Err(_) => continue, // extreme-price overflow surfaced, not silently wrong.
+        };
+
+        assert_eq!(
+            total_in(&[order], &pool),
+            total_out_plus_solver(&st),
+            "token/token conservation broke: sell={sell} f={f} p={pn}/{pd} tip={tip} sell_a={sell_a}"
+        );
+        assert_eq!(st.tip_taken_total, tip * f / sell, "tip take must be exact");
+
+        if is_partial {
+            partial += 1;
+        } else {
+            full += 1;
+        }
+    }
+    assert!(full > 100 && partial > 100, "full={full} partial={partial}");
+}
+
 #[test]
 fn conservation_holds_over_random_settlements() {
     let mut rng = Rng::new(0xC0FFEE);
