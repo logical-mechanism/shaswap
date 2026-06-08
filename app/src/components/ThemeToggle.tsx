@@ -35,8 +35,8 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={toggle}
-      aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-      title={dark ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label={dark ? "Switch to daylight" : "Switch to cozy night"}
+      title={dark ? "Switch to daylight" : "Switch to cozy night"}
       className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border bg-surface text-accent transition-colors hover:border-accent/40 hover:text-accent-2"
     >
       {dark ? (

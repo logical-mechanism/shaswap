@@ -33,6 +33,11 @@ export interface OrderRow {
   reclaimTx?: string;
   /** Only live on-chain orders are reclaimable. */
   canReclaim: boolean;
+  /**
+   * Settle-by deadline (POSIX ms) for a live/resting order, or null. Only carried for live
+   * on-chain rows — the local activity log (pending/completed/reclaimed) doesn't record it.
+   */
+  deadline?: string | null;
 }
 
 /**
@@ -76,6 +81,7 @@ export function mergeRows(
       partial: o.partial,
       status: "open",
       canReclaim: true,
+      deadline: o.deadline,
     });
     seen.add(o.ref);
   }

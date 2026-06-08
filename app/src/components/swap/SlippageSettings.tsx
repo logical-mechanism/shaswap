@@ -83,12 +83,17 @@ export function SlippageSettings({
           aria-label="Max slippage"
           className="k-pop absolute right-0 z-30 mt-2 w-64 p-3"
         >
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-1 flex items-center justify-between">
             <span className="text-xs font-medium">Max slippage</span>
             <span className="k-chip k-chip-muted text-[10px]">
               {context === "liquidity" ? "sets your minimum out" : "sets your floor"}
             </span>
           </div>
+          <p className="mb-2 text-[11px] leading-snug text-muted">
+            {context === "liquidity"
+              ? "The most the pool can move before your deposit/withdrawal settles, or it backs out."
+              : "The worst price you’ll accept — your order never settles below it."}
+          </p>
           <div className="flex gap-1.5">
             {PRESETS.map((p) => {
               const active = !customActive && value === p;
@@ -131,7 +136,7 @@ export function SlippageSettings({
 
           {value > 5 && (
             <p className="mt-2 text-[11px] font-semibold text-warning">
-              High tolerance. You could accept a noticeably worse fill.
+              That’s a wide gap — you could accept a noticeably worse fill.
             </p>
           )}
         </div>

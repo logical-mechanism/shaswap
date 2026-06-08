@@ -202,14 +202,18 @@ export function PendingLpIntents({
 
   return (
     <div className="mt-4 border-t border-border pt-4">
-      <div className="mb-2 flex items-center gap-2 px-1">
+      <div className="mb-1 flex items-center gap-2 px-1">
         <Pip size={20} mood="happy" />
-        <span className="text-sm font-bold text-ink">Your LP intents here</span>
+        <span className="text-sm font-bold text-ink">Your LP intents</span>
       </div>
+      <p className="mb-2 px-1 text-[11px] text-muted">
+        An intent is a request a batcher fulfils for you — grab one back anytime it’s still
+        waiting.
+      </p>
 
       {needsCollateral && rows.some((r) => r.canReclaim) && (
         <CollateralNote onRecheck={recheckCollateral}>
-          Reclaiming needs a collateral set in your wallet. Add one, then re-check.
+          Grabbing one back needs a collateral set in your wallet. Add one, then re-check.
         </CollateralNote>
       )}
 
@@ -294,7 +298,7 @@ function IntentRowItem({
               title={baseReason ?? undefined}
               className="k-btn-ghost px-3 py-1.5 text-xs"
             >
-              {busy ? "Reclaiming…" : (baseReason ?? "Reclaim")}
+              {busy ? "Grabbing back…" : (baseReason ?? "Grab back")}
             </button>
           )}
         </div>
@@ -303,14 +307,14 @@ function IntentRowItem({
       {row.canReclaim && (
         <div className="mt-1.5 text-[11px] text-muted">
           {row.action === "withdraw"
-            ? "Reclaim returns your LP tokens (not the underlying) plus the min-ADA and tip."
-            : "Reclaim returns the deposited tokens plus the min-ADA and tip to your wallet."}
+            ? "Grabbing it back returns your LP tokens (not the underlying) plus the small ADA held with it and the tip."
+            : "Grabbing it back returns the deposited tokens plus the small ADA held with it and the tip."}
         </div>
       )}
 
       {row.reclaimTx && (
         <div className="mt-2 text-xs text-success">
-          Reclaimed ✓.{" "}
+          Grabbed back ✓.{" "}
           <a
             href={explorerTxUrl(row.reclaimTx)}
             target="_blank"
@@ -323,7 +327,7 @@ function IntentRowItem({
       )}
       {error && (
         <div className="mt-2 flex items-center gap-1.5 break-words text-xs text-danger">
-          <Pip size={16} mood="worried" />
+          <Pip size={16} mood="calm" still />
           <span>{error}</span>
         </div>
       )}

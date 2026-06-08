@@ -15,10 +15,10 @@ test("entering an amount shows a rate and a minimum-received row", async ({ page
   await page.getByRole("option", { name: /TEST/ }).click();
   // the collapsed rate summary updates from the mock quote (ADA → TEST)
   await expect(page.getByText(/1 ADA ≈/)).toBeVisible();
-  // expand the breakdown → the Minimum received row is present (exact: the sr-only
-  // live region also contains a lowercase "minimum received").
+  // expand the breakdown → the floor row is present (the brand pairs the cozy word
+  // "Your floor" with the precise "(min. received)").
   await page.getByRole("button", { name: /Details/ }).click();
-  await expect(page.getByText("Minimum received", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Your floor/)).toBeVisible();
 });
 
 test("changing the output token re-quotes", async ({ page }) => {

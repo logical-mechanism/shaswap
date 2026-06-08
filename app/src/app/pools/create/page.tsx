@@ -202,8 +202,8 @@ export default function CreatePoolPage() {
       <header className="mb-4">
         <h1 className="font-display text-2xl font-extrabold text-ink">Create pool</h1>
         <p className="mt-1 text-sm text-muted">
-          Open a new pool for any pair you hold (anyone can). It starts empty, then you
-          add the first liquidity right after.
+          Plant a new garden for any pair you hold (anyone can). It starts empty, then you
+          sow the first liquidity right after.
         </p>
         <p className="mt-1 text-xs text-muted">
           Creating an empty pool locks a ~2 ₳ seed (plus network fees). As the creator you
@@ -220,7 +220,7 @@ export default function CreatePoolPage() {
         </div>
 
         <TokenRow
-          label="Token A"
+          label="First token"
           token={tokenA}
           tokens={tokens}
           exclude={tokenB?.unit}
@@ -233,7 +233,7 @@ export default function CreatePoolPage() {
         <div className="my-2 text-center text-muted">/</div>
 
         <TokenRow
-          label="Token B"
+          label="Second token"
           token={tokenB}
           tokens={tokens}
           exclude={tokenA?.unit}
@@ -295,11 +295,11 @@ export default function CreatePoolPage() {
           <div className="k-note k-note-success relative mt-3 text-xs">
             <Confetti />
             <div className="relative flex items-center gap-2">
-              <Pip size={26} mood="love" />
+              <Pip size={26} mood="cheer" />
               <div className="font-bold text-success">Pool created ✓</div>
             </div>
             <p className="mt-1 text-muted">
-              Confirming on-chain (~20–40s). Add the first liquidity to start trading. On
+              Confirming on-chain (~20–40s). Sow the first liquidity to start trading. On
               the next screen, hit ↻ Refresh once it’s confirmed (it won’t show in the
               pools list until then).
             </p>
@@ -308,7 +308,7 @@ export default function CreatePoolPage() {
                 href={`/pools/${encodeURIComponent(state.poolId)}`}
                 className="k-btn-ghost w-full px-3 py-2 text-center text-sm font-semibold"
               >
-                Add initial liquidity →
+                Plant the first liquidity →
               </Link>
               <a
                 href={explorerTxUrl(state.hash)}
@@ -325,7 +325,7 @@ export default function CreatePoolPage() {
         {state.kind === "error" && (
           <div className="k-note k-note-danger mt-3 text-xs">
             <div className="flex items-center gap-2">
-              <Pip size={26} mood="worried" />
+              <Pip size={26} mood="calm" still />
               <div className="font-bold">Hmm, that didn’t go through</div>
             </div>
             <div className="mt-1 break-words opacity-90">{state.message}</div>
@@ -333,7 +333,7 @@ export default function CreatePoolPage() {
         )}
       </div>
 
-      <PipOverlay show={state.kind === "busy"} title="Creating your pool…" />
+      <PipOverlay show={state.kind === "busy"} title="Planting your pool…" />
     </div>
   );
 }

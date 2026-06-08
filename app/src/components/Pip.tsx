@@ -1,13 +1,22 @@
 /**
- * Pip — ShaSwap's mascot: a small, chubby, lavender sasquatch who represents
- * liquidity and swapping. One vector component, rendered consistently everywhere
+ * Pip — ShaSwap's mascot: a small, chubby, lavender forest creature who runs the
+ * woodland market — tending the liquidity gardens (pools) and gathering everyone's
+ * orders into baskets that settle together at one fair price. One vector component,
+ * rendered consistently everywhere
  * (hero, empty states, loading, success, toasts, badges, the logo mark). Expression
  * is driven by `mood`; `sparkles` adds twinkles; `size` scales the whole thing.
  *
  * Moods are deliberately varied so Pip can react in-context: cheerful on success,
- * worried on errors / wrong-network, heart-eyes on a happy outcome, cool when
+ * worried on (soft, recoverable) warnings, calm + reassuring on errors / signing,
+ * heart-eyes on a happy outcome, cheer (both arms up) on a genuine win, cool when
  * connected, thinking while loading. Pure SVG (no raster assets) so Pip is crisp at
  * any size and themeable.
+ *
+ * The `still` prop freezes ALL of Pip's motion — the float bob, the wave wiggle, and
+ * the love/thinking overlay twinkles — so Pip can stand calmly through the
+ * security-critical moments (signing, warnings, errors) where the brand keeps motion
+ * out. It's the brand's "calm during signing" guarantee, independent of the user's OS
+ * prefers-reduced-motion setting.
  */
 
 export type PipMood =
@@ -17,7 +26,9 @@ export type PipMood =
   | "sleepy"
   | "wave"
   | "worried"
+  | "calm"
   | "love"
+  | "cheer"
   | "cool"
   | "thinking";
 
@@ -26,6 +37,7 @@ export function Pip({
   size = 96,
   sparkles = false,
   float = false,
+  still = false,
   label,
   className = "",
 }: {
@@ -35,6 +47,12 @@ export function Pip({
   sparkles?: boolean;
   /** Gently bob up and down (disabled under prefers-reduced-motion). */
   float?: boolean;
+  /**
+   * Freeze every bit of Pip's motion — bob, wave wiggle, and the love/thinking
+   * overlay twinkles — and suppress decorative sparkles. Use on signing, warning, and
+   * error surfaces so Pip stays calm regardless of prefers-reduced-motion.
+   */
+  still?: boolean;
   /** Accessible name. Omit to mark Pip decorative (aria-hidden). */
   label?: string;
   className?: string;
@@ -45,7 +63,7 @@ export function Pip({
 
   return (
     <span
-      className={`relative inline-block leading-none ${float ? "animate-bob" : ""} ${className}`}
+      className={`relative inline-block leading-none ${float && !still ? "animate-bob" : ""} ${className}`}
       style={{ width: size, height: size }}
       {...a11y}
     >
@@ -89,14 +107,26 @@ export function Pip({
         <ellipse cx="25" cy="45" rx="3" ry="4.5" fill="#fdeef8" opacity="0.8" />
         <ellipse cx="95" cy="45" rx="3" ry="4.5" fill="#fdeef8" opacity="0.8" />
 
-        {/* arms — left tucked; right waves when mood === "wave" */}
-        <ellipse cx="20" cy="80" rx="8" ry="11" fill="url(#pip-fur)" />
-        {mood === "wave" ? (
-          <g className="animate-wiggle" style={{ transformOrigin: "96px 64px" }}>
+        {/* arms — cheer raises both; wave raises+wiggles the right; else both tucked */}
+        {mood === "cheer" ? (
+          <>
+            <ellipse cx="19" cy="44" rx="7.5" ry="11" fill="url(#pip-fur)" />
             <ellipse cx="101" cy="44" rx="7.5" ry="11" fill="url(#pip-fur)" />
-          </g>
+          </>
         ) : (
-          <ellipse cx="100" cy="80" rx="8" ry="11" fill="url(#pip-fur)" />
+          <>
+            <ellipse cx="20" cy="80" rx="8" ry="11" fill="url(#pip-fur)" />
+            {mood === "wave" ? (
+              <g
+                className={still ? "" : "animate-wiggle"}
+                style={{ transformOrigin: "96px 64px" }}
+              >
+                <ellipse cx="101" cy="44" rx="7.5" ry="11" fill="url(#pip-fur)" />
+              </g>
+            ) : (
+              <ellipse cx="100" cy="80" rx="8" ry="11" fill="url(#pip-fur)" />
+            )}
+          </>
         )}
 
         {/* cowlick */}
@@ -138,11 +168,11 @@ export function Pip({
 
         {/* mood overlays */}
         {mood === "worried" && <WorriedExtras />}
-        {mood === "love" && <FloatingHearts />}
-        {mood === "thinking" && <ThoughtDots />}
+        {mood === "love" && <FloatingHearts still={still} />}
+        {mood === "thinking" && <ThoughtDots still={still} />}
       </svg>
 
-      {sparkles && (
+      {sparkles && !still && (
         <>
           <Twinkle className="absolute -right-1 -top-1" size={size * 0.26} delay="0s" />
           <Twinkle className="absolute -left-2 top-1/3" size={size * 0.17} delay="0.7s" />
@@ -181,7 +211,7 @@ function Eyes({ mood }: { mood: PipMood }) {
       </>
     );
   }
-  // round-eye family: happy, wave, worried, thinking, wink
+  // round-eye family: happy, wave, worried, calm, cheer, thinking, wink
   // thinking looks up (highlight high); others look ahead.
   const lookUp = mood === "thinking";
   const wink = mood === "wink";
@@ -272,16 +302,17 @@ function WorriedExtras() {
   );
 }
 
-function FloatingHearts() {
+function FloatingHearts({ still = false }: { still?: boolean }) {
+  const tw = still ? "" : "animate-twinkle";
   return (
     <g>
       <path
-        className="animate-twinkle"
+        className={tw}
         d="M36 14c-3-2-4-3.5-4-5 0-1.2 1-2 2-2 0.9 0 1.6 0.6 2 1.4 0.4-0.8 1.1-1.4 2-1.4 1 0 2 0.8 2 2 0 1.5-1 3-4 5Z"
         fill="#ff8fbf"
       />
       <path
-        className="animate-twinkle"
+        className={tw}
         style={{ animationDelay: "0.8s" }}
         d="M84 18c-3-2-4-3.5-4-5 0-1.2 1-2 2-2 0.9 0 1.6 0.6 2 1.4 0.4-0.8 1.1-1.4 2-1.4 1 0 2 0.8 2 2 0 1.5-1 3-4 5Z"
         fill="#ff5e9a"
@@ -290,20 +321,33 @@ function FloatingHearts() {
   );
 }
 
-function ThoughtDots() {
+function ThoughtDots({ still = false }: { still?: boolean }) {
+  const tw = still ? "" : "animate-twinkle";
   return (
     <g fill="#b79cf2">
-      <circle className="animate-twinkle" cx="75" cy="22" r="1.6" />
-      <circle className="animate-twinkle" style={{ animationDelay: "0.4s" }} cx="82" cy="16" r="2.2" />
-      <circle className="animate-twinkle" style={{ animationDelay: "0.8s" }} cx="90" cy="9" r="2.8" />
+      <circle className={tw} cx="75" cy="22" r="1.6" />
+      <circle className={tw} style={{ animationDelay: "0.4s" }} cx="82" cy="16" r="2.2" />
+      <circle className={tw} style={{ animationDelay: "0.8s" }} cx="90" cy="9" r="2.8" />
     </g>
   );
 }
 
 function Mouth({ mood }: { mood: PipMood }) {
-  if (mood === "sparkle" || mood === "love") {
+  if (mood === "sparkle" || mood === "love" || mood === "cheer") {
     // open, delighted smile
     return <path d="M53 67c2 6 12 6 14 0 0 0-3 3-7 3s-7-3-7-3Z" fill="#b06a93" />;
+  }
+  if (mood === "calm") {
+    // gentle, shallow, reassuring closed smile — softer than the default grin
+    return (
+      <path
+        d="M55 67c3 3 7 3 10 0"
+        stroke="#b06a93"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        fill="none"
+      />
+    );
   }
   if (mood === "worried") {
     // small wavy, uncertain mouth

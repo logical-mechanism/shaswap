@@ -13,13 +13,13 @@ test("swap home renders", async ({ page }) => {
 test("pools page lists the mock pools", async ({ page }) => {
   await page.goto("/pools");
   await expect(page.getByRole("heading", { name: "Pools", exact: true })).toBeVisible();
-  // MockProvider returns pools → at least one "Manage →" row link is present.
-  await expect(page.getByRole("link", { name: /Manage/ }).first()).toBeVisible();
+  // MockProvider returns pools → at least one "Tend →" row link is present.
+  await expect(page.getByRole("link", { name: /Tend/ }).first()).toBeVisible();
 });
 
 test("a pool detail page opens from the pools list", async ({ page }) => {
   await page.goto("/pools");
-  await page.getByRole("link", { name: /Manage/ }).first().click();
+  await page.getByRole("link", { name: /Tend/ }).first().click();
   await expect(page).toHaveURL(/\/pools\/.+/);
   await expect(page.getByRole("link", { name: /All pools/ })).toBeVisible();
 });

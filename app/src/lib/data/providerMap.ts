@@ -70,6 +70,7 @@ export function toPosition(
     minOut: d.limit.toString(),
     status: "open",
     partial: d.partial,
+    deadline: d.deadline === null ? null : d.deadline.toString(),
   };
 }
 

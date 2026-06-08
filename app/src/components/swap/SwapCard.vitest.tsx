@@ -181,7 +181,8 @@ describe("SwapCard — disabled-button label ladder", () => {
   it("within balance but inside the ADA reserve → Leave ADA for tip + fees", () => {
     h.state.connected = true;
     h.state.networkId = 0;
-    h.state.lovelace = "5000000"; // 5 ADA — exactly the reserve (min 2 + fee 1 + tip 2)
+    h.state.lovelace = "5000000"; // 5 ADA — selling all of it leaves nothing for the
+    // min-ADA + fee + tip reserve (min 2 + fee 1 + tip 0.5 = 3.5)
     render(<SwapCard />);
     typeFrom("5"); // == balance: not over balance, but over spendable
     expect(
@@ -272,19 +273,19 @@ describe("SwapCard — non-ADA sell funds min-ADA + tip + fee from wallet ADA", 
   }
 
   it("not enough wallet ADA for fees → Not enough ADA for fees", () => {
-    setupTokenSell("3000000"); // 3 ADA < 5 ADA needed (min 2 + fee 1 + tip 2)
+    setupTokenSell("3000000"); // 3 ADA < 3.5 needed (min 2 + fee 1 + tip 0.5)
     expect(
       screen.getByRole("button", { name: "Not enough ADA for fees" }),
     ).toBeDisabled();
   });
 
   it("the partial flag raises the ADA requirement (a second min-ADA)", () => {
-    setupTokenSell("6000000"); // 6 ADA: enough for full-fill, NOT for partial (needs 7)
-    // full-fill order: 6 ADA covers min 2 + fee 1 + tip 2 = 5 → not blocked on ADA
+    setupTokenSell("4000000"); // 4 ADA: enough for full-fill (3.5), NOT for partial (5.5)
+    // full-fill order: 4 ADA covers min 2 + fee 1 + tip 0.5 = 3.5 → not blocked on ADA
     expect(
       screen.queryByRole("button", { name: "Not enough ADA for fees" }),
     ).toBeNull();
-    // enable partial fills → now needs min 4 + fee 1 + tip 2 = 7 ADA → blocked
+    // enable partial fills → now needs min 4 + fee 1 + tip 0.5 = 5.5 ADA → blocked
     fireEvent.click(screen.getByRole("button", { name: /Advanced/ }));
     fireEvent.click(screen.getByRole("checkbox"));
     expect(

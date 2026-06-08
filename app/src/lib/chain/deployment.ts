@@ -203,12 +203,15 @@ export const MAX_POOL_FEE_PCT = 5;
 export const HIGH_FEE_BPS = 100;
 
 /**
- * Recommended minimum solver tip (lovelace). Below this the swap UI cautions that the
- * order may not be picked up: an untrusted solver skips settlements whose tips don't cover
- * the tx fee, and a single-order settlement pays the whole fee (~0.2–0.5 ADA). `buildOrder`
- * still only HARD-rejects a non-positive tip — this is advisory, not enforced.
+ * Recommended minimum solver tip (lovelace) = the solo-batch floor. A single-order
+ * settlement pays the whole tx fee (~0.2–0.5 ADA), so 0.5 ₳ keeps an order self-funding
+ * even in the worst case where it never batches with others — and if it DOES batch, the
+ * tip simply over-covers its share. Below this the swap/LP UI cautions the order may be
+ * skipped (an untrusted solver won't settle a tip that can't cover its fee). It's also the
+ * default swap tip. `buildOrder` still only HARD-rejects a non-positive tip — this is
+ * advisory, not enforced.
  */
-export const RECOMMENDED_MIN_TIP = 1_000_000n;
+export const RECOMMENDED_MIN_TIP = 500_000n;
 
 /**
  * On-chain reference scripts for the ACTIVE network (see the `DEPLOYMENTS` table). The

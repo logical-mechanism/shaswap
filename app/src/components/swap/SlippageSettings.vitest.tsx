@@ -100,8 +100,8 @@ describe("SlippageSettings", () => {
 
   it("shows the high-tolerance caution only above 5%", () => {
     const { custom } = setup(0.5);
-    expect(screen.queryByText(/High tolerance/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/wide gap/i)).not.toBeInTheDocument();
     fireEvent.change(custom, { target: { value: "7" } });
-    expect(screen.getByText(/High tolerance/i)).toBeInTheDocument();
+    expect(screen.getByText(/wide gap/i)).toBeInTheDocument();
   });
 });

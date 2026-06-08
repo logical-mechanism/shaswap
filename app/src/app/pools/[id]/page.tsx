@@ -7,6 +7,7 @@ import { LiquidityPanel } from "@/components/pools/LiquidityPanel";
 import { formatUnits } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
+import { Sprout } from "@/components/Sprout";
 import { RefreshIcon } from "@/components/RefreshIcon";
 
 /**
@@ -37,7 +38,7 @@ export default function PoolManagePage({
       {error && (
         <div className="k-note k-note-danger p-4 text-sm">
           <div className="flex items-center gap-2">
-            <Pip size={24} mood="worried" />
+            <Pip size={24} mood="calm" still />
             <span className="font-bold">Pip couldn’t open this pool.</span>
           </div>
           <div className="mt-1 break-words text-xs text-muted">{error}</div>
@@ -54,8 +55,8 @@ export default function PoolManagePage({
         <div className="k-card flex flex-col items-center px-4 py-12 text-center text-sm text-muted">
           <Pip size={56} mood="thinking" />
           <p className="mt-3 max-w-xs">
-            Pip can’t find this pool yet. If you just created it, it may still be settling
-            in (~20–40s). Give it a moment, then refresh.
+            Pip can’t find this garden yet. If you just planted it, it may still be taking
+            root (~20–40s). Give it a moment, then refresh.
           </p>
           <button
             type="button"
@@ -73,7 +74,12 @@ export default function PoolManagePage({
         <>
           <header className="mb-4">
             <div className="flex items-center gap-2">
-              <Pip size={30} mood="happy" />
+              <Pip size={30} mood={pool.firstDeposit ? "sleepy" : "happy"} />
+              <Sprout
+                state={pool.firstDeposit ? "seed" : "growing"}
+                size={22}
+                className="shrink-0"
+              />
               <h1 className="flex flex-wrap items-center gap-2 font-display text-2xl font-extrabold text-ink">
                 {pool.tokenA.ticker} / {pool.tokenB.ticker}
                 {pool.firstDeposit && (
