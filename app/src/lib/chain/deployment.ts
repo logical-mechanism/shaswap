@@ -115,19 +115,29 @@ const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
     poolRef: null,
     lpIntentRef: null,
   },
-  // TODO(mainnet launch): deploy the reference scripts, fill orderRef/poolRef, flip
-  // `deployed` to true. Until then app.shaswap.org runs with NEXT_PUBLIC_NETWORK=preprod.
-  // Addresses are derivable now (same script hashes, mainnet network tag) and pinned by test.
+  // Mainnet deploy 2026-06-08, tx d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb
+  // (settlement #0, pool #1, order #2, lp_intent #3). Each ref's on-chain script hash was
+  // re-hashed against the audited Rev 25 hashes (via Koios) before wiring; `deployed: true`
+  // turns the tx-building paths on, and a non-null `lpIntentRef` flips `LP_INTENTS_LIVE` true.
   mainnet: {
     networkId: 1,
-    deployed: false,
+    deployed: true,
     orderAddr:
       "addr1x8nl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu50xgt",
     poolAddr:
       "addr1xy6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzsnyq",
-    orderRef: null,
-    poolRef: null,
-    lpIntentRef: null,
+    orderRef: {
+      txHash: "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb",
+      outputIndex: 2,
+    },
+    poolRef: {
+      txHash: "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb",
+      outputIndex: 1,
+    },
+    lpIntentRef: {
+      txHash: "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb",
+      outputIndex: 3,
+    },
   },
 };
 
