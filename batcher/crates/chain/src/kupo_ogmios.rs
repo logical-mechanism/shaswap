@@ -23,8 +23,12 @@ use txbuild::address as txaddr;
 /// Everything that can go wrong talking to the chain.
 #[derive(Debug, Clone)]
 pub enum ChainError {
-    /// HTTP/transport failure.
+    /// Transport-level HTTP failure (connection refused, DNS, timeout) — no HTTP
+    /// status reached us. Momentary and retryable.
     Http(String),
+    /// A non-2xx HTTP status with a code we can classify (5xx/429/408 = transient,
+    /// other 4xx = our request is wrong / endpoint misconfigured).
+    HttpStatus { code: u16, ctx: String },
     /// A JSON-RPC / REST response we couldn't make sense of.
     Shape(String),
     /// Ogmios (or the node) returned a structured error (e.g. EvaluateTx failed,
@@ -36,6 +40,78 @@ pub enum ChainError {
     Address(String),
     /// The pool UTXO (carrying the NFT) wasn't found.
     PoolNotFound,
+}
+
+/// Coarse operational class of a [`ChainError`], for alerting. The orchestrator
+/// tags failure logs with this (`category=`) so an operator can route on it without
+/// pattern-matching free text: `Transient` is a node/indexer hiccup the solver
+/// retries (ignore), `Config`/`Critical` mean something is actually wrong (page),
+/// `Data` is an expected malformed/oversized payload (usually skipped quietly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCategory {
+    /// A momentary transport / 5xx / rate-limit failure — safe to retry.
+    Transient,
+    /// A configuration/deployment problem (e.g. an address we can't derive).
+    Config,
+    /// A malformed/oversized payload — expected at public addresses, not fatal.
+    Data,
+    /// An unexpected error needing operator attention (version drift, a node
+    /// rejection, a response we can't parse, a wrong/misconfigured endpoint).
+    Critical,
+}
+
+impl ErrorCategory {
+    /// Stable lowercase label for the `category=` log field.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorCategory::Transient => "transient",
+            ErrorCategory::Config => "config",
+            ErrorCategory::Data => "data",
+            ErrorCategory::Critical => "critical",
+        }
+    }
+}
+
+impl ChainError {
+    /// Is this a momentary failure worth retrying (vs. a permanent one)? Used by the
+    /// transport retry wrapper — only idempotent reads are retried, never submission.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            // Connection refused / DNS / timeout — the node or indexer is momentarily
+            // unreachable; a retry usually succeeds.
+            ChainError::Http(_) => true,
+            // 5xx server errors, 429 (rate-limited) and 408 (request timeout) are
+            // transient; other 4xx mean our request is wrong (don't retry).
+            ChainError::HttpStatus { code, .. } => *code >= 500 || *code == 429 || *code == 408,
+            _ => false,
+        }
+    }
+
+    /// Coarse class for alerting / log routing. See [`ErrorCategory`].
+    pub fn category(&self) -> ErrorCategory {
+        match self {
+            ChainError::Http(_) => ErrorCategory::Transient,
+            ChainError::HttpStatus { code, .. } => {
+                if *code >= 500 || *code == 429 || *code == 408 {
+                    ErrorCategory::Transient
+                } else {
+                    // A non-transient 4xx: our request is malformed or the endpoint is
+                    // wrong — operator-facing.
+                    ErrorCategory::Critical
+                }
+            }
+            // A discovered datum failed to decode — expected for junk UTXOs at public
+            // addresses (try_* turns these into a skipped UTXO, not a hard error).
+            ChainError::Decode(_) => ErrorCategory::Data,
+            // We couldn't derive an address from config — a config/deployment problem.
+            ChainError::Address(_) => ErrorCategory::Config,
+            // A response we couldn't parse (version drift), a structured node rejection,
+            // or a missing expected pool — needs attention.
+            ChainError::Shape(_) | ChainError::Service(_) | ChainError::PoolNotFound => {
+                ErrorCategory::Critical
+            }
+        }
+    }
 }
 
 impl From<DecodeError> for ChainError {
@@ -382,6 +458,12 @@ pub fn additional_utxo_json(additional: &[ResolvedUtxo]) -> Result<Json, ChainEr
 // The live backend.
 // ---------------------------------------------------------------------------
 
+/// Max attempts (initial + retries) for a transient idempotent read before giving
+/// up. Small on purpose: a wedged backend should surface fast, not stall the pass.
+const RETRY_ATTEMPTS: u32 = 3;
+/// First retry backoff (doubles each attempt: 250 ms, 500 ms).
+const RETRY_BASE_DELAY_MS: u64 = 250;
+
 /// Kupo + Ogmios implementation of [`ChainBackend`].
 pub struct KupoOgmios {
     cfg: ValidatedConfig,
@@ -435,15 +517,61 @@ impl KupoOgmios {
         txaddr::shelley_bech32(net, &addr).map_err(|e| ChainError::Address(format!("{e:?}")))
     }
 
-    /// POST a JSON-RPC request to Ogmios.
+    /// Retry an **idempotent** chain read on a transient failure (connection error /
+    /// 5xx / rate-limit) with exponential backoff, so a momentary node/indexer hiccup
+    /// doesn't abort a whole settlement pass. A non-transient error returns
+    /// immediately. Bounded to [`RETRY_ATTEMPTS`] tries (~0.75 s of added sleep
+    /// worst-case) so a pass can't stall on a wedged backend. **Never** wrap
+    /// submission (a retry could double-submit) — `submit` is a single shot.
+    fn with_retry<T>(
+        &self,
+        what: &str,
+        op: impl Fn() -> Result<T, ChainError>,
+    ) -> Result<T, ChainError> {
+        let mut attempt = 1u32;
+        loop {
+            match op() {
+                Ok(v) => return Ok(v),
+                Err(e) if e.is_transient() && attempt < RETRY_ATTEMPTS => {
+                    let delay = RETRY_BASE_DELAY_MS << (attempt - 1); // 250, 500, ...
+                    tracing::warn!(
+                        category = e.category().as_str(),
+                        what,
+                        attempt,
+                        max = RETRY_ATTEMPTS,
+                        delay_ms = delay,
+                        "transient chain error; retrying: {e:?}"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(delay));
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// POST a JSON-RPC request to Ogmios, retrying transient failures.
     fn ogmios(&self, method: &str, params: Json) -> Result<Json, ChainError> {
+        self.with_retry(method, || self.ogmios_once(method, params.clone()))
+    }
+
+    /// One Ogmios round-trip, no retry (the unit submission uses this directly).
+    fn ogmios_once(&self, method: &str, params: Json) -> Result<Json, ChainError> {
         let body = json!({"jsonrpc": "2.0", "method": method, "params": params});
         let resp = self
             .agent
             .post(&self.cfg.ogmios_url)
             .send_json(body)
             .or_else(|e| match e {
-                // Ogmios returns JSON-RPC errors with a non-2xx status too; read it.
+                // A 5xx is a server-side hiccup: surface it as a transient HttpStatus
+                // (so `with_retry` backs off) rather than trying to parse an error page
+                // as a JSON-RPC reply.
+                ureq::Error::Status(code, _) if code >= 500 => Err(ChainError::HttpStatus {
+                    code,
+                    ctx: format!("ogmios {method}"),
+                }),
+                // Ogmios returns JSON-RPC errors with a non-2xx (4xx) status too; read
+                // the body so `rpc_result` can surface the structured `error`.
                 ureq::Error::Status(_, r) => Ok(r),
                 ureq::Error::Transport(t) => Err(ChainError::Http(t.to_string())),
             })?;
@@ -451,11 +579,20 @@ impl KupoOgmios {
             .map_err(|e| ChainError::Shape(format!("ogmios json: {e}")))
     }
 
-    /// GET a Kupo REST path (e.g. `/matches/<addr>?unspent`).
+    /// GET a Kupo REST path (e.g. `/matches/<addr>?unspent`), retrying transient
+    /// failures (every Kupo call is an idempotent read).
     fn kupo_get(&self, path: &str) -> Result<Json, ChainError> {
+        self.with_retry(path, || self.kupo_get_once(path))
+    }
+
+    /// One Kupo round-trip, no retry.
+    fn kupo_get_once(&self, path: &str) -> Result<Json, ChainError> {
         let url = format!("{}{}", self.cfg.kupo_url.trim_end_matches('/'), path);
         let resp = self.agent.get(&url).call().map_err(|e| match e {
-            ureq::Error::Status(c, _) => ChainError::Http(format!("kupo {c} on {path}")),
+            ureq::Error::Status(code, _) => ChainError::HttpStatus {
+                code,
+                ctx: format!("kupo on {path}"),
+            },
             ureq::Error::Transport(t) => ChainError::Http(t.to_string()),
         })?;
         resp.into_json::<Json>()
@@ -784,7 +921,11 @@ impl ChainBackend for KupoOgmios {
 
     fn submit(&self, tx_cbor: &[u8]) -> Result<Vec<u8>, ChainError> {
         let hex = hex::encode(tx_cbor);
-        let reply = self.ogmios("submitTransaction", json!({"transaction": {"cbor": hex}}))?;
+        // Submission is a SINGLE shot — never retried. A transient error after the
+        // node may already have accepted the tx must not trigger a re-submit (the
+        // orchestrator re-discovers real chain state next pass; `pending` + the grace
+        // window handle a genuinely-lost submission).
+        let reply = self.ogmios_once("submitTransaction", json!({"transaction": {"cbor": hex}}))?;
         parse_submit(&reply)
     }
 }
@@ -1044,5 +1185,66 @@ mod tests {
             "error": {"code": -32602, "message": "boom"}
         });
         assert!(matches!(parse_tip(&reply), Err(ChainError::Service(_))));
+    }
+
+    #[test]
+    fn error_classification_drives_retry_and_category() {
+        // Transport failures + 5xx / 429 / 408 are transient (retried); other 4xx are
+        // not (our request is wrong). Decode = data, Address = config, the rest critical.
+        let transient = [
+            ChainError::Http("connection refused".into()),
+            ChainError::HttpStatus {
+                code: 503,
+                ctx: "ogmios".into(),
+            },
+            ChainError::HttpStatus {
+                code: 429,
+                ctx: "kupo".into(),
+            },
+            ChainError::HttpStatus {
+                code: 408,
+                ctx: "kupo".into(),
+            },
+        ];
+        for e in &transient {
+            assert!(e.is_transient(), "{e:?} should be transient");
+            assert_eq!(e.category(), ErrorCategory::Transient);
+        }
+
+        let not_retried = [
+            ChainError::HttpStatus {
+                code: 400,
+                ctx: "kupo".into(),
+            },
+            ChainError::HttpStatus {
+                code: 404,
+                ctx: "kupo".into(),
+            },
+            ChainError::Shape("bad".into()),
+            ChainError::Service("rejected".into()),
+            ChainError::PoolNotFound,
+            ChainError::Address("nope".into()),
+        ];
+        for e in &not_retried {
+            assert!(!e.is_transient(), "{e:?} should NOT be transient");
+        }
+
+        // 4xx (not 408/429) is critical, not transient.
+        assert_eq!(
+            ChainError::HttpStatus {
+                code: 404,
+                ctx: "kupo".into()
+            }
+            .category(),
+            ErrorCategory::Critical
+        );
+        assert_eq!(
+            ChainError::Address("nope".into()).category(),
+            ErrorCategory::Config
+        );
+        assert_eq!(
+            ChainError::Service("rejected".into()).category(),
+            ErrorCategory::Critical
+        );
     }
 }

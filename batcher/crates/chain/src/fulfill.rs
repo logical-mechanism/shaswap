@@ -196,8 +196,14 @@ fn build_staging(
     let change = compute_change(inp, fee)?;
     let solver_addr = PallasAddress::from_bech32(inp.solver_addr_bech32)
         .map_err(|e| ChainError::Address(format!("{e:?}")))?;
+    // `compute_change` already guarantees a non-negative balance, but convert (don't
+    // `unwrap`) so an invariant slip surfaces as a skipped intent, never a daemon
+    // panic on live funds.
+    let change_lovelace = u64::try_from(change.lovelace_of()).map_err(|_| {
+        ChainError::Shape(format!("negative change lovelace {}", change.lovelace_of()))
+    })?;
     let change_out = apply_assets(
-        shaswap_txbuilder::Output::new(solver_addr, u64::try_from(change.lovelace_of()).unwrap()),
+        shaswap_txbuilder::Output::new(solver_addr, change_lovelace),
         &change,
     )?;
     tx = tx.output(change_out);

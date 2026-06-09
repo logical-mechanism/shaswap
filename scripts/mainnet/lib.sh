@@ -45,6 +45,8 @@ preflight() {
   [ "${MAINNET_CONFIRM:-}" = "I_UNDERSTAND_THIS_IS_IRREVERSIBLE" ] \
     || die "set MAINNET_CONFIRM=I_UNDERSTAND_THIS_IS_IRREVERSIBLE to proceed (immutable deploy)."
   command -v cardano-cli >/dev/null || die "cardano-cli not found on PATH."
+  cardano-cli latest --help >/dev/null 2>&1 || die "this cardano-cli lacks the era-grouped 'latest' command group (need v8.20+/v11+)."
+  command -v python3 >/dev/null || die "python3 not found on PATH (the deploy helpers parse chain JSON with it)."
   [ -n "${CARDANO_NODE_SOCKET_PATH:-}" ] && [ -S "$CARDANO_NODE_SOCKET_PATH" ] \
     || die "CARDANO_NODE_SOCKET_PATH must point at a running node socket."
   : "${DEPLOY_SKEY:?set DEPLOY_SKEY to the funded mainnet signing key}"

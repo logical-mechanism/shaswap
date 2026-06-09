@@ -32,6 +32,42 @@ pub enum ConfigError {
     },
 }
 
+impl std::fmt::Display for ConfigError {
+    /// Operator-facing message: what is wrong AND where to fix it. A config error is
+    /// almost always a hand-edit slip or a stale/cross-network deployment.json, so each
+    /// variant points at the concrete remediation rather than just naming the field.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::BadHex { field } => write!(
+                f,
+                "config field `{field}` is not valid hex (odd length or a non-hex digit) — \
+                 check for a transposed or missing character in your deployment.json"
+            ),
+            ConfigError::BadLength { field, want, got } => write!(
+                f,
+                "config field `{field}` decoded to {got} bytes, expected {want} — a script \
+                 hash is 28 bytes (56 hex chars) and a tx id is 32 bytes (64 hex chars); \
+                 re-copy it from the deployment output"
+            ),
+            ConfigError::ConstantDrift { field, want, got } => write!(
+                f,
+                "protocol constant `{field}` is {got} but the deployed contracts use {want} — \
+                 these are baked into contracts/lib/shaswap/constants.ak; regenerate \
+                 deployment.json from the deployed contracts (a drift makes EVERY settlement \
+                 rejected on-chain). A likely cause is a preprod config run against mainnet \
+                 (or vice versa)"
+            ),
+            ConfigError::NameDrift { field } => write!(
+                f,
+                "constant byte-string `{field}` does not match constants.ak — use the exact \
+                 nft_name/lp_name hex from the deployed contracts"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
 /// A UTXO reference in `"txid#index"` form.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct RefInput {
@@ -215,6 +251,17 @@ pub enum ConfigErrorOrParse {
     Config(ConfigError),
 }
 
+impl std::fmt::Display for ConfigErrorOrParse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigErrorOrParse::Parse(e) => write!(f, "config JSON parse error: {e}"),
+            ConfigErrorOrParse::Config(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigErrorOrParse {}
+
 /// The validated, parsed config the rest of the solver uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedConfig {
@@ -323,6 +370,29 @@ mod tests {
             })) => {}
             other => panic!("expected min_liq drift, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn config_errors_carry_remediation_hints() {
+        // The Display message must name the field AND point at where to fix it, so an
+        // operator isn't left with a bare `ConstantDrift { .. }` debug dump.
+        let drift = ConfigError::ConstantDrift {
+            field: "min_liq",
+            want: 1000,
+            got: 999,
+        };
+        let msg = drift.to_string();
+        assert!(
+            msg.contains("min_liq") && msg.contains("constants.ak"),
+            "{msg}"
+        );
+
+        let bad_hex = ConfigError::BadHex { field: "pool_ref" }.to_string();
+        assert!(bad_hex.contains("pool_ref") && bad_hex.contains("deployment.json"));
+
+        // ConfigErrorOrParse forwards to the inner Display (with its hint).
+        let wrapped = ConfigErrorOrParse::Config(ConfigError::NameDrift { field: "nft_name" });
+        assert!(wrapped.to_string().contains("constants.ak"));
     }
 
     #[test]

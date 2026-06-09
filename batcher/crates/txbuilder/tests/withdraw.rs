@@ -117,3 +117,24 @@ fn reward_redeemer_without_matching_withdrawal_is_rejected() {
         .build_conway_raw();
     assert!(err.is_err(), "dangling reward redeemer must be rejected");
 }
+
+#[test]
+fn redeemer_without_ex_units_errors_instead_of_panicking() {
+    // Regression for the hardened `todo!()`: a redeemer staged WITHOUT execution units
+    // must return `TxBuilderError::MissingExUnits`, not panic. The builder never solves
+    // for ex-units — callers fill them from the EvaluateTx gate first. The lone
+    // withdrawal binds the reward redeemer, so the absent ex-units are the only fault.
+    let mut account = vec![0xf0u8];
+    account.extend_from_slice(&[0x55u8; 28]);
+    let err = StagingTransaction::new()
+        .input(Input::new(Hash::from([0xa1u8; 32]), 0))
+        .output(Output::new(enterprise_addr(), 2_000_000))
+        .fee(200_000)
+        .withdrawal(account.clone(), 0)
+        .add_withdraw_redeemer(account, vec![0xd8, 0x79, 0x80], None) // no ex-units
+        .build_conway_raw();
+    assert!(
+        matches!(err, Err(shaswap_txbuilder::TxBuilderError::MissingExUnits)),
+        "expected MissingExUnits, got {err:?}"
+    );
+}

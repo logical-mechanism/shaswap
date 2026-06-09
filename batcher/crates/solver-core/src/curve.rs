@@ -183,6 +183,24 @@ mod tests {
     }
 
     #[test]
+    fn pin_ok_symmetric_in_the_b_to_a_direction() {
+        // The mirror branch of `pin_ok_boundary_matches_contract`: the pool TAKES
+        // asset_b and PAYS asset_a. It must release the full curve amount (within eps),
+        // exactly like the a→b case — this guards the symmetric arm of `pin_ok`.
+        let f = fee_3_1000();
+        let (ra, rb) = (1_000_000_000i128, 1_000_000_000i128);
+        let db = 1_000_000; // asset_b pushed into the pool
+        let fair_a = swap_out(rb, ra, db, f); // asset_a the pool owes for `db` of b
+                                              // pay fair_a -> ok; fair_a-1 -> rejected at eps=0; within the dust band at eps=1.
+        assert!(pin_ok(ra, rb, ra - fair_a, rb + db, f, 0));
+        assert!(!pin_ok(ra, rb, ra - (fair_a - 1), rb + db, f, 0));
+        assert!(pin_ok(ra, rb, ra - (fair_a - 1), rb + db, f, 1));
+        assert!(!pin_ok(ra, rb, ra - (fair_a - 2), rb + db, f, 1));
+        // a pure donation (both reserves only grow) is vacuously pin-ok.
+        assert!(pin_ok(ra, rb, ra + 5, rb + 5, f, 0));
+    }
+
+    #[test]
     fn k_check_matches_contract_fee_cases() {
         // mirrors clearing_test: pool_fee_ok / pool_fee_short / pool_fee_no_residual.
         let f = fee_3_1000();
