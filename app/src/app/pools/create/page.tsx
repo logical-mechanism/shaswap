@@ -9,19 +9,22 @@
  * pool address. The creator then seeds the first liquidity via the existing deposit flow
  * (`/pools/[id]`) — surfaced as a CTA on success.
  *
- * Token universe = the connected wallet's held assets + ADA (creating a pool only needs
- * each asset's unit; the existing read-only token list only includes tokens already in a
- * pool, so it can't surface a brand-new token). ADA is normalised to `asset_b` on submit
- * to match the live pool orientation.
+ * Token universe = ADA + the connected wallet's held assets that are in the off-chain token
+ * registry (CIP-26). Creating a pool only needs each asset's unit, but a raw wallet dump
+ * floods the picker with NFTs/junk on mainnet, so we filter to registered fungible tokens
+ * (via the data seam) — this still surfaces a brand-new token the read-only pool list can't,
+ * as long as it's registered. ADA is normalised to `asset_b` on submit to match the live
+ * pool orientation.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useAssets, useWallet } from "@/lib/wallet/hooks";
 import type { TokenInfo } from "@/lib/data";
 import { explorerTxUrl } from "@/lib/config";
 import { usePools } from "@/hooks/usePools";
 import { useWriteGate } from "@/hooks/useWriteGate";
+import { fetchRegisteredTokens } from "@/lib/client/api";
 import { toUserMessage } from "@/lib/client/errors";
 import { TokenSelect } from "@/components/swap/TokenSelect";
 import { truncate, withinDecimals } from "@/lib/format";
@@ -43,29 +46,6 @@ const ADA_TOKEN: TokenInfo = {
   decimals: 6,
 };
 
-/** Decode a hex byte string to text (latin1 is fine for ASCII tickers); "" on odd len. */
-function hexToText(hex: string): string {
-  if (hex.length % 2 !== 0) return "";
-  let s = "";
-  for (let i = 0; i < hex.length; i += 2) {
-    s += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
-  }
-  return s;
-}
-
-/**
- * Minimal `TokenInfo` for a wallet-held asset, by unit. Creation needs only the unit, so
- * we derive a friendly ticker from the asset name (printable ASCII) and fall back to a
- * truncated unit; decimals are display-only and don't affect the (empty-pool) mint.
- */
-function walletTokenInfo(unit: string): TokenInfo {
-  const nameHex = unit.slice(56);
-  const decoded = hexToText(nameHex);
-  const ticker =
-    decoded && /^[\x20-\x7e]+$/.test(decoded) ? decoded : truncate(unit, 6, 4);
-  return { unit, ticker, name: ticker, decimals: 0 };
-}
-
 function gcd(a: bigint, b: bigint): bigint {
   while (b) [a, b] = [b, a % b];
   return a < 0n ? -a : a;
@@ -80,7 +60,7 @@ function bpsToFee(bps: number): { num: bigint; den: bigint } {
 }
 
 export default function CreatePoolPage() {
-  const { connected, wallet } = useWallet();
+  const { connected, wallet, refresh: refreshWallet } = useWallet();
   const assets = useAssets();
   const { pools } = usePools();
   // Pool creation spends a script (the mint), so it needs collateral like every write flow.
@@ -101,15 +81,62 @@ export default function CreatePoolPage() {
   // (the second double-spends → node rejects). The ref blocks the second call instantly.
   const submitting = useRef(false);
 
-  // Token universe: ADA + the wallet's own assets (deduped by unit).
+  // Registered (CIP-26) fungible tokens held by the wallet — filtered server-side via the
+  // data seam so the picker doesn't surface the wallet's NFTs. A stable, sorted key over the
+  // held non-ADA units drives the fetch (so it re-runs only when the holdings actually change,
+  // not on every assets array identity).
+  const unitsKey = useMemo(
+    () =>
+      [...new Set((assets ?? []).map((a) => a.unit))]
+        .filter((u) => u !== "lovelace")
+        .sort()
+        .join(","),
+    [assets],
+  );
+  const [walletTokens, setWalletTokens] = useState<TokenInfo[]>([]);
+  const [tokensLoading, setTokensLoading] = useState(false);
+  useEffect(() => {
+    const units = unitsKey ? unitsKey.split(",") : [];
+    const ac = new AbortController();
+    let cancelled = false;
+    // Defer the state writes out of the effect body (the project's effect convention —
+    // synchronous setState in an effect is lint-blocked and triggers cascading renders).
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      if (units.length === 0) {
+        setWalletTokens([]);
+        setTokensLoading(false);
+        return;
+      }
+      setTokensLoading(true);
+      fetchRegisteredTokens(units, ac.signal)
+        .then((t) => {
+          if (!ac.signal.aborted) setWalletTokens(t);
+        })
+        .catch(() => {
+          if (!ac.signal.aborted) setWalletTokens([]);
+        })
+        .finally(() => {
+          if (!ac.signal.aborted) setTokensLoading(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+      ac.abort();
+    };
+  }, [unitsKey]);
+
+  // Token universe: ADA + the wallet's registered tokens (deduped by unit).
   const tokens = useMemo(() => {
     const byUnit = new Map<string, TokenInfo>([[ADA_TOKEN.unit, ADA_TOKEN]]);
-    for (const a of assets ?? []) {
-      if (a.unit === "lovelace" || byUnit.has(a.unit)) continue;
-      byUnit.set(a.unit, walletTokenInfo(a.unit));
-    }
+    for (const t of walletTokens) byUnit.set(t.unit, t);
     return [...byUnit.values()];
-  }, [assets]);
+  }, [walletTokens]);
+  // Connected, holdings scanned, but nothing registered turned up — tell the user why their
+  // NFTs/unknown tokens aren't here (rather than leaving the picker looking broken/ADA-only).
+  const noRegisteredTokens =
+    connected && !tokensLoading && unitsKey !== "" && walletTokens.length === 0;
 
   // The user enters a plain percentage (0.3 = 0.30%). Under the hood it's stored on-chain
   // as integer basis points (0.3% → 30 bps → fee 3/1000), but we never surface that.
@@ -167,6 +194,8 @@ export default function CreatePoolPage() {
         feeDen: fee.den,
       });
       setState({ kind: "success", hash: res.txHash, poolId: res.poolId });
+      // Creating the pool locked the ~2 ₳ seed + fees — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -214,10 +243,20 @@ export default function CreatePoolPage() {
 
       <div className="k-card w-full p-5 sm:p-6">
         <div className="mb-2 px-1 text-xs text-muted">
-          {connected
-            ? "Tokens to choose from: ADA + the assets held in your wallet."
-            : "Connect a wallet to choose tokens. The list is ADA + your held assets."}
+          {!connected
+            ? "Connect a wallet to choose tokens. The list is ADA + the registered tokens you hold."
+            : tokensLoading
+              ? "Pip’s sorting your wallet for registered tokens…"
+              : "Tokens to choose from: ADA + the registered tokens in your wallet (NFTs are hidden)."}
         </div>
+
+        {noRegisteredTokens && (
+          <div className="k-note k-note-info mb-2 text-xs">
+            Pip only found NFTs or unlisted assets in your wallet. The picker shows tokens
+            in the Cardano token registry, so you can still pair anything with ADA — but the
+            other token has to be a registered token.
+          </div>
+        )}
 
         <TokenRow
           label="First token"

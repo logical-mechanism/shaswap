@@ -57,6 +57,8 @@ export interface AppWalletState {
 export interface BridgeActions {
   connect: (name: string, persist?: boolean) => Promise<void>;
   disconnect: () => void;
+  /** Re-read the connected wallet's balance/assets (event-driven; no polling). */
+  refresh: () => void;
 }
 
 export interface AppWalletValue extends AppWalletState {
@@ -64,6 +66,11 @@ export interface AppWalletValue extends AppWalletState {
   ensureLoaded: () => void;
   connect: (name: string, persist?: boolean) => Promise<void>;
   disconnect: () => void;
+  /**
+   * Re-read the connected wallet's balance/assets right now — call after submitting a tx so
+   * the shown balance updates without polling. No-op until the wallet bridge has loaded.
+   */
+  refresh: () => void;
 }
 
 const DISCONNECTED: AppWalletState = {
@@ -150,9 +157,13 @@ export function AppWalletProvider({ children }: { children: ReactNode }) {
     actionsRef.current?.disconnect();
   }, []);
 
+  const refresh = useCallback(() => {
+    actionsRef.current?.refresh();
+  }, []);
+
   const value = useMemo<AppWalletValue>(
-    () => ({ ...state, ensureLoaded, connect, disconnect }),
-    [state, ensureLoaded, connect, disconnect],
+    () => ({ ...state, ensureLoaded, connect, disconnect, refresh }),
+    [state, ensureLoaded, connect, disconnect, refresh],
   );
 
   return (

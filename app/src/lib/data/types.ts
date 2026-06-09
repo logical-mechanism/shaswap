@@ -47,6 +47,18 @@ export interface Pool {
   firstDeposit?: boolean;
 }
 
+/**
+ * A non-binding market-price reference for a pair, sourced from an external DEX (app-only;
+ * the CORE never depends on it). Used to suggest a sane opening price on a pool's first
+ * deposit — the user still sets the real price.
+ */
+export interface ReferencePrice {
+  /** How many tokenB are worth 1 tokenA, in HUMAN units (decimal-adjusted). */
+  pricePerA: number;
+  /** Human name of the external source (e.g. "MuesliSwap"). */
+  source: string;
+}
+
 /** A price quote for swapping `amountIn` of `tokenIn` into `tokenOut`. */
 export interface Quote {
   tokenIn: TokenInfo;

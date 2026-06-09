@@ -21,6 +21,7 @@ import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
 import {
+  formatAda,
   formatPercent,
   formatUnits,
   toBaseUnits,
@@ -42,7 +43,7 @@ type PostState =
   | { kind: "error"; message: string };
 
 export function SwapCard() {
-  const { connected, wallet } = useWallet();
+  const { connected, wallet, refresh: refreshWallet } = useWallet();
   const networkId = useNetwork();
   const address = useAddress();
   const { tokens, loading: tokensLoading, error: tokensError } = useTokens();
@@ -182,6 +183,12 @@ export function SwapCard() {
     fromToken?.unit === "lovelace"
       ? toBig(lovelace ?? "0")
       : toBig(assets?.find((a) => a.unit === fromToken?.unit)?.quantity ?? "0");
+  // Wallet balance of the TO token too, so the user sees how much they already hold of what
+  // they're buying (display-only — same source as the FROM balance, no funding role).
+  const toBalance =
+    toToken?.unit === "lovelace"
+      ? toBig(lovelace ?? "0")
+      : toBig(assets?.find((a) => a.unit === toToken?.unit)?.quantity ?? "0");
   const fromIsAda = fromToken?.unit === "lovelace";
   const amountBig = hasAmount ? BigInt(baseAmountIn) : 0n;
   const funding = orderFunding({
@@ -273,6 +280,8 @@ export function SwapCard() {
       });
       setPost({ kind: "success", hash: res.txHash });
       setAmount("");
+      // The order moved funds out of the wallet — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setPost({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -400,6 +409,11 @@ export function SwapCard() {
           setToUnit(t.unit);
           if (post.kind !== "idle") setPost({ kind: "idle" });
         }}
+        balance={
+          connected && toToken
+            ? { display: formatUnits(toBalance.toString(), toToken.decimals) }
+            : undefined
+        }
       />
 
       {/* mid price / impact / pool fee / tip / minimum received */}
@@ -418,7 +432,7 @@ export function SwapCard() {
         onRefresh={refreshPrice}
       />
 
-      {/* advanced: tip + partial fills + expiry */}
+      {/* advanced: tip + partial fills + expiry + the order's ADA breakdown */}
       <Advanced
         open={advanced}
         onToggle={() => setAdvanced((v) => !v)}
@@ -430,6 +444,10 @@ export function SwapCard() {
         onPartial={setPartial}
         expiry={expiry}
         onExpiry={setExpiry}
+        orderMinAda={funding.orderMinAda}
+        tipLovelace={BigInt(tipLovelace || "0")}
+        fromIsAda={fromIsAda}
+        tradedAda={fromIsAda ? amountBig : 0n}
       />
 
       {/* high price-impact caution (the quote is an estimate over real reserves) */}
@@ -541,13 +559,7 @@ function PostResult({ state }: { state: PostState }) {
           <div className="font-bold text-success">Order posted ✓</div>
         </div>
         <p className="mt-1 text-muted">
-          Pip’s tucked it into the next batch. It’ll appear under{" "}
-          <a href="/orders" className="k-link">
-            Orders
-          </a>{" "}
-          once the network confirms (~20–40s), resting at your floor until the batch settles —
-          or grab it back anytime, which returns your input plus the small ADA deposit and
-          tip.
+          Resting at your floor until the next batch settles — yours to grab back anytime.
         </p>
         <div className="mt-1.5 flex flex-col items-start gap-1">
           <a href="/orders" className="k-link font-semibold">
@@ -579,6 +591,11 @@ function PostResult({ state }: { state: PostState }) {
   return null;
 }
 
+/** Rough, honest guess at the network fee to POST an order — a plain payment to the order
+ * address (the validator only runs on settle/reclaim, not on post), so it's a small flat
+ * tx fee. Labeled as an estimate in the UI; not used in any funding gate. */
+const EST_POST_FEE_LOVELACE = 200_000n;
+
 function Advanced({
   open,
   onToggle,
@@ -590,6 +607,10 @@ function Advanced({
   onPartial,
   expiry,
   onExpiry,
+  orderMinAda,
+  tipLovelace,
+  fromIsAda,
+  tradedAda,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -602,6 +623,14 @@ function Advanced({
   onPartial: (v: boolean) => void;
   expiry: string;
   onExpiry: (v: string) => void;
+  /** Min-ADA the order UTXO must carry (doubled when partial fills are on), in lovelace. */
+  orderMinAda: bigint;
+  /** The posted solver tip, in lovelace. */
+  tipLovelace: bigint;
+  /** Selling ADA → the traded lovelace also sits on the order UTXO. */
+  fromIsAda: boolean;
+  /** ADA being sold (lovelace) when fromIsAda; 0 otherwise. */
+  tradedAda: bigint;
 }) {
   return (
     <div className="mt-3 border-t border-border pt-2">
@@ -676,6 +705,36 @@ function Advanced({
               <option value="1w">1 week</option>
             </select>
           </label>
+
+          {/* Why the order holds exact ADA — the three roles ADA plays on one UTXO
+              (BLUEPRINT §5.2.1), plus a rough fee guess. Short and reassuring; not a gate. */}
+          <div className="space-y-1.5 border-t border-border pt-2.5 text-[11px] text-muted">
+            <div className="font-semibold text-muted">ADA on your order</div>
+            <p className="leading-snug">
+              Your order is its own little UTXO, so it carries some ADA in separate roles.
+              It all comes back when it settles or you grab it back — only the tip is ever kept.
+            </p>
+            <DetailRow label="Held min-ADA (UTXO deposit)">
+              ~{formatAda(orderMinAda.toString())} ₳
+            </DetailRow>
+            {partial && (
+              <p className="-mt-0.5 text-[10px] leading-snug text-muted">
+                Doubled because partial fills can leave a second reclaimable piece.
+              </p>
+            )}
+            <DetailRow label="Solver tip">
+              {tipLovelace > 0n ? `${formatAda(tipLovelace.toString())} ₳` : "—"}
+            </DetailRow>
+            {fromIsAda && tradedAda > 0n && (
+              <DetailRow label="ADA you’re selling">
+                {formatAda(tradedAda.toString())} ₳
+              </DetailRow>
+            )}
+            <DetailRow label="Est. network fee">
+              ~{formatAda(EST_POST_FEE_LOVELACE.toString())} ₳{" "}
+              <span className="text-muted/70">(rough guess)</span>
+            </DetailRow>
+          </div>
         </div>
       )}
     </div>

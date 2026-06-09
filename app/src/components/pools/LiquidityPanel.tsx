@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { deserializeAddress } from "@meshsdk/core";
-import { useAddress, useWallet } from "@/lib/wallet/hooks";
-import type { Pool } from "@/lib/data";
+import { deserializeAddress, type Asset } from "@meshsdk/core";
+import { useAddress, useAssets, useLovelace, useWallet } from "@/lib/wallet/hooks";
+import type { Pool, ReferencePrice, TokenInfo } from "@/lib/data";
 import { explorerTxUrl } from "@/lib/config";
 import { usePoolUtxo } from "@/hooks/usePoolUtxo";
 import { useWriteGate } from "@/hooks/useWriteGate";
@@ -17,6 +17,7 @@ import {
   type PoolView,
 } from "@/lib/chain/lp";
 import { quoteLpDeposit, quoteLpWithdraw } from "@/lib/chain/lpQuote";
+import { fetchReferencePrice } from "@/lib/client/api";
 import { toUserMessage } from "@/lib/client/errors";
 import {
   LP_INTENTS_LIVE,
@@ -45,6 +46,17 @@ type TxState =
   | { kind: "success"; hash: string }
   | { kind: "error"; message: string };
 
+/** Wallet balance of an asset unit (base units), read from the connected wallet's holdings.
+ * ADA via lovelace; any other token via its assets entry. 0 when absent/disconnected. */
+function walletBalanceOf(
+  unit: string,
+  lovelace: string | undefined,
+  assets: Asset[] | undefined,
+): bigint {
+  if (unit === "lovelace") return toBig(lovelace ?? "0");
+  return toBig(assets?.find((a) => a.unit === unit)?.quantity ?? "0");
+}
+
 /** Apply a slippage haircut (bps) to a computed amount, flooring. Clamped to [0,100%]. */
 function withSlippage(amount: bigint, slippagePct: number): bigint {
   const bps = BigInt(Math.min(10_000, Math.max(0, Math.round(slippagePct * 100))));
@@ -58,6 +70,99 @@ function formatRate(n: number): string {
   return n >= 1
     ? n.toLocaleString(undefined, { maximumFractionDigits: 6 })
     : n.toLocaleString(undefined, { maximumSignificantDigits: 4 });
+}
+
+/** A positive number → a plain (ungrouped) decimal string the amount input accepts, trimmed
+ * to the token's precision. "" when it isn't a usable positive amount (so a too-small
+ * suggestion doesn't pre-fill a misleading "0"). */
+function formatAmountForInput(n: number, decimals: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const d = Math.max(0, Math.min(decimals, 9));
+  const s = d > 0 ? n.toFixed(d).replace(/\.?0+$/, "") : Math.round(n).toString();
+  return Number(s) > 0 ? s : "";
+}
+
+/**
+ * First-deposit price helper: a non-binding market reference for the pair (from an external
+ * DEX via the data seam), shown so the creator can open the pool near fair value. When the
+ * first amount is entered, offers a one-tap "match market" that fills the paired amount.
+ * Renders nothing when there's no reference (testnet / unlisted token / source down) — the
+ * form still works, the creator just sets the price by hand.
+ */
+function FirstDepositReference({
+  tokenA,
+  tokenB,
+  amountA,
+  onUse,
+}: {
+  tokenA: TokenInfo;
+  tokenB: TokenInfo;
+  amountA: string;
+  onUse: (humanB: string) => void;
+}) {
+  const [ref, setRef] = useState<ReferencePrice | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    let cancelled = false;
+    // Deferred state writes (the project's effect convention — no sync setState in an effect).
+    const id = setTimeout(() => {
+      if (cancelled) return;
+      setLoading(true);
+      fetchReferencePrice(tokenA.unit, tokenB.unit, ac.signal)
+        .then((r) => {
+          if (!ac.signal.aborted) setRef(r);
+        })
+        .catch(() => {
+          if (!ac.signal.aborted) setRef(null);
+        })
+        .finally(() => {
+          if (!ac.signal.aborted) setLoading(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+      ac.abort();
+    };
+  }, [tokenA.unit, tokenB.unit]);
+
+  if (loading && !ref) {
+    return (
+      <p className="px-1 text-[11px] text-muted">Pip’s checking the market price…</p>
+    );
+  }
+  if (!ref || !(ref.pricePerA > 0)) return null;
+
+  const amtA = Number(amountA);
+  const suggestB =
+    Number.isFinite(amtA) && amtA > 0 ? amtA * ref.pricePerA : 0;
+  const suggestStr = formatAmountForInput(suggestB, tokenB.decimals);
+
+  return (
+    <div className="k-field p-3 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted">Market price ({ref.source})</span>
+        <span className="font-semibold tabular-nums text-ink">
+          1 {tokenA.ticker} ≈ {formatRate(ref.pricePerA)} {tokenB.ticker}
+        </span>
+      </div>
+      {suggestStr && (
+        <button
+          type="button"
+          onClick={() => onUse(suggestStr)}
+          className="k-btn-ghost mt-2 w-full py-1.5 text-xs"
+        >
+          Match market — set {tokenB.ticker} to {suggestStr}
+        </button>
+      )}
+      <p className="mt-1 text-[10px] leading-snug text-muted">
+        Just a hint from {ref.source}, not gospel — double-check it. You set the real opening
+        price.
+      </p>
+    </div>
+  );
 }
 
 export function LiquidityPanel({ pool }: { pool: Pool }) {
@@ -356,6 +461,13 @@ function AddForm({
   // build two deposits racing the same pool UTXO.
   const submitting = useRef(false);
 
+  // Wallet balances of the two deposit tokens (display-only), + a post-tx balance refresh.
+  const { connected, refresh: refreshWallet } = useWallet();
+  const lovelace = useLovelace();
+  const assets = useAssets();
+  const balA = walletBalanceOf(pool.tokenA.unit, lovelace, assets);
+  const balB = walletBalanceOf(pool.tokenB.unit, lovelace, assets);
+
   const first = stats.firstDeposit;
 
   // Base-unit deltas (plain render computation — the React Compiler memoizes; a
@@ -431,6 +543,8 @@ function AddForm({
       setState({ kind: "success", hash: res.txHash });
       setAmountA("");
       setAmountB("");
+      // Deposit moved tokens out of the wallet — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -466,6 +580,16 @@ function AddForm({
             </p>
           </div>
 
+          <FirstDepositReference
+            tokenA={pool.tokenA}
+            tokenB={pool.tokenB}
+            amountA={amountA}
+            onUse={(v) => {
+              setAmountB(v);
+              if (state.kind !== "idle") setState({ kind: "idle" });
+            }}
+          />
+
           {showOpening && (
             <div className="k-field p-3 text-xs">
               <div className="mb-1.5 px-1 text-muted">Opening price you’re setting</div>
@@ -481,10 +605,6 @@ function AddForm({
                   ≈ {formatRate(aPerB)} {pool.tokenA.ticker}
                 </span>
               </div>
-              {/* TODO(mainnet): surface an external reference price (e.g. Minswap) beside
-                  this as a non-binding sanity check. No preprod reference market exists; the
-                  data seam (DataProvider) is the single place to source it — keep it OPTIONAL
-                  so the app (and this guidance) still works when it's unavailable. */}
             </div>
           )}
 
@@ -505,6 +625,7 @@ function AddForm({
           setAmountA(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
         }}
+        balance={connected ? formatUnits(balA.toString(), pool.tokenA.decimals) : undefined}
       />
 
       <div className="my-2 text-center text-muted">+</div>
@@ -525,6 +646,7 @@ function AddForm({
           setAmountB(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
         }}
+        balance={connected ? formatUnits(balB.toString(), pool.tokenB.decimals) : undefined}
       />
 
       {!first && deltaB > 0n && (
@@ -958,6 +1080,13 @@ function AddIntentForm({
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
 
+  // Wallet balances of the two deposit tokens (display-only), + a post-tx balance refresh.
+  const { connected, refresh: refreshWallet } = useWallet();
+  const lovelace = useLovelace();
+  const assets = useAssets();
+  const balA = walletBalanceOf(pool.tokenA.unit, lovelace, assets);
+  const balB = walletBalanceOf(pool.tokenB.unit, lovelace, assets);
+
   const first = stats.firstDeposit;
 
   // Pair Δb from Δa at the pool ratio (rounded up), exactly like the direct AddForm — a
@@ -1028,6 +1157,8 @@ function AddIntentForm({
       setState({ kind: "success", hash: res.txHash });
       setAmountA("");
       onPosted();
+      // Posting the intent locked tokens + tip — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -1062,6 +1193,7 @@ function AddIntentForm({
           setAmountA(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
         }}
+        balance={connected ? formatUnits(balA.toString(), pool.tokenA.decimals) : undefined}
       />
 
       <div className="my-2 text-center text-muted">+</div>
@@ -1073,6 +1205,7 @@ function AddIntentForm({
         editable={false}
         decimals={pool.tokenB.decimals}
         onChange={() => {}}
+        balance={connected ? formatUnits(balB.toString(), pool.tokenB.decimals) : undefined}
       />
 
       <IntentControls
@@ -1558,6 +1691,7 @@ function AmountField({
   editable,
   decimals,
   onChange,
+  balance,
 }: {
   label: string;
   ticker: string;
@@ -1566,6 +1700,8 @@ function AmountField({
   /** Max fractional digits accepted while typing (the token's precision; 0 if unknown). */
   decimals: number;
   onChange: (v: string) => void;
+  /** Optional wallet balance of this token, already formatted (display-only). */
+  balance?: string;
 }) {
   return (
     <div className="k-field p-3.5">
@@ -1588,6 +1724,11 @@ function AmountField({
           {ticker}
         </span>
       </div>
+      {balance !== undefined && (
+        <div className="mt-2 px-1 text-[11px] text-muted">
+          Balance: <span className="tabular-nums">{balance}</span> {ticker}
+        </div>
+      )}
     </div>
   );
 }

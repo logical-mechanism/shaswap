@@ -23,6 +23,8 @@ export function useWallet() {
     wallet: w.wallet as IWallet,
     connect: w.connect,
     disconnect: w.disconnect,
+    // Event-driven balance refresh (no polling) — call after a tx submits.
+    refresh: w.refresh,
   };
 }
 
