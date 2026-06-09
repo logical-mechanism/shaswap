@@ -36,9 +36,9 @@ import { APP_CONFIG, type Network, type NetworkId } from "../config.ts";
  * networks by `address.test.ts`.
  *
  * Only the reference-script UTXOs are genuinely per-network. `deployed` gates the
- * tx-building paths: a network whose reference scripts aren't live yet (preview,
- * mainnet-before-launch) can still be READ — addresses resolve, pool/order scans just
- * come back empty — but cannot build spends (see `requireDeployed`).
+ * tx-building paths: a network whose reference scripts aren't live (preview) can still be
+ * READ — addresses resolve, pool/order scans just come back empty — but cannot build spends
+ * (see `requireDeployed`).
  */
 type RefScript = { txHash: string; outputIndex: number };
 
@@ -60,11 +60,11 @@ interface NetworkDeployment {
   /** Pool reference-script UTXO — `null` until this network is deployed. */
   poolRef: RefScript | null;
   /**
-   * `lp_intent` reference-script UTXO — `null` until the LP-intent path ships (Phase 4).
-   * The `lp_intent` validator is part of the NEW (post-audit) deployment set, which is not
-   * yet on-chain anywhere; until this is filled in, posting/reclaiming an intent throws via
-   * `requireLpIntentDeployed()` (a `null` here also means `LP_INTENTS_LIVE === false`). Reads
-   * still resolve the address (and just come back empty). The `lp_intent` script HASH and its
+   * `lp_intent` reference-script UTXO — `null` on a network where the LP-intent path isn't
+   * live. The `lp_intent` validator is part of the post-audit (Rev 22+) deployment set and is
+   * live on preprod and mainnet; where this is `null` (preview), posting/reclaiming an intent
+   * throws via `requireLpIntentDeployed()` (a `null` here also means `LP_INTENTS_LIVE === false`).
+   * Reads still resolve the address (and just come back empty). The `lp_intent` script HASH and its
    * enterprise address are DERIVED (not literals) from `SETTLEMENT_HASH` — see
    * `lpIntentScript.ts` — so they auto-track whatever `S` this deployment declares.
    */
@@ -235,18 +235,20 @@ export const ORDER_REF: RefScript | null = ACTIVE.orderRef;
 export const POOL_REF: RefScript | null = ACTIVE.poolRef;
 
 /**
- * `lp_intent` reference-script UTXO for the ACTIVE network — `null` until the LP-intent
- * path ships (Phase 4). Needed by the `ReclaimLp` builder to spend an intent via the
- * reference script (no inlined 2.8 kB validator). `null` ⇒ LP intents are not live here.
+ * `lp_intent` reference-script UTXO for the ACTIVE network — `null` on a network where the
+ * LP-intent path isn't live (live on preprod and mainnet; absent on preview). Needed by the
+ * `ReclaimLp` builder to spend an intent via the reference script (no inlined 2.8 kB
+ * validator). `null` ⇒ LP intents are not live here.
  */
 export const LP_INTENT_REF: RefScript | null = ACTIVE.lpIntentRef;
 
 /**
  * Whether the batcher-fulfilled LP-intent path is LIVE on the active network. Gated on the
- * `lp_intent` reference script being deployed (Phase 4): until then a posted intent could be
- * neither fulfilled (no batcher on this set) nor reclaimed (no ref script) — a fund trap — so
- * `requireLpIntentDeployed()` refuses to build either tx. The UI reads this to keep the
- * intent path visible-but-disabled and fall back to the always-available Direct LP path.
+ * `lp_intent` reference script being deployed (live on preprod and mainnet; absent on
+ * preview): where it isn't, a posted intent could be neither fulfilled (no batcher on this
+ * set) nor reclaimed (no ref script) — a fund trap — so `requireLpIntentDeployed()` refuses to
+ * build either tx. The UI reads this to keep the intent path visible-but-disabled and fall
+ * back to the always-available Direct LP path.
  */
 export const LP_INTENTS_LIVE: boolean = DEPLOYED && LP_INTENT_REF !== null;
 
@@ -270,8 +272,8 @@ export const LP_INTENT_SCRIPT_SIZE = 2954;
 
 /**
  * Narrow the `lp_intent` reference script for a tx-building path, throwing a legible error on
- * a network where the LP-intent path isn't live yet (every network, pre-Phase-4). Reads never
- * call this — they resolve the (empty) lp_intent address instead. Mirrors `requireDeployed()`.
+ * a network where the LP-intent path isn't live (e.g. preview). Reads never call this — they
+ * resolve the (empty) lp_intent address instead. Mirrors `requireDeployed()`.
  */
 export function requireLpIntentDeployed(): { lpIntentRef: RefScript } {
   if (!LP_INTENTS_LIVE || !LP_INTENT_REF) {
@@ -285,8 +287,8 @@ export function requireLpIntentDeployed(): { lpIntentRef: RefScript } {
 
 /**
  * Narrow the per-network reference scripts for a tx-building path. Throws a legible error
- * on a network where ShaSwap isn't live yet (e.g. mainnet before launch) instead of
- * crashing on a null `txHash`. Reads never call this — they degrade to empty results.
+ * on a network where ShaSwap isn't live (e.g. preview) instead of crashing on a null
+ * `txHash`. Reads never call this — they degrade to empty results.
  */
 export function requireDeployed(): { orderRef: RefScript; poolRef: RefScript } {
   if (!DEPLOYED || !ORDER_REF || !POOL_REF) {

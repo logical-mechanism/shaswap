@@ -63,7 +63,8 @@ The components are decoupled. Keep them that way.
 - **Network is one knob** (`NEXT_PUBLIC_NETWORK` → `APP_CONFIG.network`): the same build
   serves preprod/preview/mainnet. Per-network identities live in
   `src/lib/chain/deployment.ts`; everything network-independent (script hashes, compiled
-  code, constants) is shared. Mainnet is scaffolded (`deployed: false`) until contracts ship.
+  code, constants) is shared. Mainnet is live (`deployed: true`, since 2026-06-08); preview is
+  the only network not deployed.
 - **Deploy:** DigitalOcean App Platform (Node buildpack, auto-deploy on push); one app per
   network — specs in `.do/`. `NEXT_PUBLIC_*` must be `RUN_AND_BUILD_TIME` (build-inlined);
   the Blockfrost key is a `RUN_TIME` secret whose prefix must match the network.

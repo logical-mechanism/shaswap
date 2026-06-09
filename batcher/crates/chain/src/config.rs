@@ -107,11 +107,11 @@ pub struct Config {
     pub settlement_ref: RefInput,
     pub order_ref: RefInput,
     pub pool_ref: RefInput,
-    /// Reference script UTXO for the `lp_intent` validator. **Optional** — it is
-    /// deployed only at the Phase-4 redeploy (the lp_intent validator joins the
-    /// reference-script set then), so a pre-Phase-4 deployment JSON omits it and LP
-    /// intent fulfillment is simply disabled (settlements are unaffected). Once
-    /// present, the batcher references it (alongside `pool_ref`) to fulfil intents.
+    /// Reference script UTXO for the `lp_intent` validator. **Optional** — the
+    /// lp_intent validator is live on preprod and mainnet, but a deployment JSON may
+    /// omit it to run settlements-only, in which case LP intent fulfillment is simply
+    /// disabled (settlements are unaffected). Once present, the batcher references it
+    /// (alongside `pool_ref`) to fulfil intents.
     #[serde(default)]
     pub lp_intent_ref: Option<RefInput>,
 
@@ -277,7 +277,7 @@ pub struct ValidatedConfig {
     pub settlement_ref: OutputReference,
     pub order_ref: OutputReference,
     pub pool_ref: OutputReference,
-    /// Reference-script UTXO for the `lp_intent` validator, if deployed (Phase 4).
+    /// Reference-script UTXO for the `lp_intent` validator, if configured.
     /// `None` disables LP-intent fulfillment (the batcher can't reference the
     /// validator); settlements are unaffected. See [`Config::lp_intent_ref`].
     pub lp_intent_ref: Option<OutputReference>,
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn lp_intent_ref_is_optional_and_parses_when_present() {
-        // Absent in the JSON → None (pre-Phase-4 deployment; LP fulfillment off).
+        // Absent in the JSON → None (settlements-only config; LP fulfillment off).
         let v = Config::from_json(&good_json()).expect("valid");
         assert_eq!(v.lp_intent_ref, None);
 

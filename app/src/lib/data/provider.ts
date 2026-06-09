@@ -78,7 +78,7 @@ export interface DataProvider {
    * A wallet's open batcher-fulfilled LP intents (deposit/withdraw) for a bech32 address —
    * the live UTXOs at the `lp_intent` address owned by this wallet's payment key. Mirrors
    * `walletPositions` for the LP-intent surface (pending/reclaim). Empty on a network where
-   * the LP-intent path isn't live yet (the address resolves but holds nothing).
+   * the LP-intent path isn't live (the address resolves but holds nothing).
    */
   walletLpIntents(address: string): Promise<LpIntentPosition[]>;
 

@@ -581,7 +581,7 @@ export async function reclaimLpIntent(
   if (!txHash || !Number.isInteger(index)) {
     throw new Error(`malformed lp-intent ref: ${ref}`);
   }
-  // Refuse on a network where the LP-intent path isn't live yet (also narrows LP_INTENT_REF).
+  // Refuse on a network where the LP-intent path isn't live (also narrows LP_INTENT_REF).
   const { lpIntentRef } = requireLpIntentDeployed();
 
   const [intent, protocol, changeAddress, collateral, utxos] = await Promise.all([
