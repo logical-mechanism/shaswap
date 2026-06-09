@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { deserializeAddress } from "@meshsdk/core";
-import { useAddress, useWallet } from "@/lib/wallet/hooks";
+import { deserializeAddress, type Asset } from "@meshsdk/core";
+import { useAddress, useAssets, useLovelace, useWallet } from "@/lib/wallet/hooks";
 import type { Pool } from "@/lib/data";
 import { explorerTxUrl } from "@/lib/config";
 import { usePoolUtxo } from "@/hooks/usePoolUtxo";
@@ -44,6 +44,17 @@ type TxState =
   | { kind: "busy" }
   | { kind: "success"; hash: string }
   | { kind: "error"; message: string };
+
+/** Wallet balance of an asset unit (base units), read from the connected wallet's holdings.
+ * ADA via lovelace; any other token via its assets entry. 0 when absent/disconnected. */
+function walletBalanceOf(
+  unit: string,
+  lovelace: string | undefined,
+  assets: Asset[] | undefined,
+): bigint {
+  if (unit === "lovelace") return toBig(lovelace ?? "0");
+  return toBig(assets?.find((a) => a.unit === unit)?.quantity ?? "0");
+}
 
 /** Apply a slippage haircut (bps) to a computed amount, flooring. Clamped to [0,100%]. */
 function withSlippage(amount: bigint, slippagePct: number): bigint {
@@ -356,6 +367,13 @@ function AddForm({
   // build two deposits racing the same pool UTXO.
   const submitting = useRef(false);
 
+  // Wallet balances of the two deposit tokens (display-only), + a post-tx balance refresh.
+  const { connected, refresh: refreshWallet } = useWallet();
+  const lovelace = useLovelace();
+  const assets = useAssets();
+  const balA = walletBalanceOf(pool.tokenA.unit, lovelace, assets);
+  const balB = walletBalanceOf(pool.tokenB.unit, lovelace, assets);
+
   const first = stats.firstDeposit;
 
   // Base-unit deltas (plain render computation — the React Compiler memoizes; a
@@ -431,6 +449,8 @@ function AddForm({
       setState({ kind: "success", hash: res.txHash });
       setAmountA("");
       setAmountB("");
+      // Deposit moved tokens out of the wallet — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -505,6 +525,7 @@ function AddForm({
           setAmountA(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
         }}
+        balance={connected ? formatUnits(balA.toString(), pool.tokenA.decimals) : undefined}
       />
 
       <div className="my-2 text-center text-muted">+</div>
@@ -525,6 +546,7 @@ function AddForm({
           setAmountB(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
         }}
+        balance={connected ? formatUnits(balB.toString(), pool.tokenB.decimals) : undefined}
       />
 
       {!first && deltaB > 0n && (
@@ -958,6 +980,13 @@ function AddIntentForm({
   const [state, setState] = useState<TxState>({ kind: "idle" });
   const submitting = useRef(false);
 
+  // Wallet balances of the two deposit tokens (display-only), + a post-tx balance refresh.
+  const { connected, refresh: refreshWallet } = useWallet();
+  const lovelace = useLovelace();
+  const assets = useAssets();
+  const balA = walletBalanceOf(pool.tokenA.unit, lovelace, assets);
+  const balB = walletBalanceOf(pool.tokenB.unit, lovelace, assets);
+
   const first = stats.firstDeposit;
 
   // Pair Δb from Δa at the pool ratio (rounded up), exactly like the direct AddForm — a
@@ -1028,6 +1057,8 @@ function AddIntentForm({
       setState({ kind: "success", hash: res.txHash });
       setAmountA("");
       onPosted();
+      // Posting the intent locked tokens + tip — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
@@ -1062,6 +1093,7 @@ function AddIntentForm({
           setAmountA(v);
           if (state.kind !== "idle") setState({ kind: "idle" });
         }}
+        balance={connected ? formatUnits(balA.toString(), pool.tokenA.decimals) : undefined}
       />
 
       <div className="my-2 text-center text-muted">+</div>
@@ -1073,6 +1105,7 @@ function AddIntentForm({
         editable={false}
         decimals={pool.tokenB.decimals}
         onChange={() => {}}
+        balance={connected ? formatUnits(balB.toString(), pool.tokenB.decimals) : undefined}
       />
 
       <IntentControls
@@ -1558,6 +1591,7 @@ function AmountField({
   editable,
   decimals,
   onChange,
+  balance,
 }: {
   label: string;
   ticker: string;
@@ -1566,6 +1600,8 @@ function AmountField({
   /** Max fractional digits accepted while typing (the token's precision; 0 if unknown). */
   decimals: number;
   onChange: (v: string) => void;
+  /** Optional wallet balance of this token, already formatted (display-only). */
+  balance?: string;
 }) {
   return (
     <div className="k-field p-3.5">
@@ -1588,6 +1624,11 @@ function AmountField({
           {ticker}
         </span>
       </div>
+      {balance !== undefined && (
+        <div className="mt-2 px-1 text-[11px] text-muted">
+          Balance: <span className="tabular-nums">{balance}</span> {ticker}
+        </div>
+      )}
     </div>
   );
 }

@@ -183,6 +183,12 @@ export function SwapCard() {
     fromToken?.unit === "lovelace"
       ? toBig(lovelace ?? "0")
       : toBig(assets?.find((a) => a.unit === fromToken?.unit)?.quantity ?? "0");
+  // Wallet balance of the TO token too, so the user sees how much they already hold of what
+  // they're buying (display-only — same source as the FROM balance, no funding role).
+  const toBalance =
+    toToken?.unit === "lovelace"
+      ? toBig(lovelace ?? "0")
+      : toBig(assets?.find((a) => a.unit === toToken?.unit)?.quantity ?? "0");
   const fromIsAda = fromToken?.unit === "lovelace";
   const amountBig = hasAmount ? BigInt(baseAmountIn) : 0n;
   const funding = orderFunding({
@@ -403,6 +409,11 @@ export function SwapCard() {
           setToUnit(t.unit);
           if (post.kind !== "idle") setPost({ kind: "idle" });
         }}
+        balance={
+          connected && toToken
+            ? { display: formatUnits(toBalance.toString(), toToken.decimals) }
+            : undefined
+        }
       />
 
       {/* mid price / impact / pool fee / tip / minimum received */}
