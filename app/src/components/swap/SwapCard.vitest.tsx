@@ -37,7 +37,11 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/wallet/hooks", () => ({
-  useWallet: () => ({ connected: h.state.connected, wallet: h.state.wallet }),
+  useWallet: () => ({
+    connected: h.state.connected,
+    wallet: h.state.wallet,
+    refresh: vi.fn(),
+  }),
   useNetwork: () => h.state.networkId,
   useAddress: () => h.state.address,
   useLovelace: () => h.state.lovelace,

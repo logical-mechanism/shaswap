@@ -43,7 +43,7 @@ type PostState =
   | { kind: "error"; message: string };
 
 export function SwapCard() {
-  const { connected, wallet } = useWallet();
+  const { connected, wallet, refresh: refreshWallet } = useWallet();
   const networkId = useNetwork();
   const address = useAddress();
   const { tokens, loading: tokensLoading, error: tokensError } = useTokens();
@@ -274,6 +274,8 @@ export function SwapCard() {
       });
       setPost({ kind: "success", hash: res.txHash });
       setAmount("");
+      // The order moved funds out of the wallet — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setPost({ kind: "error", message: toUserMessage(e) });
     } finally {

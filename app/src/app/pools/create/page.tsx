@@ -60,7 +60,7 @@ function bpsToFee(bps: number): { num: bigint; den: bigint } {
 }
 
 export default function CreatePoolPage() {
-  const { connected, wallet } = useWallet();
+  const { connected, wallet, refresh: refreshWallet } = useWallet();
   const assets = useAssets();
   const { pools } = usePools();
   // Pool creation spends a script (the mint), so it needs collateral like every write flow.
@@ -194,6 +194,8 @@ export default function CreatePoolPage() {
         feeDen: fee.den,
       });
       setState({ kind: "success", hash: res.txHash, poolId: res.poolId });
+      // Creating the pool locked the ~2 ₳ seed + fees — re-read the balance now (no polling).
+      refreshWallet();
     } catch (e) {
       setState({ kind: "error", message: toUserMessage(e) });
     } finally {
