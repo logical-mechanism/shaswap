@@ -182,9 +182,10 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
   const { view, stats, loading, refreshing, error, reload } = usePoolUtxo(pool.id);
 
   const [tab, setTab] = useState<Tab>("add");
-  // Default to the batcher-fulfilled INTENT path once it's live (it wins the per-block pool race
-  // on hot pools); until the path ships (pre-Phase-4) default to Direct so the default action is
-  // never a dead-end. Direct stays a one-click fallback for cold pools / no-trust mode either way.
+  // Default to the batcher-fulfilled INTENT path where it's live (it wins the per-block pool race
+  // on hot pools); where it isn't (LP_INTENTS_LIVE false, e.g. preview) default to Direct so the
+  // default action is never a dead-end. Direct stays a one-click fallback for cold pools / no-trust
+  // mode either way.
   const [mode, setMode] = useState<Mode>(LP_INTENTS_LIVE ? "intent" : "direct");
   // Bumped after a successful post/reclaim so the per-pool intent surface reloads.
   const [intentNonce, setIntentNonce] = useState(0);
@@ -1030,17 +1031,17 @@ function FirstDepositIntentNote({ onSwitchToDirect }: { onSwitchToDirect: () => 
   );
 }
 
-/** A small banner when the batcher LP path isn't live on this network yet (pre-Phase-4). */
+/** A small banner when the batcher LP path isn't live on this network (e.g. preview). */
 function NotLiveNote({ onSwitchToDirect }: { onSwitchToDirect: () => void }) {
   return (
     <div className="mt-3 k-note k-note-warn text-xs">
       <div className="flex items-center gap-2">
         <Pip size={22} mood="sleepy" />
-        <span className="font-bold">Batcher LP is rolling out</span>
+        <span className="font-bold">Batcher LP isn&apos;t available here</span>
       </div>
       <p className="mt-1">
-        Batcher-processed deposits/withdrawals launch with the next contract deploy. For now,
-        use the Direct path — it works on every pool.
+        Batcher-processed deposits/withdrawals aren&apos;t available on this network. Use the
+        Direct path — it works on every pool.
       </p>
       <button
         type="button"

@@ -25,8 +25,9 @@ const VERIFIED_POOL_NFTS: Record<Network, ReadonlySet<string>> = {
   ]),
   preview: new Set<string>([]),
   mainnet: new Set<string>([
-    // TODO(mainnet launch): add the bootstrap pools' NFT units here, in lockstep with
-    // documentation/launch/mainnet-checklist.md §3.
+    // None verified yet — mainnet launched 2026-06-08 with an empty market. Add each
+    // bootstrap/canonical pool's NFT unit here as it is created (see
+    // documentation/spec/liquidity-bootstrap.md).
   ]),
 };
 

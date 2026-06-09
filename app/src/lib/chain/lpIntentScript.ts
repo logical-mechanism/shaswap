@@ -12,7 +12,7 @@
  * base addresses.
  *
  * Derived (not a committed literal) so the hash/address auto-track whatever `S` this
- * deployment declares — at the Phase-4 redeploy, bumping `SETTLEMENT_HASH` re-derives the
+ * deployment declares — at any future redeploy, bumping `SETTLEMENT_HASH` re-derives the
  * correct values with no other edit. `applyParamsToScript`/`resolveScriptHash` are pure (no
  * provider), mirroring `buildCreatePool`'s per-seed policy derivation; this module is kept
  * separate from the pure-data `deployment.ts` because it pulls in `@meshsdk/core`.

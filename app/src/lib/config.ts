@@ -2,8 +2,9 @@
  * App-wide configuration.
  *
  * The network is a SINGLE config value so the whole app is network-aware from
- * one place. ShaSwap's contracts are currently deployed on **preprod**, so that
- * is the default. Switch this (or set NEXT_PUBLIC_NETWORK) to retarget the UI.
+ * one place. ShaSwap's contracts are live on **mainnet** and **preprod**; this
+ * falls back to **preprod** when `NEXT_PUBLIC_NETWORK` is unset (a safe local-dev
+ * default — production sets it to `mainnet`). Set `NEXT_PUBLIC_NETWORK` to retarget the UI.
  *
  * NOTE: this is presentation/wallet config only. All *chain data* must still go
  * through the data-access abstraction in `src/lib/data/` — nothing here reaches

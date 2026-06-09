@@ -1,13 +1,13 @@
 # ShaSwap — Protocol Blueprint
 
 > **Status:** Authoritative design / north star — implemented across the monorepo and
-> deployed to preprod (mainnet pending). This document is the authoritative description
+> deployed to preprod and mainnet (live as of 2026-06-08). This document is the authoritative description
 > of *what we are building and why*; everything in the monorepo (contracts, batcher,
 > website, docs) must trace back to this file.
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 26 — 2026-06-07. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 27 — 2026-06-09. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -296,6 +296,24 @@
 > ceiling `N`) — disproportionate to the residue. App-side mitigation (tight default limits,
 > never a true market order) stands. `S`/`order`/`pool`/`pool_mint`/`lp_intent` all
 > byte-identical. Resolves the mainnet-checklist "Decide Scope B" gate.
+>
+> **Rev 27: MAINNET DEPLOYMENT — the immutable validators are live (no contract change).**
+> ShaSwap's audited Rev 25 set was deployed to **Cardano mainnet on 2026-06-08** in deploy
+> tx `d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb`: the settlement
+> staking script `S` was registered (Conway script-witnessed cert; the withdraw-0 anchor
+> authorizes its own registration, §5.4) and the four reference scripts published —
+> **settlement #0, pool #1, order #2, lp_intent #3** — each re-hashed on-chain against the
+> audited applied hashes before wiring. Applied (deployed) hashes, network-independent and
+> unchanged from the Rev 25 audit: `S`/settlement `a305a3cf…`, `order` `e7fa1a38…`, `pool`
+> `34b30c7a…`, `lp_intent` (S-applied) `fa885b03…`; `pool_mint` is the per-pool seed-applied
+> one-shot policy (unapplied `f558dfb2…`), not a published reference script. Clients wired to
+> the live refs: the app's `deployment.ts` `mainnet` is `deployed:true` with a non-null
+> `lpIntentRef` (so `LP_INTENTS_LIVE` is true on mainnet), `app.shaswap.org` runs
+> `NEXT_PUBLIC_NETWORK=mainnet`, and the reference batcher config carries the canonical refs.
+> This revision is a **deployment record + repo-wide doc reconciliation** — no validator,
+> datum, or protocol-shape change — retiring the "scaffolded / pre-launch / `deployed:false` /
+> Phase-4-pending" framing across the README, this blueprint's Status line, CLAUDE.md, the
+> app, and the batcher to reflect the now-live state. Records the mainnet-checklist §5 deploy.
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50

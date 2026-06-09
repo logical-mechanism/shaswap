@@ -1,9 +1,9 @@
 # Spec — Clearing-price pin: close the floor→fair corridor on-chain (BLUEPRINT §5.2.5/§5.2.7/§5.4)
 
-> **Status:** active design, pre-mainnet. Implements the fix for an internal
-> economic-soundness review finding (the solver-LP floor→fair corridor). This phase
-> **defines correctness**; do it before the contract change. Branch
-> `contracts/clearing-price-pin`; ships as a pre-mainnet relaunch.
+> **Status:** DEPLOYED — BLUEPRINT Rev 25, live on preprod and mainnet (2026-06-08).
+> Implements the fix for an internal economic-soundness review finding (the solver-LP
+> floor→fair corridor). This spec **defines correctness** for the two-sided price pin in
+> `spend.pool_settle` and the `lp_intent` exact-proportional pin.
 
 ## 1. The problem, exactly
 

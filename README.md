@@ -13,11 +13,13 @@ clearings off-chain; the on-chain validators only *verify* them.
 
 | Network | Contracts live | dApp |
 |---|---|---|
-| **preprod** | ✅ deployed | `NEXT_PUBLIC_NETWORK=preprod` (current default for app.shaswap.org) |
-| **mainnet** | ⚪ pending launch | scaffolded (`deployed: false`) until contracts ship |
+| **mainnet** | ✅ deployed (2026-06-08) | `NEXT_PUBLIC_NETWORK=mainnet` — **live at app.shaswap.org** |
+| **preprod** | ✅ deployed | `NEXT_PUBLIC_NETWORK=preprod` (testnet rehearsal) |
 
-Mainnet identities are pre-computed and pinned by tests, but the reference scripts are
-not deployed yet — see [`documentation/launch/mainnet-checklist.md`](documentation/launch/mainnet-checklist.md).
+ShaSwap's immutable validators are **live on mainnet** as of 2026-06-08 (deploy tx
+`d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb` — settlement, pool,
+order, and `lp_intent` reference scripts). The deploy/verify procedure that produced them
+is in [`documentation/launch/mainnet-checklist.md`](documentation/launch/mainnet-checklist.md).
 
 ## Monorepo layout
 

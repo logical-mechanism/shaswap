@@ -408,7 +408,7 @@ fn run() -> Result<(), Err> {
         .map_err(|e| format!("ref script sizes: {e:?}"))?;
 
     // LP-intent fulfillment (BLUEPRINT §5.4): on by default, but gated on the
-    // `lp_intent` reference script being deployed (Phase 4 — a pre-Phase-4 config
+    // `lp_intent` reference script being configured (a settlements-only config
     // omits `lp_intent_ref`). `SHASWAP_LP_INTENTS=0` force-disables it. Disabling
     // never affects settlements. Sizes are fetched once (fixed per deployment).
     let lp_enabled = std::env::var("SHASWAP_LP_INTENTS").as_deref() != Ok("0");
@@ -418,7 +418,7 @@ fn run() -> Result<(), Err> {
     } else {
         match &cfg.lp_intent_ref {
             None => {
-                info!("LP-intent fulfillment disabled (no lp_intent_ref in config; deployed at Phase 4)");
+                info!("LP-intent fulfillment disabled (no lp_intent_ref in config)");
                 None
             }
             Some(r) => match backend.lp_fulfillment_ref_bytes() {
@@ -451,7 +451,6 @@ fn run() -> Result<(), Err> {
     // and a sanity-check that the hard-coded era anchor matches this network's tip.
     info!(
         settlement_s = %raw.settlement_hash,
-        pool_mint = %raw.pool_mint_policy,
         order_script = %raw.order_script_hash,
         pool_script = %raw.pool_script_hash,
         settlement_ref = %format!("{}#{}", raw.settlement_ref.tx_id, raw.settlement_ref.index),
@@ -463,7 +462,7 @@ fn run() -> Result<(), Err> {
     match backend.protocol_params() {
         // The fixed reference-script fee for a 3-script settlement (Conway tiered
         // pricing) — logged once so an operator can sanity-check it against a live node
-        // before mainnet (a params drift would under/over-charge every settlement).
+        // before relying on it (a params drift would under/over-charge every settlement).
         Ok(p) => info!(
             ref_script_fee = fees::reference_script_fee(&p, ref_bytes),
             "reference-script fee (per settlement build)"
@@ -987,7 +986,7 @@ fn settle_once(
 
 /// The reference-script context for fulfilling LP intents. `Some` only when
 /// LP-intent fulfillment is enabled (`SHASWAP_LP_INTENTS != 0`) AND configured (the
-/// deployment carries an `lp_intent_ref` — deployed at Phase 4); `None` disables it
+/// deployment carries an `lp_intent_ref`); `None` disables it
 /// (settlements run regardless). Held for the whole run since the reference-script
 /// sizes don't change for a fixed deployment.
 struct LpRefs {

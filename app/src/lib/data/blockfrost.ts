@@ -372,7 +372,7 @@ export class BlockfrostDataProvider implements DataProvider {
     if (!ownerPkh) return [];
 
     // The lp_intent enterprise address (stake = None) — derived, S-applied. On a network where
-    // the LP-intent path isn't live yet (pre-Phase-4) it has no history; a 404 from Blockfrost
+    // the LP-intent path isn't live (preview) it has no history; a 404 from Blockfrost
     // for a never-used address is "no intents", not an error.
     const addr = lpIntentAddress(DEPLOYMENT_NETWORK_ID);
     let utxos;

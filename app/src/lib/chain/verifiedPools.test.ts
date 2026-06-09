@@ -13,7 +13,7 @@ test("fails closed: unknown and undefined pools are not verified", () => {
   assert.equal(isVerifiedPool("deadbeef".repeat(7) + "4e4654"), false);
 });
 
-test("count is a non-negative number (default allowlist is empty pre-launch)", () => {
+test("count is a non-negative number (default allowlist is empty until pools are verified)", () => {
   assert.ok(Number.isInteger(verifiedPoolCount));
   assert.ok(verifiedPoolCount >= 0);
 });
