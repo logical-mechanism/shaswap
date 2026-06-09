@@ -559,13 +559,7 @@ function PostResult({ state }: { state: PostState }) {
           <div className="font-bold text-success">Order posted ✓</div>
         </div>
         <p className="mt-1 text-muted">
-          Pip’s tucked it into the next batch. It’ll appear under{" "}
-          <a href="/orders" className="k-link">
-            Orders
-          </a>{" "}
-          once the network confirms (~20–40s), resting at your floor until the batch settles —
-          or grab it back anytime, which returns your input plus the small ADA deposit and
-          tip.
+          Resting at your floor until the next batch settles — yours to grab back anytime.
         </p>
         <div className="mt-1.5 flex flex-col items-start gap-1">
           <a href="/orders" className="k-link font-semibold">
