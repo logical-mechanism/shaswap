@@ -244,6 +244,69 @@ export class BlockfrostDataProvider implements DataProvider {
     return [...byUnit.values()];
   }
 
+  /**
+   * `TokenInfo` for a unit IFF it is in the CIP-26 off-chain token registry (a real
+   * fungible token); `null` for NFTs, unregistered assets, or a transient/failed lookup.
+   *
+   * The signal is Blockfrost's `assets/{unit}.metadata` (the registry record), which is
+   * non-null only for registered tokens — an NFT carries only `onchain_metadata` (CIP-25)
+   * and has no `metadata`. We require at least a ticker or name so a thin/empty registry
+   * stub doesn't surface as a nameless token.
+   */
+  private async registeredTokenInfo(unit: string): Promise<TokenInfo | null> {
+    let raw: { metadata?: unknown };
+    try {
+      raw = (await retry(() => this.bf.get(`assets/${unit}`))) as typeof raw;
+    } catch {
+      return null; // transient/unknown — don't surface as a selectable token
+    }
+    const reg = raw?.metadata;
+    if (!reg || typeof reg !== "object") return null; // no CIP-26 entry ⇒ not in the register
+    const m = reg as Record<string, unknown>;
+    const ticker = typeof m.ticker === "string" ? m.ticker : undefined;
+    const name = typeof m.name === "string" ? m.name : undefined;
+    if (!ticker && !name) return null;
+    const decimals =
+      typeof m.decimals === "number" && m.decimals >= 0 ? m.decimals : 0;
+    // Registry `logo` is base64 PNG; only build a data-URI from base64 (never a URL).
+    const logo = m.logo;
+    const icon =
+      typeof logo === "string" && logo && !logo.includes("://")
+        ? `data:image/png;base64,${logo}`
+        : undefined;
+    const fallbackTicker = hexToAscii(unit.slice(56)) || unit.slice(0, 8);
+    return {
+      unit,
+      ticker: ticker || fallbackTicker,
+      name: name || ticker || fallbackTicker,
+      decimals,
+      icon,
+    };
+  }
+
+  async listRegisteredTokens(units: string[]): Promise<TokenInfo[]> {
+    const uniq = [...new Set(units)].filter((u) => u && u !== "lovelace");
+    // Bound the fan-out: a wallet can hold hundreds of assets, but each is one Blockfrost
+    // read. Cap it (loudly — never silently) so the registry filter can't melt the free tier.
+    const MAX_SCAN = 80;
+    const scan = uniq.slice(0, MAX_SCAN);
+    if (uniq.length > scan.length) {
+      log.warn("registered-token scan capped", {
+        held: uniq.length,
+        scanned: scan.length,
+      });
+    }
+    // Small concurrency so we respect rate limits but don't serialize a big wallet.
+    const CONCURRENCY = 6;
+    const out: TokenInfo[] = [];
+    for (let i = 0; i < scan.length; i += CONCURRENCY) {
+      const chunk = scan.slice(i, i + CONCURRENCY);
+      const infos = await Promise.all(chunk.map((u) => this.registeredTokenInfo(u)));
+      for (const info of infos) if (info) out.push(info);
+    }
+    return out;
+  }
+
   async priceQuote(
     tokenInUnit: string,
     tokenOutUnit: string,

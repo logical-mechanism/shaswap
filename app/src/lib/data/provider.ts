@@ -29,6 +29,16 @@ export interface DataProvider {
   /** Tokens known to the UI (for selectors). */
   listTokens(): Promise<TokenInfo[]>;
 
+  /**
+   * Filter a set of asset units (typically a wallet's holdings) down to the ones in the
+   * off-chain token registry (CIP-26) — real fungible tokens with registry metadata —
+   * returning their `TokenInfo`. NFTs and unregistered assets are dropped. Used by
+   * Create-Pool so the picker shows registered tokens instead of a wallet's NFT clutter.
+   * `lovelace` is ignored (the caller adds ADA itself); unknown/transient lookups are
+   * treated as "not registered" and omitted.
+   */
+  listRegisteredTokens(units: string[]): Promise<TokenInfo[]>;
+
   /** All known liquidity pools. */
   listPools(): Promise<Pool[]>;
 

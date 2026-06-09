@@ -36,6 +36,28 @@ export async function fetchPools(signal?: AbortSignal): Promise<Pool[]> {
   return pools;
 }
 
+/**
+ * Filter a wallet's held asset units to the ones in the off-chain token registry (CIP-26),
+ * returning their `TokenInfo`. Used by Create-Pool so its picker shows registered fungible
+ * tokens, not NFT clutter. POSTs the units (a wallet can hold too many for a query string).
+ */
+export async function fetchRegisteredTokens(
+  units: string[],
+  signal?: AbortSignal,
+): Promise<TokenInfo[]> {
+  const res = await fetch("/api/asset-meta", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ units }),
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(`request failed (${res.status}): /api/asset-meta`);
+  }
+  const { tokens } = (await res.json()) as { tokens: TokenInfo[] };
+  return tokens;
+}
+
 export async function fetchQuote(
   inUnit: string,
   outUnit: string,

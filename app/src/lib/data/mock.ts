@@ -147,6 +147,14 @@ export class MockProvider implements DataProvider {
     return TOKENS;
   }
 
+  async listRegisteredTokens(units: string[]): Promise<TokenInfo[]> {
+    // The mock treats its known fungible tokens as "the registry" — any held unit that
+    // matches one of them is registered; everything else (a wallet's NFTs) is dropped.
+    return units
+      .map((u) => BY_UNIT.get(u))
+      .filter((t): t is TokenInfo => !!t && t.unit !== "lovelace");
+  }
+
   async listPools(): Promise<Pool[]> {
     return POOLS;
   }
