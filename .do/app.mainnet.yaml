@@ -1,21 +1,18 @@
 # DigitalOcean App Platform spec — ShaSwap PRODUCTION (app.shaswap.org)
 #
 # This is the public production app on the apex product domain. ShaSwap's contracts are
-# NOT yet deployed on mainnet, so for now this app runs on PREPROD too (it just shows the
-# preprod deployment under the production domain). When mainnet contracts go live, flip it
-# — see "TO GO LIVE ON MAINNET" below.
+# LIVE on mainnet (deployed 2026-06-08, tx d56e729c…), so this app serves MAINNET:
+# NEXT_PUBLIC_NETWORK=mainnet below.
 #
 # Create once:  doctl apps create --spec .do/app.mainnet.yaml
 # then set BLOCKFROST_PROJECT_ID in the DO console. deploy_on_push rebuilds on every push
-# to `main` (same code as preprod; only the env differs).
+# to `main`.
 #
-# ┌─ TO GO LIVE ON MAINNET ──────────────────────────────────────────────────────────────┐
-# │ 1. Deploy the contracts' reference scripts on mainnet; fill orderRef/poolRef and set  │
-# │    deployed: true for `mainnet` in app/src/lib/chain/deployment.ts.                    │
-# │ 2. Change NEXT_PUBLIC_NETWORK below: preprod → mainnet.                                │
-# │ 3. Swap BLOCKFROST_PROJECT_ID (DO console) to a `mainnet…` project id — the app        │
-# │    refuses to start if the key prefix doesn't match NEXT_PUBLIC_NETWORK.               │
-# │ 4. Redeploy. (NEXT_PUBLIC_NETWORK is build-time inlined, so this is a fresh build.)    │
+# ┌─ MAINNET CONFIG (live) ───────────────────────────────────────────────────────────────┐
+# │ • NEXT_PUBLIC_NETWORK=mainnet — build-time inlined, so changing it is a fresh build.   │
+# │ • BLOCKFROST_PROJECT_ID (DO console) must be a `mainnet…` project id — the app refuses │
+# │   to start if the key prefix doesn't match NEXT_PUBLIC_NETWORK.                        │
+# │ • app/src/lib/chain/deployment.ts `mainnet` is deployed:true with the live refs.       │
 # └───────────────────────────────────────────────────────────────────────────────────────┘
 name: shaswap
 region: nyc
@@ -37,12 +34,12 @@ services:
     envs:
       - key: NEXT_PUBLIC_NETWORK
         scope: RUN_AND_BUILD_TIME
-        value: preprod # ← flip to `mainnet` to go live (see header)
+        value: mainnet
       - key: NEXT_PUBLIC_SITE_URL
         scope: RUN_AND_BUILD_TIME
         value: https://app.shaswap.org
-      # Server-only secret — set in the DO console. A `preprod…` id for now; swap to a
-      # `mainnet…` id in step 3 above. Its prefix must match NEXT_PUBLIC_NETWORK.
+      # Server-only secret — set in the DO console to a `mainnet…` project id. Its prefix
+      # must match NEXT_PUBLIC_NETWORK (the app refuses to start otherwise).
       - key: BLOCKFROST_PROJECT_ID
         scope: RUN_TIME
         type: SECRET

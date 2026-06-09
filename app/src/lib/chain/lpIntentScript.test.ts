@@ -4,8 +4,8 @@
  * [Script(SETTLEMENT_HASH)])` then `resolveScriptHash`; the addresses are the enterprise
  * (stake = None) form for each network. Comparing the derivation to committed literals catches
  * a compiled-code or `S` drift before a single lovelace is posted to the wrong place — and
- * documents the placeholder values that finalise at the Phase-4 redeploy (when `SETTLEMENT_HASH`
- * moves to the post-audit `S` and these goldens update alongside the order/pool ones).
+ * pins the live values for the deployed post-audit `S` (mainnet/preprod), alongside the
+ * order/pool goldens.
  *
  * Run with: `npm run test`.
  */

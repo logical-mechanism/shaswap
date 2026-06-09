@@ -7,13 +7,6 @@
   "order_script_hash": "e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d",
   "pool_script_hash": "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac",
   "lp_intent_script_hash": "fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d",
-  "pool_mint_policy": "d5ccd17454150e29feb00ee72f5bf1155bcf41718cb7e641dd5f593d",
-  "nft_name": "4e4654",
-  "lp_name": "4c50",
-  "total_lp": 9223372036854775807,
-  "min_liq": 1000,
-  "pool_min_ada": 2000000,
-  "order_min_ada": 2000000,
   "settlement_ref": {
     "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
     "index": 0
@@ -31,6 +24,5 @@
     "index": 3
   },
   "signing_key_path": "/path/to/your/solver.skey",
-  "max_orders_per_tx": 20,
-  "strategy": "round-robin"
+  "max_orders_per_tx": 20
 }

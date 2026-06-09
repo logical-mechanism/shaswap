@@ -7,7 +7,7 @@ untrusted solver's job; see [`../batcher/`](../batcher)). Design source of truth
 [`../documentation/BLUEPRINT.md`](../documentation/BLUEPRINT.md); contributor guidance:
 [`../CLAUDE.md`](../CLAUDE.md).
 
-**Live on preprod.** Connect a wallet to swap (post + reclaim orders), provide liquidity
+**Live on mainnet and preprod.** Connect a wallet to swap (post + reclaim orders), provide liquidity
 (add/remove, either directly or via batcher-fulfilled intents), and create or close
 pools — all non-custodial. Reads (pools, tokens, quotes, your orders) come through a
 swappable data seam.
@@ -56,10 +56,10 @@ identities (order/pool addresses, reference-script UTXOs, the `deployed` flag) l
 network-independent (script hashes, compiled code, constants) is shared, and the
 addresses are pinned by [`address.test.ts`](src/lib/chain/address.test.ts).
 
-> **Mainnet is scaffolded but not yet live** (`deployed: false`, no reference scripts).
-> The app still reads on such a network (scans come back empty) and tx-building throws a
-> clear error instead of crashing. To go live: deploy the reference scripts, fill the
-> refs + set `deployed: true` in `deployment.ts`, and set `NEXT_PUBLIC_NETWORK=mainnet`.
+> **Mainnet is live** (`deployed: true`, since 2026-06-08; reference scripts published in
+> deploy tx `d56e729c…`), and `app.shaswap.org` runs `NEXT_PUBLIC_NETWORK=mainnet`. On a
+> network that *isn't* deployed (preview), the app still reads (scans come back empty) and
+> tx-building throws a clear error instead of crashing.
 > See [`../documentation/launch/mainnet-checklist.md`](../documentation/launch/mainnet-checklist.md).
 
 ## Deploy (DigitalOcean App Platform)

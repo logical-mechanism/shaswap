@@ -630,7 +630,7 @@ impl KupoOgmios {
 
     /// Total serialized byte size of the 2 scripts a fulfillment references (pool +
     /// lp_intent) — the reference-script fee basis for an LP fulfillment tx. Errors
-    /// if the lp_intent script isn't indexed yet (not deployed pre-Phase-4); the
+    /// if the lp_intent script isn't indexed (e.g. not in this network's deployment); the
     /// orchestrator treats that as "LP fulfillment disabled this session".
     pub fn lp_fulfillment_ref_bytes(&self) -> Result<u64, ChainError> {
         let p = self.script_size(&hex::encode(&self.cfg.pool_script_hash))?;

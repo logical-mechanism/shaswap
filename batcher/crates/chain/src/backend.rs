@@ -115,7 +115,7 @@ pub struct Snapshot {
     pub pools: Vec<PoolInput>,
     /// LP-intent UTXOs at the (enterprise, non-`S`-tagged) lp_intent address,
     /// decoded. Empty unless the chain indexer is configured to index that address
-    /// (Phase 4) — never affects settlement discovery.
+    /// — never affects settlement discovery.
     pub lp_intents: Vec<LpIntentInput>,
     pub wallet: Vec<Utxo>,
 }
