@@ -3,6 +3,7 @@ import type {
   LpIntentPosition,
   Pool,
   Quote,
+  ReferencePrice,
   TokenInfo,
   WalletPosition,
 } from "@/lib/data";
@@ -70,6 +71,23 @@ export async function fetchQuote(
     signal,
   );
   return quote;
+}
+
+/**
+ * A non-binding external market reference (human tokenB per 1 tokenA), or null when
+ * unavailable. Used to suggest a first-deposit opening price. The user still sets the price.
+ */
+export async function fetchReferencePrice(
+  tokenAUnit: string,
+  tokenBUnit: string,
+  signal?: AbortSignal,
+): Promise<ReferencePrice | null> {
+  const qs = new URLSearchParams({ a: tokenAUnit, b: tokenBUnit });
+  const { reference } = await getJson<{ reference: ReferencePrice | null }>(
+    `/api/reference-price?${qs.toString()}`,
+    signal,
+  );
+  return reference;
 }
 
 export async function fetchOrders(

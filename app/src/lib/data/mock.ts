@@ -5,6 +5,7 @@ import type {
   LpIntentPosition,
   Pool,
   Quote,
+  ReferencePrice,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -173,6 +174,11 @@ export class MockProvider implements DataProvider {
     if (!pool) return null;
     // Same shared constant-product display math as the real provider (NOT clearing).
     return quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
+  }
+
+  async referencePrice(): Promise<ReferencePrice | null> {
+    // The offline mock has no external market — no reference price (the UI degrades to manual).
+    return null;
   }
 
   async walletPositions(address: string): Promise<WalletPosition[]> {

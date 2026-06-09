@@ -3,6 +3,7 @@ import type {
   LpIntentPosition,
   Pool,
   Quote,
+  ReferencePrice,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -58,6 +59,17 @@ export interface DataProvider {
     tokenOutUnit: string,
     amountIn: string,
   ): Promise<Quote | null>;
+
+  /**
+   * A non-binding external market reference price for a pair (human tokenB per 1 tokenA),
+   * or null when unavailable (no market / external source down / non-mainnet network). Used
+   * only to suggest a sane opening price on a pool's first deposit — an app convenience, NOT
+   * a core dependency: the protocol never reads it and the UI works fine without it.
+   */
+  referencePrice(
+    tokenAUnit: string,
+    tokenBUnit: string,
+  ): Promise<ReferencePrice | null>;
 
   /** A wallet's open orders / positions for a bech32 address. */
   walletPositions(address: string): Promise<WalletPosition[]>;

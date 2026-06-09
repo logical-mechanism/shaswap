@@ -25,12 +25,14 @@ import {
 import { lpIntentAddress } from "@/lib/chain/lpIntentScript";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
+import { getReferencePrice } from "./referencePrice";
 import { feeToBps, httpStatus, isRetriable } from "./providerUtil";
 import { qtyOfUnit, reserveOf, toLpIntentPosition, toPosition } from "./providerMap";
 import type {
   LpIntentPosition,
   Pool,
   Quote,
+  ReferencePrice,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -329,6 +331,14 @@ export class BlockfrostDataProvider implements DataProvider {
       if (!best || toBig(q.amountOut) > toBig(best.amountOut)) best = q;
     }
     return best;
+  }
+
+  referencePrice(
+    tokenAUnit: string,
+    tokenBUnit: string,
+  ): Promise<ReferencePrice | null> {
+    // Sourced externally (free public DEX), not from Blockfrost — see referencePrice.ts.
+    return getReferencePrice(tokenAUnit, tokenBUnit);
   }
 
   async walletPositions(address: string): Promise<WalletPosition[]> {
