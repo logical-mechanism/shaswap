@@ -3,6 +3,7 @@ import type {
   LpIntentPosition,
   Pool,
   Quote,
+  ReferencePrice,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -29,6 +30,16 @@ export interface DataProvider {
   /** Tokens known to the UI (for selectors). */
   listTokens(): Promise<TokenInfo[]>;
 
+  /**
+   * Filter a set of asset units (typically a wallet's holdings) down to the ones in the
+   * off-chain token registry (CIP-26) — real fungible tokens with registry metadata —
+   * returning their `TokenInfo`. NFTs and unregistered assets are dropped. Used by
+   * Create-Pool so the picker shows registered tokens instead of a wallet's NFT clutter.
+   * `lovelace` is ignored (the caller adds ADA itself); unknown/transient lookups are
+   * treated as "not registered" and omitted.
+   */
+  listRegisteredTokens(units: string[]): Promise<TokenInfo[]>;
+
   /** All known liquidity pools. */
   listPools(): Promise<Pool[]>;
 
@@ -48,6 +59,17 @@ export interface DataProvider {
     tokenOutUnit: string,
     amountIn: string,
   ): Promise<Quote | null>;
+
+  /**
+   * A non-binding external market reference price for a pair (human tokenB per 1 tokenA),
+   * or null when unavailable (no market / external source down / non-mainnet network). Used
+   * only to suggest a sane opening price on a pool's first deposit — an app convenience, NOT
+   * a core dependency: the protocol never reads it and the UI works fine without it.
+   */
+  referencePrice(
+    tokenAUnit: string,
+    tokenBUnit: string,
+  ): Promise<ReferencePrice | null>;
 
   /** A wallet's open orders / positions for a bech32 address. */
   walletPositions(address: string): Promise<WalletPosition[]>;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   MeshProvider,
   useAddress,
@@ -10,6 +10,8 @@ import {
   useWallet,
   useWalletList,
 } from "@meshsdk/react";
+// Type-only — erased at build (this module is already the heavy one, but keep the seam clean).
+import type { Asset } from "@meshsdk/core";
 import type { AppWalletState, BridgeActions } from "@/lib/wallet/context";
 
 /**
@@ -46,7 +48,52 @@ function Bridge({ onState, registerActions }: BridgeProps) {
   const networkId = useNetwork();
   const walletList = useWalletList();
 
-  // Push the live Mesh state up into AppWalletContext whenever any piece changes.
+  // Event-driven balance refresh (NO polling). Mesh reads the wallet's lovelace/assets ONCE
+  // on connect, so after a swap/deposit — or any change made in the wallet itself — the shown
+  // balance would otherwise go stale. We re-read straight from the connected wallet on demand
+  // and let those fresher values override Mesh's initial snapshot. The override is tagged with
+  // the address it was read for, so on an account switch it simply stops applying (no reset
+  // effect — synchronous setState in an effect is lint-blocked and causes cascading renders).
+  const [fresh, setFresh] = useState<{
+    address?: string;
+    lovelace?: string;
+    assets?: Asset[];
+  }>({});
+
+  const refresh = useCallback(async () => {
+    if (!wallet) return;
+    try {
+      const [lov, ass] = await Promise.all([
+        wallet.getLovelace(),
+        wallet.getAssets(),
+      ]);
+      setFresh({ address, lovelace: lov, assets: ass });
+    } catch {
+      // a wallet read can transiently fail — keep the last known values, try again next event
+    }
+  }, [wallet, address]);
+
+  // Refresh on tab focus / re-visibility — covers the user returning from their wallet popup
+  // after signing, or from another tab, with no timer.
+  useEffect(() => {
+    if (!connected) return;
+    const onFocus = () => void refresh();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [connected, refresh]);
+
+  // The fresh override only applies to the account it was read for (else fall back to Mesh's
+  // own snapshot — which already tracks the current account).
+  const overrideLive = fresh.address !== undefined && fresh.address === address;
+
+  // Push the live Mesh state (with any fresher balance override) up into AppWalletContext.
   useEffect(() => {
     onState({
       ready: true,
@@ -55,8 +102,8 @@ function Bridge({ onState, registerActions }: BridgeProps) {
       name,
       wallet,
       address,
-      lovelace,
-      assets,
+      lovelace: overrideLive ? fresh.lovelace : lovelace,
+      assets: overrideLive ? fresh.assets : assets,
       networkId,
       walletList: walletList.map((w) => ({
         name: w.name,
@@ -73,18 +120,21 @@ function Bridge({ onState, registerActions }: BridgeProps) {
     address,
     lovelace,
     assets,
+    fresh,
+    overrideLive,
     networkId,
     walletList,
   ]);
 
-  // Expose connect/disconnect to the provider (connect persists by default, matching the
-  // app's prior `connect(name, true)` behavior).
+  // Expose connect/disconnect/refresh to the provider (connect persists by default, matching
+  // the app's prior `connect(name, true)` behavior).
   useEffect(() => {
     registerActions({
       connect: (n: string, persist = true) => connect(n, persist),
       disconnect,
+      refresh,
     });
-  }, [registerActions, connect, disconnect]);
+  }, [registerActions, connect, disconnect, refresh]);
 
   return null;
 }

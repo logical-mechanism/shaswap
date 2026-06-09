@@ -20,6 +20,7 @@ const h = vi.hoisted(() => {
   const state = {
     connected: true,
     address: "addr_test1_owner",
+    lovelace: "100000000" as string | undefined,
     assets: [] as { unit: string; quantity: string }[],
   };
   const wallet = {
@@ -41,7 +42,13 @@ const h = vi.hoisted(() => {
 // Wallet hooks come from our mesh-free indirection (@/lib/wallet/hooks), so mock that.
 vi.mock("@/lib/wallet/hooks", () => ({
   useAddress: () => h.state.address,
-  useWallet: () => ({ connected: h.state.connected, wallet: h.wallet }),
+  useWallet: () => ({
+    connected: h.state.connected,
+    wallet: h.wallet,
+    refresh: vi.fn(),
+  }),
+  useLovelace: () => h.state.lovelace,
+  useAssets: () => h.state.assets,
 }));
 vi.mock("@/hooks/usePoolUtxo", () => ({
   usePoolUtxo: () => ({
