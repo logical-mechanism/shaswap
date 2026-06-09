@@ -1,14 +1,11 @@
 //! The typed, fail-fast solver configuration. Loaded once at startup from JSON;
-//! [`Config::validate`] rejects anything malformed AND — critically — any protocol
-//! constant that drifts from `constants.ak` (a drift would silently produce
-//! settlements the validators reject). Deserialized identities are hex strings,
-//! parsed and checked here.
+//! [`Config::validate`] parses and length-checks the deployment identities (script
+//! hashes and reference-script UTXOs). It carries ONLY what the batcher actually
+//! consumes: pool discovery is dynamic — every pool self-describes via its `PoolDatum`,
+//! so there is no per-pool or per-token config (no pool mint policy, no asset names).
 
 use serde::Deserialize;
-use solver_core::types::{
-    AssetId, Credential, OutputReference, LP_NAME, MIN_LIQ, NFT_NAME, ORDER_MIN_ADA, POOL_MIN_ADA,
-    TOTAL_LP,
-};
+use solver_core::types::{Credential, OutputReference};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
@@ -19,16 +16,6 @@ pub enum ConfigError {
         field: &'static str,
         want: usize,
         got: usize,
-    },
-    /// A protocol constant doesn't match `constants.ak`.
-    ConstantDrift {
-        field: &'static str,
-        want: i128,
-        got: i128,
-    },
-    /// A byte-string constant (asset name) doesn't match `constants.ak`.
-    NameDrift {
-        field: &'static str,
     },
 }
 
@@ -48,19 +35,6 @@ impl std::fmt::Display for ConfigError {
                 "config field `{field}` decoded to {got} bytes, expected {want} — a script \
                  hash is 28 bytes (56 hex chars) and a tx id is 32 bytes (64 hex chars); \
                  re-copy it from the deployment output"
-            ),
-            ConfigError::ConstantDrift { field, want, got } => write!(
-                f,
-                "protocol constant `{field}` is {got} but the deployed contracts use {want} — \
-                 these are baked into contracts/lib/shaswap/constants.ak; regenerate \
-                 deployment.json from the deployed contracts (a drift makes EVERY settlement \
-                 rejected on-chain). A likely cause is a preprod config run against mainnet \
-                 (or vice versa)"
-            ),
-            ConfigError::NameDrift { field } => write!(
-                f,
-                "constant byte-string `{field}` does not match constants.ak — use the exact \
-                 nft_name/lp_name hex from the deployed contracts"
             ),
         }
     }
@@ -88,20 +62,9 @@ pub struct Config {
     pub settlement_hash: String,
     pub order_script_hash: String,
     pub pool_script_hash: String,
-    pub pool_mint_policy: String,
     /// The unparameterised `lp_intent` validator hash (BLUEPRINT §5.1 Rev 22). Its
     /// UTXOs sit at an enterprise address (payment = this hash, stake = `None`).
     pub lp_intent_script_hash: String,
-
-    /// Pool NFT name (hex) and LP name (hex) — must equal `constants.ak`.
-    pub nft_name: String,
-    pub lp_name: String,
-
-    /// Protocol constants — MUST equal `constants.ak`.
-    pub total_lp: i128,
-    pub min_liq: i128,
-    pub pool_min_ada: i128,
-    pub order_min_ada: i128,
 
     /// On-chain reference scripts (deployed at bootstrap).
     pub settlement_ref: RefInput,
@@ -171,42 +134,15 @@ fn hash28(s: &str, field: &'static str) -> Result<Vec<u8>, ConfigError> {
 }
 
 impl Config {
-    /// Validate hex/lengths and assert every protocol constant matches `constants.ak`.
-    /// Returns the parsed identities so the caller doesn't re-parse.
+    /// Validate hex/lengths of the deployment identities and parse them into the
+    /// runtime form. Returns the parsed identities so the caller doesn't re-parse.
     pub fn validate(&self) -> Result<ValidatedConfig, ConfigError> {
-        let check = |field, want: i128, got: i128| {
-            if want == got {
-                Ok(())
-            } else {
-                Err(ConfigError::ConstantDrift { field, want, got })
-            }
-        };
-        check("total_lp", TOTAL_LP, self.total_lp)?;
-        check("min_liq", MIN_LIQ, self.min_liq)?;
-        check("pool_min_ada", POOL_MIN_ADA, self.pool_min_ada)?;
-        check("order_min_ada", ORDER_MIN_ADA, self.order_min_ada)?;
-
-        let nft_name = hex_bytes(&self.nft_name, "nft_name")?;
-        if nft_name != NFT_NAME {
-            return Err(ConfigError::NameDrift { field: "nft_name" });
-        }
-        let lp_name = hex_bytes(&self.lp_name, "lp_name")?;
-        if lp_name != LP_NAME {
-            return Err(ConfigError::NameDrift { field: "lp_name" });
-        }
-
-        let settlement_cred = Credential::Script(hash28(&self.settlement_hash, "settlement_hash")?);
-        let pool_mint_policy = hash28(&self.pool_mint_policy, "pool_mint_policy")?;
-        let pool_nft = AssetId::new(pool_mint_policy.clone(), nft_name);
-
         Ok(ValidatedConfig {
             network_id: self.network_id,
-            settlement_cred,
+            settlement_cred: Credential::Script(hash28(&self.settlement_hash, "settlement_hash")?),
             order_script_hash: hash28(&self.order_script_hash, "order_script_hash")?,
             pool_script_hash: hash28(&self.pool_script_hash, "pool_script_hash")?,
             lp_intent_script_hash: hash28(&self.lp_intent_script_hash, "lp_intent_script_hash")?,
-            pool_mint_policy,
-            pool_nft,
             kupo_url: self.kupo_url.clone(),
             ogmios_url: self.ogmios_url.clone(),
             settlement_ref: ref_input(&self.settlement_ref, "settlement_ref")?,
@@ -270,8 +206,6 @@ pub struct ValidatedConfig {
     pub order_script_hash: Vec<u8>,
     pub pool_script_hash: Vec<u8>,
     pub lp_intent_script_hash: Vec<u8>,
-    pub pool_mint_policy: Vec<u8>,
-    pub pool_nft: AssetId,
     pub kupo_url: String,
     pub ogmios_url: String,
     pub settlement_ref: OutputReference,
@@ -295,11 +229,7 @@ mod tests {
               "network_id": 0, "network_magic": 1,
               "kupo_url": "http://localhost:1442", "ogmios_url": "http://localhost:1337",
               "settlement_hash": "{s}", "order_script_hash": "{s}",
-              "pool_script_hash": "{s}", "pool_mint_policy": "{s}",
-              "lp_intent_script_hash": "{s}",
-              "nft_name": "4e4654", "lp_name": "4c50",
-              "total_lp": 9223372036854775807, "min_liq": 1000,
-              "pool_min_ada": 2000000, "order_min_ada": 2000000,
+              "pool_script_hash": "{s}", "lp_intent_script_hash": "{s}",
               "settlement_ref": {{"tx_id": "{t}", "index": 0}},
               "order_ref": {{"tx_id": "{t}", "index": 1}},
               "pool_ref": {{"tx_id": "{t}", "index": 2}},
@@ -311,9 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn valid_config_parses_and_binds_pool_nft() {
+    fn valid_config_parses() {
         let v = Config::from_json(&good_json()).expect("valid");
-        assert_eq!(v.pool_nft.name, NFT_NAME);
         assert_eq!(v.settlement_cred, Credential::Script(vec![0x55; 28]));
         assert_eq!(v.order_ref.output_index, 1);
     }
@@ -326,15 +255,15 @@ mod tests {
 
         // Present → taken verbatim.
         let with = good_json().replace(
-            "\"order_min_ada\": 2000000,",
-            "\"order_min_ada\": 2000000, \"max_orders_per_tx\": 35,",
+            "\"signing_key_path\"",
+            "\"max_orders_per_tx\": 35, \"signing_key_path\"",
         );
         assert_eq!(Config::from_json(&with).unwrap().max_orders_per_tx, 35);
 
         // 0 is clamped to ≥ 1 (a 0 cap would never include any order).
         let zero = good_json().replace(
-            "\"order_min_ada\": 2000000,",
-            "\"order_min_ada\": 2000000, \"max_orders_per_tx\": 0,",
+            "\"signing_key_path\"",
+            "\"max_orders_per_tx\": 0, \"signing_key_path\"",
         );
         assert_eq!(Config::from_json(&zero).unwrap().max_orders_per_tx, 1);
     }
@@ -360,50 +289,23 @@ mod tests {
     }
 
     #[test]
-    fn constant_drift_is_rejected() {
-        let bad = good_json().replace("\"min_liq\": 1000", "\"min_liq\": 999");
-        match Config::from_json(&bad) {
-            Err(ConfigErrorOrParse::Config(ConfigError::ConstantDrift {
-                field: "min_liq",
-                want: 1000,
-                got: 999,
-            })) => {}
-            other => panic!("expected min_liq drift, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn config_errors_carry_remediation_hints() {
         // The Display message must name the field AND point at where to fix it, so an
-        // operator isn't left with a bare `ConstantDrift { .. }` debug dump.
-        let drift = ConfigError::ConstantDrift {
-            field: "min_liq",
-            want: 1000,
-            got: 999,
-        };
-        let msg = drift.to_string();
-        assert!(
-            msg.contains("min_liq") && msg.contains("constants.ak"),
-            "{msg}"
-        );
-
+        // operator isn't left with a bare `BadHex { .. }` debug dump.
         let bad_hex = ConfigError::BadHex { field: "pool_ref" }.to_string();
         assert!(bad_hex.contains("pool_ref") && bad_hex.contains("deployment.json"));
 
-        // ConfigErrorOrParse forwards to the inner Display (with its hint).
-        let wrapped = ConfigErrorOrParse::Config(ConfigError::NameDrift { field: "nft_name" });
-        assert!(wrapped.to_string().contains("constants.ak"));
-    }
+        let bad_len = ConfigError::BadLength {
+            field: "settlement_hash",
+            want: 28,
+            got: 4,
+        }
+        .to_string();
+        assert!(bad_len.contains("settlement_hash") && bad_len.contains("28 bytes"));
 
-    #[test]
-    fn wrong_nft_name_is_rejected() {
-        let bad = good_json().replace("\"nft_name\": \"4e4654\"", "\"nft_name\": \"abcd\"");
-        assert!(matches!(
-            Config::from_json(&bad),
-            Err(ConfigErrorOrParse::Config(ConfigError::NameDrift {
-                field: "nft_name"
-            }))
-        ));
+        // ConfigErrorOrParse forwards to the inner Display (with its hint).
+        let wrapped = ConfigErrorOrParse::Config(ConfigError::BadHex { field: "order_ref" });
+        assert!(wrapped.to_string().contains("order_ref"));
     }
 
     #[test]
@@ -413,5 +315,18 @@ mod tests {
             Config::from_json(&bad),
             Err(ConfigErrorOrParse::Config(ConfigError::BadLength { .. }))
         ));
+    }
+
+    #[test]
+    fn example_deployment_files_parse() {
+        // The committed example configs must always satisfy the current schema, so an
+        // operator copying one gets a parseable config — and the examples can't silently
+        // drift from `Config` (e.g. a field that has since been removed).
+        for src in [
+            include_str!("../../../config/deployment.preprod.example.json"),
+            include_str!("../../../config/deployment.mainnet.example.json"),
+        ] {
+            Config::from_json(src).expect("example deployment config must validate");
+        }
     }
 }

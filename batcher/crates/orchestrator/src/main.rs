@@ -451,7 +451,6 @@ fn run() -> Result<(), Err> {
     // and a sanity-check that the hard-coded era anchor matches this network's tip.
     info!(
         settlement_s = %raw.settlement_hash,
-        pool_mint = %raw.pool_mint_policy,
         order_script = %raw.order_script_hash,
         pool_script = %raw.pool_script_hash,
         settlement_ref = %format!("{}#{}", raw.settlement_ref.tx_id, raw.settlement_ref.index),

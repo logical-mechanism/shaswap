@@ -9,14 +9,21 @@
 ## Configuration
 
 The batcher reads a `deployment.json` (path via `SHASWAP_DEPLOYMENT`). For mainnet, base
-it on [`../../batcher/config/deployment.mainnet.example.json`](../../batcher/config/deployment.mainnet.example.json):
+it on [`../../batcher/config/deployment.mainnet.example.json`](../../batcher/config/deployment.mainnet.example.json).
+It carries only network + endpoints + the immutable script hashes/refs + your solver key —
+**no per-pool or per-token config**: the batcher discovers *every* pool dynamically (each pool
+self-describes via its `PoolDatum`), so a single batcher serves all pools.
 
 - `network_id: 1`, `network_magic: 764824073` (mainnet). **Preprod is `0` / `1`** — the
   startup banner prints the resolved network; confirm it before setting `SHASWAP_SUBMIT=1`.
 - `kupo_url` / `ogmios_url`: your mainnet Kupo + Ogmios (self-hosted node strongly
   preferred for a no-third-party-dependency setup — see [`../spec/data-availability.md`](../spec/data-availability.md)).
-- `settlement_hash` / `order_script_hash` / `pool_script_hash` / refs: the **mainnet**
-  deploy values (must match `plutus.json` and the dApp's `deployment.ts`).
+  **Kupo must index the `lp_intent` enterprise address** (it is NOT `S`-tagged, so a pattern
+  matching only the `S` stake credential misses it) or the batcher never sees LP intents.
+- `settlement_hash` / `order_script_hash` / `pool_script_hash` / `lp_intent_script_hash` and
+  the refs (`settlement_ref` #0, `pool_ref` #1, `order_ref` #2, `lp_intent_ref` #3): the
+  **mainnet** deploy values (must match `plutus.json` and the dApp's `deployment.ts`).
+  `lp_intent_ref` is optional — omit it to run settlements-only (LP fulfillment off).
 - `signing_key_path`: a cardano-cli TextEnvelope `.skey` for the solver wallet. **File
   mode `0600`, never committed.** Fund this address with ADA; the batcher self-manages its
   UTXOs (funding change + a one-time auto-provisioned collateral UTXO).

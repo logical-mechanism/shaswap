@@ -499,8 +499,6 @@ mod tests {
             order_script_hash: h.clone(),
             pool_script_hash: pool_hash(),
             lp_intent_script_hash: lp_intent_hash(),
-            pool_mint_policy: h.clone(),
-            pool_nft: nft(),
             kupo_url: String::new(),
             ogmios_url: String::new(),
             settlement_ref: OutputReference {
