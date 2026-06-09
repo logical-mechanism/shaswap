@@ -21,11 +21,11 @@
   "pool_min_ada": 2000000,
   "order_min_ada": 2000000,
 
-  "_refs": "From the MAINNET reference-script deploy tx (settlement #0, pool #1, order #2, lp_intent #3 by convention). Fill after running scripts/deploy-mainnet.sh. lp_intent_ref is REQUIRED for the batcher to fulfil LP intents (Rev 22); omit it only to run settlements-only.",
-  "settlement_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 0 },
-  "order_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 2 },
-  "pool_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 1 },
-  "lp_intent_ref": { "tx_id": "<MAINNET_DEPLOY_TX_ID>", "index": 3 },
+  "_refs": "The CANONICAL, immutable mainnet reference scripts (settlement #0, pool #1, order #2, lp_intent #3) from the 2026-06-08 deploy tx d56e729c… (block 13,526,295) — the same for every operator, re-hashed on-chain against the audited Rev 25 hashes. lp_intent_ref is REQUIRED for the batcher to fulfil LP intents (Rev 22); omit it only to run settlements-only.",
+  "settlement_ref": { "tx_id": "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb", "index": 0 },
+  "order_ref": { "tx_id": "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb", "index": 2 },
+  "pool_ref": { "tx_id": "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb", "index": 1 },
+  "lp_intent_ref": { "tx_id": "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb", "index": 3 },
 
   "_skey": "cardano-cli TextEnvelope signing key for the solver wallet. File mode 0600, OUTSIDE the repo. Controls only the solver's own float, never user funds.",
   "signing_key_path": "/opt/shaswap/keys/solver.skey",
