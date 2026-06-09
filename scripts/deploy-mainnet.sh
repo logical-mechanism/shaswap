@@ -15,8 +15,16 @@
 # Prerequisites (operator-supplied; nothing secret lives in the repo):
 #   - A synced MAINNET cardano-node; CARDANO_NODE_SOCKET_PATH points at its socket.
 #   - cardano-cli (era-grouped, v11+) and aiken on PATH.
-#   - A funded mainnet wallet: DEPLOY_SKEY + DEPLOY_ADDR, with at least TWO ada-only UTXOs
-#     (a funding input + a distinct collateral) totalling ~110 ADA + fees.
+#   - A funded mainnet wallet: DEPLOY_SKEY + DEPLOY_ADDR, with a SINGLE funding UTXO of
+#     ~135 ADA (130 of it parks in the four reference-script UTXOs and is recoverable later)
+#     PLUS a separate small (~5 ADA) ada-only collateral UTXO. `transaction build` does NO
+#     cross-UTXO coin selection, so the one funding input must alone cover the 130 ADA of refs.
+#   - python3 on PATH (the helpers parse chain JSON with it) and the PINNED aiken
+#     v1.1.22+39d6b04 (verify_build runs `aiken build && git diff --exit-code plutus.json`,
+#     so a different aiken regenerates plutus.json and trips the gate). cardano-cli must
+#     support the era-grouped `latest` command (v8.20+/v11+).
+#   - Run from a `git clone` of this repo (the reproducibility gate uses `git diff`), not a
+#     copied tarball, and run all steps on the SAME host (they hand off via scripts/work-mainnet/).
 #
 # Run:
 #   CARDANO_NODE_SOCKET_PATH=/path/node.socket \

@@ -75,9 +75,11 @@ lp_intent_ref).
 - [ ] `app/src/lib/chain/deployment.ts` → `mainnet`: paste `orderRef`/`poolRef`/`lpIntentRef`
       (txHash + outputIndex), set `deployed: true`. Pasting a non-null `lpIntentRef` flips
       `LP_INTENTS_LIVE` true (the batcher LP path goes live). The `lp_intent` hash + enterprise
-      address are **derived** from `SETTLEMENT_HASH` (`lpIntentScript.ts`) — update the
-      `lpIntentScript.test.ts` golden to the mainnet-`S` values (as `address.test.ts` pins the
-      order/pool addresses). No hand-fabricated refs — take them from the verified deploy tx.
+      address are **derived** from `SETTLEMENT_HASH` (`lpIntentScript.ts`) and are
+      **network-independent** — mainnet ships the same immutable `S` (`a305a3cf…`), so the
+      committed `lpIntentScript.test.ts` / `address.test.ts` goldens already pin the mainnet
+      (`networkId=1`) addresses and need **no edit**. No hand-fabricated refs — take them from
+      the verified deploy tx.
 - [ ] `.do/app.mainnet.yaml`: set `NEXT_PUBLIC_NETWORK=mainnet`; in the DO console swap
       `BLOCKFROST_PROJECT_ID` to a **mainnet** key (the app refuses to start on a
       key/network prefix mismatch).

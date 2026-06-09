@@ -20,8 +20,12 @@ it on [`../../batcher/config/deployment.mainnet.example.json`](../../batcher/con
 - `signing_key_path`: a cardano-cli TextEnvelope `.skey` for the solver wallet. **File
   mode `0600`, never committed.** Fund this address with ADA; the batcher self-manages its
   UTXOs (funding change + a one-time auto-provisioned collateral UTXO).
-- `max_orders_per_tx`: keep at/below the measured ceiling (default 20; ~40–50 is the
-  ex-unit limit — see [`../spec/ex-unit-spike.md`](../spec/ex-unit-spike.md)).
+- `max_orders_per_tx`: keep at/below the measured ceiling (code default 20). The
+  **confirmed safe cap is 30** — a real 30-order settlement settles *well within* budget
+  on preprod (the full-tx run in [`mainnet-checklist.md`](mainnet-checklist.md) §0). Treat
+  the typed-value spike's ~40–50 as a theoretical projection that **over-counts** real
+  headroom (it omits `ScriptContext` decoding); the true full-tx ceiling sits just above
+  30, so 30 is the cap to run at — see [`../spec/ex-unit-spike.md`](../spec/ex-unit-spike.md).
 
 Runtime env: `SHASWAP_SUBMIT=1` (actually submit), `SHASWAP_INTERVAL_MS` (daemon poll
 cadence), `SHASWAP_STRATEGY` (`round-robin` | `profit-greedy`), `SHASWAP_METRICS_ADDR` /
