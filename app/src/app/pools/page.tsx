@@ -365,6 +365,19 @@ function PairIcons({ x, y }: { x: TokenInfo; y: TokenInfo }) {
 }
 
 function TokenAvatar({ token, size = 30 }: { token: TokenInfo; size?: number }) {
+  // ADA gets its own mark: the ₳ symbol on Cardano blue, mirroring the swap TokenIcon —
+  // without this, ADA (which has no registry logo) fell through to the "AD" initials.
+  if (token.unit === "lovelace") {
+    return (
+      <span
+        className="grid place-items-center rounded-full bg-[#0033ad] font-bold text-white ring-2 ring-surface"
+        style={{ width: size, height: size, fontSize: Math.round(size * 0.46) }}
+        aria-hidden
+      >
+        ₳
+      </span>
+    );
+  }
   if (token.icon) {
     return (
       <span
