@@ -278,7 +278,7 @@ export const LP_INTENT_SCRIPT_SIZE = 2954;
 export function requireLpIntentDeployed(): { lpIntentRef: RefScript } {
   if (!LP_INTENTS_LIVE || !LP_INTENT_REF) {
     throw new Error(
-      `Batcher-processed LP (deposit/withdraw intents) is not live on ${DEPLOYMENT_NETWORK} yet. ` +
+      `Batcher-processed LP (deposit/withdraw intents) is not live on ${DEPLOYMENT_NETWORK}. ` +
         `Use the Direct (advanced) liquidity path for now.`,
     );
   }
@@ -293,7 +293,7 @@ export function requireLpIntentDeployed(): { lpIntentRef: RefScript } {
 export function requireDeployed(): { orderRef: RefScript; poolRef: RefScript } {
   if (!DEPLOYED || !ORDER_REF || !POOL_REF) {
     throw new Error(
-      `ShaSwap contracts are not yet live on ${DEPLOYMENT_NETWORK}. ` +
+      `ShaSwap contracts are not live on ${DEPLOYMENT_NETWORK}. ` +
         `Posting orders and LP actions are disabled on this network.`,
     );
   }

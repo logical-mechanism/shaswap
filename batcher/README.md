@@ -97,5 +97,7 @@ cargo run -p solver-core --example sim_sweep # netting / surplus numbers
 ## Invariants this component must keep
 
 The batcher stays **unprivileged** — no capability the protocol doesn't grant every
-solver. Solver reward is ADA tips only. It mirrors the on-chain constants exactly: the
-typed `Config` loads them and fails fast if any drifts from `constants.ak`.
+solver. Solver reward is ADA tips only. It mirrors the on-chain constants exactly — they
+are compiled in from `solver-core` (mirroring `constants.ak`), not restated in the
+deployment config — and every settlement it builds is re-checked against the chain by the
+EvaluateTx pre-submit gate.

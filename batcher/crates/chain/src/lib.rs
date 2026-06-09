@@ -7,7 +7,8 @@
 //! Node-independent, fully-tested today:
 //! - [`backend`] — the `ChainBackend` trait + its data types (tip, params, eval).
 //! - [`config`] — the typed, fail-fast [`Config`](config::Config); `validate()`
-//!   rejects drift from `constants.ak` (drift = rejected settlements).
+//!   parses + length-checks the deployment identities (script hashes, refs). Pool
+//!   discovery is dynamic, so the config has no per-pool/per-token fields.
 //! - [`decode`] — on-chain Plutus `Data` → `solver-core` datums, the inverse of
 //!   `txbuild::plutus`, round-trip tested so the two never diverge.
 //!
