@@ -21,6 +21,7 @@ import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
 import {
+  formatAda,
   formatPercent,
   formatUnits,
   toBaseUnits,
@@ -418,7 +419,7 @@ export function SwapCard() {
         onRefresh={refreshPrice}
       />
 
-      {/* advanced: tip + partial fills + expiry */}
+      {/* advanced: tip + partial fills + expiry + the order's ADA breakdown */}
       <Advanced
         open={advanced}
         onToggle={() => setAdvanced((v) => !v)}
@@ -430,6 +431,10 @@ export function SwapCard() {
         onPartial={setPartial}
         expiry={expiry}
         onExpiry={setExpiry}
+        orderMinAda={funding.orderMinAda}
+        tipLovelace={BigInt(tipLovelace || "0")}
+        fromIsAda={fromIsAda}
+        tradedAda={fromIsAda ? amountBig : 0n}
       />
 
       {/* high price-impact caution (the quote is an estimate over real reserves) */}
@@ -579,6 +584,11 @@ function PostResult({ state }: { state: PostState }) {
   return null;
 }
 
+/** Rough, honest guess at the network fee to POST an order — a plain payment to the order
+ * address (the validator only runs on settle/reclaim, not on post), so it's a small flat
+ * tx fee. Labeled as an estimate in the UI; not used in any funding gate. */
+const EST_POST_FEE_LOVELACE = 200_000n;
+
 function Advanced({
   open,
   onToggle,
@@ -590,6 +600,10 @@ function Advanced({
   onPartial,
   expiry,
   onExpiry,
+  orderMinAda,
+  tipLovelace,
+  fromIsAda,
+  tradedAda,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -602,6 +616,14 @@ function Advanced({
   onPartial: (v: boolean) => void;
   expiry: string;
   onExpiry: (v: string) => void;
+  /** Min-ADA the order UTXO must carry (doubled when partial fills are on), in lovelace. */
+  orderMinAda: bigint;
+  /** The posted solver tip, in lovelace. */
+  tipLovelace: bigint;
+  /** Selling ADA → the traded lovelace also sits on the order UTXO. */
+  fromIsAda: boolean;
+  /** ADA being sold (lovelace) when fromIsAda; 0 otherwise. */
+  tradedAda: bigint;
 }) {
   return (
     <div className="mt-3 border-t border-border pt-2">
@@ -676,6 +698,36 @@ function Advanced({
               <option value="1w">1 week</option>
             </select>
           </label>
+
+          {/* Why the order holds exact ADA — the three roles ADA plays on one UTXO
+              (BLUEPRINT §5.2.1), plus a rough fee guess. Short and reassuring; not a gate. */}
+          <div className="space-y-1.5 border-t border-border pt-2.5 text-[11px] text-muted">
+            <div className="font-semibold text-muted">ADA on your order</div>
+            <p className="leading-snug">
+              Your order is its own little UTXO, so it carries some ADA in separate roles.
+              It all comes back when it settles or you grab it back — only the tip is ever kept.
+            </p>
+            <DetailRow label="Held min-ADA (UTXO deposit)">
+              ~{formatAda(orderMinAda.toString())} ₳
+            </DetailRow>
+            {partial && (
+              <p className="-mt-0.5 text-[10px] leading-snug text-muted">
+                Doubled because partial fills can leave a second reclaimable piece.
+              </p>
+            )}
+            <DetailRow label="Solver tip">
+              {tipLovelace > 0n ? `${formatAda(tipLovelace.toString())} ₳` : "—"}
+            </DetailRow>
+            {fromIsAda && tradedAda > 0n && (
+              <DetailRow label="ADA you’re selling">
+                {formatAda(tradedAda.toString())} ₳
+              </DetailRow>
+            )}
+            <DetailRow label="Est. network fee">
+              ~{formatAda(EST_POST_FEE_LOVELACE.toString())} ₳{" "}
+              <span className="text-muted/70">(rough guess)</span>
+            </DetailRow>
+          </div>
         </div>
       )}
     </div>
