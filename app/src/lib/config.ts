@@ -36,6 +36,20 @@ export const APP_CONFIG = {
   networkId: (NETWORK === "mainnet" ? 1 : 0) as NetworkId,
 } as const;
 
+/**
+ * Public origin for each network that has a live deployment. ShaSwap runs one
+ * app per network on its own domain (see `.do/app.<network>.yaml`), so switching
+ * network is a cross-domain redirect, not an in-app toggle — the footer network
+ * switcher reads this map to hop between sister apps. `preview` has no public
+ * deployment, so it has no entry (and can't be a switch target).
+ *
+ * Keep these in sync with the `domains:` block in each `.do/app.<network>.yaml`.
+ */
+export const NETWORK_SITE_URLS: Partial<Record<Network, string>> = {
+  mainnet: "https://app.shaswap.org",
+  preprod: "https://preprod.shaswap.org",
+};
+
 /** Human label for a network id, used in the header chip. */
 export function networkLabel(network: Network = APP_CONFIG.network): string {
   return network.charAt(0).toUpperCase() + network.slice(1);
