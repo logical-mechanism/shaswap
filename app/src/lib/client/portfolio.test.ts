@@ -5,13 +5,27 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countResting, summarizeWalletTokens } from "./portfolio.ts";
+import { countResting, lpPositions, summarizeWalletTokens } from "./portfolio.ts";
+import { lpUnitForPool } from "../chain/deployment.ts";
 
 const tok = (unit: string, ticker: string) => ({
   unit,
   ticker,
   name: ticker,
   decimals: 0,
+});
+
+// A pool whose NFT unit is `<policy(56 hex)><name>`; lpUnitForPool keys off the policy.
+const P1 = "11".repeat(28); // 56 hex chars
+const P2 = "22".repeat(28);
+const pool = (policy: string, aTicker: string, bTicker: string) => ({
+  id: policy + "4e4654", // NFT unit = policy + name
+  tokenA: tok(`a_${aTicker}`, aTicker),
+  tokenB: tok(`b_${bTicker}`, bTicker),
+  reserveA: "0",
+  reserveB: "0",
+  feeBps: 30,
+  firstDeposit: false,
 });
 
 test("countResting counts only open (resting) rows", () => {
@@ -114,4 +128,65 @@ test("summarizeWalletTokens: exact past 2^53 (BigInt, not Number)", () => {
     summarizeWalletTokens([{ unit: "u1", quantity: "9007199254740993" }], tokens),
     { count: 1, tickers: ["ONE"], otherCount: 0 },
   );
+});
+
+test("summarizeWalletTokens: excluded units (LP tokens) drop out of the tally", () => {
+  const tokens = [tok("u1", "ONE")];
+  const lp = lpUnitForPool(pool(P1, "ADA", "TEST").id);
+  const assets = [
+    { unit: "u1", quantity: "5" }, // recognised → counted
+    { unit: lp, quantity: "100" }, // an LP token → excluded entirely (shown as liquidity)
+    { unit: "an_nft", quantity: "1" }, // genuinely unrecognised → other
+  ];
+  assert.deepEqual(summarizeWalletTokens(assets, tokens, new Set([lp])), {
+    count: 1,
+    tickers: ["ONE"],
+    otherCount: 1,
+  });
+});
+
+// ---- LP positions: matching wallet holdings to pools -------------------------------------
+
+test("lpPositions: a held LP token → a position in that pool", () => {
+  const pools = [pool(P1, "ADA", "TEST")];
+  const lp = lpUnitForPool(pools[0].id);
+  const r = lpPositions(pools, [{ unit: lp, quantity: "500000" }]);
+  assert.deepEqual(r, { count: 1, pairs: ["ADA/TEST"], lpUnits: [lp] });
+});
+
+test("lpPositions: no LP held / no pools → no positions", () => {
+  const pools = [pool(P1, "ADA", "TEST")];
+  assert.equal(lpPositions(pools, [{ unit: "something_else", quantity: "9" }]).count, 0);
+  assert.equal(lpPositions(pools, []).count, 0);
+  assert.equal(lpPositions(pools, undefined).count, 0);
+  assert.equal(lpPositions([], [{ unit: "x", quantity: "1" }]).count, 0);
+});
+
+test("lpPositions: a zero LP balance is not a position", () => {
+  const pools = [pool(P1, "ADA", "TEST")];
+  const lp = lpUnitForPool(pools[0].id);
+  assert.equal(lpPositions(pools, [{ unit: lp, quantity: "0" }]).count, 0);
+});
+
+test("lpPositions: two fee tiers of one pair count twice but the label de-dupes", () => {
+  const pools = [pool(P1, "ADA", "TEST"), pool(P2, "ADA", "TEST")];
+  const assets = [
+    { unit: lpUnitForPool(pools[0].id), quantity: "1" },
+    { unit: lpUnitForPool(pools[1].id), quantity: "1" },
+  ];
+  const r = lpPositions(pools, assets);
+  assert.equal(r.count, 2);
+  assert.deepEqual(r.pairs, ["ADA/TEST"]); // deduped label
+  assert.equal(r.lpUnits.length, 2);
+});
+
+test("lpPositions: a malformed pool id is skipped, never thrown on", () => {
+  const pools = [
+    { ...pool(P1, "ADA", "TEST"), id: "xyz" }, // too short for lpUnitForPool
+  ];
+  assert.deepEqual(lpPositions(pools, [{ unit: "anything", quantity: "1" }]), {
+    count: 0,
+    pairs: [],
+    lpUnits: [],
+  });
 });

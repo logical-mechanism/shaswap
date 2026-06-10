@@ -6,24 +6,27 @@ import { useWallet, useLovelace, useAssets } from "@/lib/wallet/hooks";
 import { useOwnerAddress } from "@/hooks/useOwnerAddress";
 import { useOrders } from "@/hooks/useOrders";
 import { useLpIntents } from "@/hooks/useLpIntents";
+import { usePools } from "@/hooks/usePools";
 import { useTokens } from "@/hooks/useTokens";
 import { mergeRows } from "@/lib/client/orderRows";
 import { mergeLpIntentRows } from "@/lib/client/lpIntentRows";
 import { getRecent, type RecentOrder } from "@/lib/client/activity";
 import { getRecentLpIntents, type RecentLpIntent } from "@/lib/client/lpIntentActivity";
 import { nowMs } from "@/lib/client/now";
-import { countResting, summarizeWalletTokens } from "@/lib/client/portfolio";
+import { countResting, lpPositions, summarizeWalletTokens } from "@/lib/client/portfolio";
 import { formatAda } from "@/lib/format";
 import { Pip } from "@/components/Pip";
 import { PipLoading } from "@/components/PipLoading";
 import { PipEmptyState } from "@/components/PipEmptyState";
+import { Sprout } from "@/components/Sprout";
 import { RefreshIcon } from "@/components/RefreshIcon";
 
 /**
  * Portfolio — a single, at-a-glance "where's my capital" view for the connected wallet:
- * resting orders, liquidity moves in flight, and what's in the wallet, each linking into its
- * detail page. Pure aggregation over the existing read-only hooks — no new data source, and
- * (like the Orders page) NO polling: the live sets refresh on demand only.
+ * resting orders, liquidity positions (pools the wallet holds LP for, + any in-flight LP
+ * intents), and what's in the wallet, each linking into its detail page. Pure aggregation over
+ * the existing read-only hooks — no new data source, no price feed, and (like the Orders page)
+ * NO polling: the live sets refresh on demand only.
  */
 export default function PortfolioPage() {
   const { connected, refresh: refreshWallet } = useWallet();
@@ -43,6 +46,9 @@ export default function PortfolioPage() {
     error: intentsError,
     reload: reloadIntents,
   } = useLpIntents(ownerAddr);
+  // Pools are network-wide (not owner-scoped): their LP units are what we match the wallet's
+  // holdings against to surface realised liquidity positions.
+  const { pools, loading: poolsLoading, error: poolsError, reload: reloadPools } = usePools();
   const { tokens, loading: tokensLoading, error: tokensError } = useTokens();
 
   // The local activity logs let the resting counts match the detail pages exactly — a live
@@ -58,11 +64,12 @@ export default function PortfolioPage() {
   const refresh = useCallback(() => {
     reloadOrders();
     reloadIntents();
+    reloadPools();
     refreshWallet();
     setRecentOrders(ownerAddr ? getRecent(ownerAddr, nowMs()) : []);
     setRecentLp(ownerAddr ? getRecentLpIntents(ownerAddr, nowMs()) : []);
     setNow(nowMs());
-  }, [ownerAddr, reloadOrders, reloadIntents, refreshWallet]);
+  }, [ownerAddr, reloadOrders, reloadIntents, reloadPools, refreshWallet]);
 
   // Initial load once the owner resolves (deferred out of the effect body, per convention).
   useEffect(() => {
@@ -74,13 +81,22 @@ export default function PortfolioPage() {
     () => (ownerAddr ? countResting(mergeRows(orders, recentOrders, now)) : 0),
     [ownerAddr, orders, recentOrders, now],
   );
-  const liquidityMoves = useMemo(
+  // Realised liquidity = pools the wallet holds LP for (matched against each pool's LP unit);
+  // pending deposit/withdraw intents are a separate, in-flight signal shown as a secondary note.
+  const lpPos = useMemo(
+    () => (ownerAddr ? lpPositions(pools, assets) : { count: 0, pairs: [], lpUnits: [] }),
+    [ownerAddr, pools, assets],
+  );
+  const intentsInFlight = useMemo(
     () => (ownerAddr ? countResting(mergeLpIntentRows(intents, recentLp, now)) : 0),
     [ownerAddr, intents, recentLp, now],
   );
+  // LP tokens are surfaced as liquidity positions, so keep them out of the wallet's token tally
+  // (otherwise they'd read as "things Pip doesn't recognise").
+  const lpUnitSet = useMemo(() => new Set(lpPos.lpUnits), [lpPos]);
   const walletTokens = useMemo(
-    () => summarizeWalletTokens(assets, tokens),
-    [assets, tokens],
+    () => summarizeWalletTokens(assets, tokens, lpUnitSet),
+    [assets, tokens, lpUnitSet],
   );
 
   // The wallet's token line degrades honestly: counting while the registry loads, "showing
@@ -101,8 +117,25 @@ export default function PortfolioPage() {
             } Pip doesn’t recognise.`
           : "Nothing else in here for now.";
 
+  // Liquidity reads as realised positions first (which pairs), with any in-flight deposit /
+  // withdraw intents folded in as a secondary "· N in flight" note. The underlying amounts of
+  // each position live on the pool's own page (Browse pools → a pool).
+  const inFlightNote =
+    intentsInFlight > 0 ? ` · ${intentsInFlight} in flight` : "";
+  const liquiditySummary =
+    lpPos.count > 0
+      ? `In ${lpPos.pairs.slice(0, 3).join(", ")}${
+          lpPos.pairs.length > 3 ? ", …" : ""
+        }${inFlightNote}.`
+      : intentsInFlight > 0
+        ? `${
+            intentsInFlight === 1 ? "One move" : `${intentsInFlight} moves`
+          } in flight — waiting for a batcher.`
+        : "No liquidity yet.";
+
   const showLoading = connected && ownerAddr === undefined && !ownerError;
-  const anyLoading = ordersLoading || intentsLoading || tokensLoading;
+  const anyLoading =
+    ordersLoading || intentsLoading || poolsLoading || tokensLoading;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
@@ -168,22 +201,14 @@ export default function PortfolioPage() {
             }
           />
           <SummaryCard
-            icon={<Pip size={26} mood="thinking" />}
-            title="Liquidity moves"
+            icon={<Sprout state={lpPos.count > 0 ? "growing" : "seed"} size={26} />}
+            title="Liquidity"
             href="/pools"
             cta="Browse pools"
-            loading={intentsLoading}
-            error={intentsError}
-            headline={String(liquidityMoves)}
-            summary={
-              liquidityMoves === 0
-                ? "No deposits or withdrawals in flight."
-                : `${
-                    liquidityMoves === 1
-                      ? "One liquidity move is"
-                      : `${liquidityMoves} liquidity moves are`
-                  } waiting in the gardens.`
-            }
+            loading={poolsLoading || intentsLoading}
+            error={poolsError ?? intentsError}
+            headline={String(lpPos.count)}
+            summary={liquiditySummary}
           />
           <SummaryCard
             icon={<Pip size={26} mood="happy" />}

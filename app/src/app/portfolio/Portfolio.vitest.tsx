@@ -7,7 +7,8 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import type { WalletPosition, LpIntentPosition, TokenInfo } from "@/lib/data";
+import type { WalletPosition, LpIntentPosition, TokenInfo, Pool } from "@/lib/data";
+import { POOL, POOL_LP_UNIT } from "../../test/fixtures";
 
 const ADA: TokenInfo = { unit: "lovelace", ticker: "ADA", name: "Cardano", decimals: 6 };
 const TEST: TokenInfo = { unit: "u_test", ticker: "TEST", name: "Test", decimals: 0 };
@@ -46,8 +47,9 @@ const h = vi.hoisted(() => ({
   assets: [] as { unit: string; quantity: string }[],
   orders: [] as WalletPosition[],
   intents: [] as LpIntentPosition[],
-  // Set in beforeEach — `vi.hoisted` runs before the ADA/TEST consts are initialised.
+  // Set in beforeEach — `vi.hoisted` runs before the const fixtures are initialised.
   tokens: [] as TokenInfo[],
+  pools: [] as Pool[],
   tokensLoading: false,
   refresh: vi.fn(),
 }));
@@ -65,6 +67,15 @@ vi.mock("@/hooks/useOrders", () => ({
 }));
 vi.mock("@/hooks/useLpIntents", () => ({
   useLpIntents: () => ({ intents: h.intents, loading: false, error: null, reload: () => {} }),
+}));
+vi.mock("@/hooks/usePools", () => ({
+  usePools: () => ({
+    pools: h.pools,
+    loading: false,
+    refreshing: false,
+    error: null,
+    reload: () => {},
+  }),
 }));
 vi.mock("@/hooks/useTokens", () => ({
   useTokens: () => ({ tokens: h.tokens, loading: h.tokensLoading, error: null }),
@@ -86,6 +97,7 @@ beforeEach(() => {
   h.orders = [];
   h.intents = [];
   h.tokens = [ADA, TEST];
+  h.pools = [POOL];
   h.tokensLoading = false;
   h.refresh.mockClear();
   window.localStorage.clear();
@@ -100,22 +112,28 @@ describe("PortfolioPage", () => {
     expect(screen.queryByRole("heading", { name: "Resting orders" })).toBeNull();
   });
 
-  it("shows resting-order, liquidity, and wallet counts for a populated wallet", () => {
+  it("shows resting-order, liquidity-position, and wallet counts for a populated wallet", () => {
+    const liqPair = `${POOL.tokenA.ticker}/${POOL.tokenB.ticker}`;
     h.orders = [order("a#0"), order("b#0")];
-    h.intents = [intent("c#0")];
-    h.assets = [{ unit: "u_test", quantity: "5" }];
+    h.intents = [intent("c#0")]; // one pending move, shown as a secondary "in flight" note
+    // A TEST balance (recognised) + an LP token for POOL (a realised liquidity position).
+    h.assets = [
+      { unit: "u_test", quantity: "5" },
+      { unit: POOL_LP_UNIT, quantity: "500000" },
+    ];
     render(<PortfolioPage />);
 
     const orders = card("Resting orders");
     expect(within(orders).getByText("2")).toBeInTheDocument();
     expect(within(orders).getByText(/resting in the next batch/i)).toBeInTheDocument();
 
-    const liq = card("Liquidity moves");
+    const liq = card("Liquidity");
     expect(within(liq).getByText("1")).toBeInTheDocument();
-    expect(within(liq).getByText(/waiting in the gardens/i)).toBeInTheDocument();
+    expect(within(liq).getByText(new RegExp(`In ${liqPair}.*in flight`))).toBeInTheDocument();
 
     const wallet = card("Wallet");
     expect(within(wallet).getByText("₳1,500")).toBeInTheDocument();
+    // The LP token is surfaced as liquidity, NOT counted among the wallet's tokens.
     expect(within(wallet).getByText(/\+ 1 token: TEST/)).toBeInTheDocument();
 
     // Cards link into their detail pages.
@@ -132,9 +150,7 @@ describe("PortfolioPage", () => {
     render(<PortfolioPage />);
 
     expect(within(card("Resting orders")).getByText(/Nothing resting right now/i)).toBeInTheDocument();
-    expect(
-      within(card("Liquidity moves")).getByText(/No deposits or withdrawals in flight/i),
-    ).toBeInTheDocument();
+    expect(within(card("Liquidity")).getByText(/No liquidity yet/i)).toBeInTheDocument();
     const wallet = card("Wallet");
     expect(within(wallet).getByText("₳0")).toBeInTheDocument();
     expect(within(wallet).getByText(/Nothing else in here for now/i)).toBeInTheDocument();
