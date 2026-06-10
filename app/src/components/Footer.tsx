@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { APP_CONFIG, networkLabel } from "@/lib/config";
-import { Pip } from "@/components/Pip";
+import { NetworkSwitcher } from "@/components/NetworkSwitcher";
 
 const GITHUB_URL = "https://github.com/logical-mechanism/shaswap";
 
@@ -32,11 +31,7 @@ export function Footer() {
             GitHub
           </a>
         </nav>
-        <span className="k-pill text-xs">
-          <Pip size={18} mood="happy" />
-          {networkLabel()}
-          <span className="sr-only">network {APP_CONFIG.network}</span>
-        </span>
+        <NetworkSwitcher />
       </div>
     </footer>
   );
