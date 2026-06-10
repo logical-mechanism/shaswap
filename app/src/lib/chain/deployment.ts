@@ -28,12 +28,14 @@ import { APP_CONFIG, type Network, type NetworkId } from "../config.ts";
 /**
  * Per-network deployment identities. The whole app's network is one config value
  * (`APP_CONFIG.network`, from `NEXT_PUBLIC_NETWORK`); this table maps it to the
- * network-DEPENDENT values. The network-INDEPENDENT values below (script hashes,
- * compiled code, asset names, on-chain constants) are the SAME on every network — a
- * Plutus script hash is the hash of its compiled code, not network-tagged — so they are
- * plain shared exports. Order/pool ADDRESSES are committed per-network LITERALS (see
- * `ORDER_ADDR`/`POOL_ADDR`), each pinned to the canonical hash-based derivation for both
- * networks by `address.test.ts`.
+ * network-DEPENDENT values. Most network-INDEPENDENT values below (settlement/order/
+ * lp_intent hashes, compiled code, asset names, on-chain constants) are the SAME on every
+ * network — a Plutus script hash is the hash of its compiled code, not network-tagged — so
+ * they are plain shared exports. The ONE exception is the `pool` hash: the H-01 partial fork
+ * (Rev 29) lands on preprod before mainnet, so `poolScriptHash` is carried PER-NETWORK in this
+ * table (preprod forked, mainnet on Rev 25 until its own fork). Order/pool ADDRESSES are
+ * committed per-network LITERALS (see `ORDER_ADDR`/`POOL_ADDR`), each pinned to the canonical
+ * hash-based derivation by `address.test.ts`.
  *
  * Only the reference-script UTXOs are genuinely per-network. `deployed` gates the
  * tx-building paths: a network whose reference scripts aren't live (preview) can still be
@@ -53,8 +55,16 @@ interface NetworkDeployment {
    * mainnet is `addr1…`.
    */
   orderAddr: string;
-  /** Pool address = base(payment = POOL_SCRIPT_HASH, stake = `S`). Same rules as `orderAddr`. */
+  /** Pool address = base(payment = `poolScriptHash`, stake = `S`). Same rules as `orderAddr`. */
   poolAddr: string;
+  /**
+   * Pool validator hash (payment credential of the pool address) for THIS network. PER-NETWORK
+   * during the H-01 partial fork (Rev 29): preprod runs the fixed pool `757ba6b7…`, mainnet is
+   * still on the Rev 25 pool `34b30c7a…` until its own fork. Every OTHER script hash
+   * (settlement `S`, order, lp_intent) stays network-independent (shared export), since only
+   * the `pool` validator changed.
+   */
+  poolScriptHash: string;
   /** Order reference-script UTXO — `null` until this network is deployed. */
   orderRef: RefScript | null;
   /** Pool reference-script UTXO — `null` until this network is deployed. */
@@ -75,8 +85,20 @@ interface NetworkDeployment {
 // only tags testnet vs mainnet, not which testnet).
 const TESTNET_ORDER_ADDR =
   "addr_test1xrnl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzjxy5";
+// Preprod pool address — forked to the H-01 pool (Rev 29). Mainnet keeps its own (below).
 const TESTNET_POOL_ADDR =
-  "addr_test1xq6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu5dngl";
+  "addr_test1xp6hhf4h8y3texyzgesm7n0tjrn2qcgyzuzuqv4vua26l5arqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qvt5def";
+
+/**
+ * Pool validator hash — PER-NETWORK during the H-01 partial fork (Rev 29). Preprod runs the
+ * fixed pool (`pool_settle` S-tag self-check + held-LP pin); mainnet stays on the Rev 25 pool
+ * until its own fork. Exported so `address.test.ts` can pin each network's hash→address
+ * derivation independently. Every other script hash stays network-independent.
+ */
+export const PREPROD_POOL_SCRIPT_HASH =
+  "757ba6b73922bc98824661bf4deb90e6a061041705c032ace755afd3";
+export const MAINNET_POOL_SCRIPT_HASH =
+  "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac";
 
 /**
  * Per-network deployment identities, selected by `APP_CONFIG.network`. Reference-script
@@ -90,13 +112,16 @@ const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
     deployed: true,
     orderAddr: TESTNET_ORDER_ADDR,
     poolAddr: TESTNET_POOL_ADDR,
+    poolScriptHash: PREPROD_POOL_SCRIPT_HASH,
     orderRef: {
       txHash: "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
       outputIndex: 2,
     },
+    // H-01 partial fork (Rev 29): the new pool reference script (only the pool hash changed;
+    // settlement/order/lp_intent refs stay at the Rev 25 deploy tx 9088f8dc).
     poolRef: {
-      txHash: "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
-      outputIndex: 1,
+      txHash: "6bd62b207786741f623348d1d3e1be40ac141d96b134deb4f4b8af678dba5bdc",
+      outputIndex: 0,
     },
     // Post-audit redeploy (Rev 24): the lp_intent reference script is live (#3 of the same
     // deploy tx), so the batcher LP-intent path is ON (LP_INTENTS_LIVE true on preprod).
@@ -111,6 +136,7 @@ const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
     deployed: false,
     orderAddr: TESTNET_ORDER_ADDR,
     poolAddr: TESTNET_POOL_ADDR,
+    poolScriptHash: PREPROD_POOL_SCRIPT_HASH,
     orderRef: null,
     poolRef: null,
     lpIntentRef: null,
@@ -126,6 +152,8 @@ const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
       "addr1x8nl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu50xgt",
     poolAddr:
       "addr1xy6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzsnyq",
+    // Mainnet still on the Rev 25 pool until its own H-01 fork (frontend in maintenance).
+    poolScriptHash: MAINNET_POOL_SCRIPT_HASH,
     orderRef: {
       txHash: "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb",
       outputIndex: 2,
@@ -156,9 +184,13 @@ export const SETTLEMENT_HASH =
 /** Order validator hash (payment credential of the order address). */
 export const ORDER_SCRIPT_HASH =
   "e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d";
-/** Pool validator hash (payment credential of the pool address). */
-export const POOL_SCRIPT_HASH =
-  "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac";
+/**
+ * Pool validator hash (payment credential of the pool address) for the ACTIVE network.
+ * PER-NETWORK during the H-01 partial fork (Rev 29) — preprod `757ba6b7…`, mainnet
+ * `34b30c7a…` — see `poolScriptHash` in the `DEPLOYMENTS` table. (Unlike `SETTLEMENT_HASH`
+ * and `ORDER_SCRIPT_HASH`, which stay network-independent since only `pool` changed.)
+ */
+export const POOL_SCRIPT_HASH = ACTIVE.poolScriptHash;
 
 /**
  * First pool's one-shot mint policy. NOTE: each pool has its OWN seed-parameterised
