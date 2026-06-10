@@ -1,11 +1,9 @@
 import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
-import { quoteConstantProduct } from "./quote";
 import { planRoute } from "./route";
 import type {
   LpIntentPosition,
   Pool,
-  Quote,
   ReferencePrice,
   Route,
   TokenInfo,
@@ -134,15 +132,6 @@ const LP_INTENTS: LpIntentPosition[] = [
   },
 ];
 
-/** Find the pool that trades exactly {inUnit, outUnit} in either direction. */
-function findPool(inUnit: string, outUnit: string): Pool | undefined {
-  return POOLS.find(
-    (p) =>
-      (p.tokenA.unit === inUnit && p.tokenB.unit === outUnit) ||
-      (p.tokenA.unit === outUnit && p.tokenB.unit === inUnit),
-  );
-}
-
 export class MockProvider implements DataProvider {
   readonly name = "mock";
 
@@ -164,18 +153,6 @@ export class MockProvider implements DataProvider {
 
   async getPool(poolId: string): Promise<Pool | null> {
     return POOLS.find((p) => p.id === poolId) ?? null;
-  }
-
-  async priceQuote(
-    tokenInUnit: string,
-    tokenOutUnit: string,
-    amountIn: string,
-  ): Promise<Quote | null> {
-    if (!BY_UNIT.has(tokenInUnit) || !BY_UNIT.has(tokenOutUnit)) return null;
-    const pool = findPool(tokenInUnit, tokenOutUnit);
-    if (!pool) return null;
-    // Same shared constant-product display math as the real provider (NOT clearing).
-    return quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
   }
 
   async routeQuote(

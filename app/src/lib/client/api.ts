@@ -2,7 +2,6 @@ import type { UTxO } from "@meshsdk/core";
 import type {
   LpIntentPosition,
   Pool,
-  Quote,
   ReferencePrice,
   Route,
   TokenInfo,
@@ -58,20 +57,6 @@ export async function fetchRegisteredTokens(
   }
   const { tokens } = (await res.json()) as { tokens: TokenInfo[] };
   return tokens;
-}
-
-export async function fetchQuote(
-  inUnit: string,
-  outUnit: string,
-  amount: string,
-  signal?: AbortSignal,
-): Promise<Quote | null> {
-  const qs = new URLSearchParams({ in: inUnit, out: outUnit, amount });
-  const { quote } = await getJson<{ quote: Quote | null }>(
-    `/api/quote?${qs.toString()}`,
-    signal,
-  );
-  return quote;
 }
 
 /**

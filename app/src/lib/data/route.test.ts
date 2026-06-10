@@ -75,6 +75,32 @@ function bruteBestN(pools: Pool[], inUnit: string, outUnit: string, amt: bigint)
   return rec(0, amt);
 }
 
+/** Brute-force the best NET output of splitting `amt` across pools, where each non-empty
+ * leg costs one `tip` (in tokenOut units): `max over compositions of Σ floor(outᵢ) −
+ * (#non-zero legs)·tip`. This is the router's actual objective, so it checks the LEG-COUNT
+ * choice (how far to split), not just the split given a fixed set. Exponential — small only. */
+function bruteBestNetN(
+  pools: Pool[],
+  inUnit: string,
+  outUnit: string,
+  amt: bigint,
+  tip: bigint,
+): bigint {
+  const out = (i: number, x: bigint) =>
+    BigInt(quoteConstantProduct(pools[i], inUnit, outUnit, x.toString()).amountOut);
+  const rec = (i: number, remaining: bigint): bigint => {
+    if (i === pools.length - 1) return remaining > 0n ? out(i, remaining) - tip : 0n;
+    let best = remaining > 0n ? out(i, remaining) - tip : 0n; // all-remaining-here seed
+    for (let a = 0n; a <= remaining; a++) {
+      const here = a > 0n ? out(i, a) - tip : 0n;
+      const v = here + rec(i + 1, remaining - a);
+      if (v > best) best = v;
+    }
+    return best;
+  };
+  return rec(0, amt);
+}
+
 /** A tiny deterministic PRNG (mulberry32) so a fuzz failure is reproducible from its seed. */
 function rng(seed: number): () => number {
   let s = seed >>> 0;
@@ -349,6 +375,41 @@ test("FUZZ: 200 small configs — gross output matches brute force within the fl
     assert.ok(
       got >= brute - BigInt(n),
       `within floor slack ${n} (draw ${i}): ${got} ≥ ${brute - BigInt(n)} (amt=${amt})`,
+    );
+  }
+});
+
+test("FUZZ: 200 small configs — the TIP-GATED leg count is net-optimal (brute force)", () => {
+  // The tip=0 optimality test proves the split is optimal GIVEN a leg count; this proves the
+  // router also chooses the right NUMBER of legs — it maximises Σ floor(out) − legs·tip. Sell
+  // TOK→ADA so tokenOut is ADA and the per-leg tip (lovelace) IS the output-unit tip exactly.
+  const r = rng(0x712ED);
+  for (let i = 0; i < 200; i++) {
+    const n = randInt(r, 1, 3);
+    const pools: Pool[] = [];
+    for (let p = 0; p < n; p++) {
+      pools.push(
+        tokAdaPool(
+          `p${p}`,
+          String(randInt(r, 50, 5_000)),
+          String(randInt(r, 50, 5_000)),
+          [0, 5, 30, 100][randInt(r, 0, 3)],
+        ),
+      );
+    }
+    const amt = BigInt(randInt(r, 1, 80));
+    const tip = BigInt([0, 1, 5, 20, 100][randInt(r, 0, 4)]);
+    const route = planRoute(pools, "aa", "lovelace", amt.toString(), { tipLovelace: tip });
+    assert.ok(route, `route exists (draw ${i})`);
+    const routerNet = BigInt(route.amountOut) - BigInt(route.legs.length) * tip;
+    const bruteNet = bruteBestNetN(pools, "aa", "lovelace", amt, tip);
+    assert.ok(
+      routerNet <= bruteNet,
+      `router net never beats the true max-net (draw ${i}): ${routerNet} ≤ ${bruteNet} (amt=${amt}, tip=${tip}, legs=${route.legs.length})`,
+    );
+    assert.ok(
+      routerNet >= bruteNet - BigInt(n),
+      `router net within floor slack ${n} of max-net (draw ${i}): ${routerNet} ≥ ${bruteNet - BigInt(n)} (amt=${amt}, tip=${tip})`,
     );
   }
 });
