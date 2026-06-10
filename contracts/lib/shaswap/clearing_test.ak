@@ -1013,6 +1013,133 @@ test settlement_n0_strip_lp() fail {
   clearing.run(s(), redeemer([]), tx)
 }
 
+// ---- pool_settle S-tag self-check + held-LP pin (audit H-01) ---------------
+// clearing.run enumerates and full-value-pins pools by the S stake tag ONLY, but
+// pool.ak still runs on ANY pool spent via PoolSettle. A pool placed at the pool(S)
+// PAYMENT credential with a NON-S stake tag (mint.create can't see S, so it can't
+// reject the placement) is therefore spendable here yet INVISIBLE to the anchor's
+// pin. Pre-fix, pool_settle pinned reserves/NFT/datum but NOT the held LP and never
+// required the S tag — so such a pool could be PoolSettle'd with its held LP stripped
+// to the attacker, then its reserves drained via a later LpAction (the H-01 trap).
+// Fix: pool_settle now self-checks is_tagged(own, S) AND pins held LP across the spend.
+
+// A single-pool PoolSettle tx at `addr` with reserves UNCHANGED (net 0, so the k-check
+// and price pin are trivially satisfied) and held LP moving in_held -> out_held. This
+// isolates the two new teeth (S-tag self-check + held-LP pin) from the curve logic.
+fn pool_settle_at(addr: Address, in_held: Int, out_held: Int) -> Transaction {
+  Transaction {
+    ..transaction.placeholder,
+    inputs: [
+      Input {
+        output_reference: pool_ref(),
+        output: Output {
+          address: addr,
+          value: pool_val(pool_ada_in, pool_tok_in)
+            |> assets.add(nft.policy, lp_name, in_held),
+          datum: InlineDatum(pool_datum()),
+          reference_script: None,
+        },
+      },
+    ],
+    outputs: [
+      Output {
+        address: addr,
+        value: pool_val(pool_ada_in, pool_tok_in)
+          |> assets.add(nft.policy, lp_name, out_held),
+        datum: InlineDatum(pool_datum()),
+        reference_script: None,
+      },
+    ],
+    withdrawals: [Pair(s(), 0)],
+  }
+}
+
+// The H-01 look-alike: a base address whose PAYMENT credential is the pool script but
+// whose stake tag is some NON-S credential (here the order hash) — not is_tagged(S).
+fn pool_rogue_addr() -> Address {
+  Address {
+    payment_credential: Script(p_hash),
+    stake_credential: Some(Inline(Script(o_hash))),
+  }
+}
+
+// S-tagged pool, held LP unchanged across a (net-0) settlement: accepted.
+test pool_settle_held_lp_preserved() {
+  spend.pool_settle(
+    pool_settle_at(tagged(Script(p_hash)), lp_held, lp_held),
+    pool_ref(),
+    pool_datum(),
+    s(),
+  )
+}
+
+// S-tagged pool, output strips ALL held LP: rejected by the new held-LP pin.
+test pool_settle_strip_held_lp() fail {
+  spend.pool_settle(
+    pool_settle_at(tagged(Script(p_hash)), lp_held, 0),
+    pool_ref(),
+    pool_datum(),
+    s(),
+  )
+}
+
+// S-tagged pool, output skims a SINGLE held LP token: rejected.
+test pool_settle_skim_one_held_lp() fail {
+  spend.pool_settle(
+    pool_settle_at(tagged(Script(p_hash)), lp_held, lp_held - 1),
+    pool_ref(),
+    pool_datum(),
+    s(),
+  )
+}
+
+// THE H-01 EXPLOIT: a pool at the pool(S) payment credential with a NON-S stake tag,
+// PoolSettle'd with all held LP stripped. Pre-fix this PASSED (LP unpinned, no S-tag
+// check) — the held-LP extraction. Post-fix the is_tagged self-check rejects it.
+test pool_settle_non_s_tag_rejected() fail {
+  spend.pool_settle(
+    pool_settle_at(pool_rogue_addr(), lp_held, 0),
+    pool_ref(),
+    pool_datum(),
+    s(),
+  )
+}
+
+// Same exploit via an ENTERPRISE (stake = None) placement: also non-S, also rejected.
+test pool_settle_enterprise_rejected() fail {
+  spend.pool_settle(
+    pool_settle_at(plain(Script(p_hash)), lp_held, 0),
+    pool_ref(),
+    pool_datum(),
+    s(),
+  )
+}
+
+// Even with held LP UNCHANGED, a non-S pool can't be PoolSettle'd at all (the S-tag
+// check fires before any reserve/LP logic) — closes the input-smuggle path entirely.
+test pool_settle_non_s_tag_rejected_even_if_lp_kept() fail {
+  spend.pool_settle(
+    pool_settle_at(pool_rogue_addr(), lp_held, lp_held),
+    pool_ref(),
+    pool_datum(),
+    s(),
+  )
+}
+
+// (property) at an S-tagged pool with reserves unchanged, pool_settle rejects ANY strip
+// of held LP (a settlement never moves LP). delta in [1, lp_held] => out_held in
+// [0, lp_held - 1], so held LP always differs and the held-LP pin must always reject.
+test prop_pool_settle_rejects_lp_strip(
+  delta via fuzz.int_between(1, lp_held),
+) fail {
+  spend.pool_settle(
+    pool_settle_at(tagged(Script(p_hash)), lp_held, lp_held - delta),
+    pool_ref(),
+    pool_datum(),
+    s(),
+  )
+}
+
 // ---- incidental-asset pass-through (H2) -----------------------------------
 // An order UTXO that also carries an unrelated asset must return it to the owner;
 // the solver can't route it to itself. Owner/remainder/pool pin FULL value now.

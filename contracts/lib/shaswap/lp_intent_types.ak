@@ -1,10 +1,12 @@
 //// LP-intent datum/redeemer encodings (BLUEPRINT §5.1 Rev 22,
 //// `documentation/spec/lp-intents.md`).
 ////
-//// A batcher-fulfilled deposit/withdraw *intent*. It sits at the unparameterised
-//// `lp_intent` validator's address with a **non-`S` (enterprise) stake credential**, so
-//// the settlement anchor never enumerates it — LP fulfillment is its own tx, never
-//// folded into a settlement (§5.4). Kept in a SEPARATE module so the frozen
+//// A batcher-fulfilled deposit/withdraw *intent*. The `lp_intent` validator is
+//// **parameterised by the settlement credential `S`** (so `fulfill` can assert
+//// `!withdrawal_present(S)` and forbid the settlement fold). The intent UTXO sits at
+//// that validator's address with a **non-`S` (enterprise) stake credential**, so the
+//// settlement anchor never enumerates it — LP fulfillment is its own tx, never folded
+//// into a settlement (§5.4). Kept in a SEPARATE module so the frozen
 //// `types.ak`/`constants.ak` (imported by the immutable validators) do not change at all.
 
 use cardano/address.{Credential}
