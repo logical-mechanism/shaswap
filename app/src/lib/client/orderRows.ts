@@ -123,3 +123,67 @@ export function mergeRows(
 export function hasPending(rows: OrderRow[]): boolean {
   return rows.some((r) => r.status === "pending");
 }
+
+/**
+ * A swap routed across several pool shards posts N pool-bound legs as outputs of ONE
+ * transaction (see `postOrders`), so every leg's `ref` (`<txHash>#<index>`) shares the
+ * same `txHash`. Grouping by that hash reassembles a split swap into a single visual unit;
+ * a plain single-pool swap is one row → a group of one.
+ */
+export interface OrderRowGroup {
+  /** The shared post-transaction hash — every leg is an output of this one tx. */
+  txHash: string;
+  /** The legs of the swap, ordered by output index (so a split reads leg 1, 2, …). */
+  legs: OrderRow[];
+}
+
+/**
+ * Group merged rows by their post-transaction hash. Group order follows first appearance
+ * in `rows` (which `mergeRows` has already sorted by status, so a group with active legs
+ * leads); legs WITHIN a group are reordered into output-index order so a split always reads
+ * leg 1, leg 2, … regardless of each leg's individual status. Pure and side-effect-free.
+ */
+export function groupRowsByTx(rows: OrderRow[]): OrderRowGroup[] {
+  const byTx = new Map<string, OrderRow[]>();
+  for (const row of rows) {
+    const txHash = row.ref.split("#")[0];
+    const legs = byTx.get(txHash);
+    if (legs) legs.push(row);
+    else byTx.set(txHash, [row]);
+  }
+  return Array.from(byTx, ([txHash, legs]) => ({
+    txHash,
+    legs: [...legs].sort((a, b) => legIndex(a.ref) - legIndex(b.ref)),
+  }));
+}
+
+/** The output index of an order ref (`<txHash>#<index>`); 0 if absent or malformed. */
+function legIndex(ref: string): number {
+  const n = Number.parseInt(ref.split("#")[1] ?? "", 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/** Total input across a group's legs (sum of `amountIn`), base units, exact via BigInt. */
+export function groupTotalIn(legs: OrderRow[]): string {
+  return sumField(legs, "amountIn");
+}
+
+/** Combined floor across a group's legs (sum of `minOut`), base units, exact via BigInt. */
+export function groupFloor(legs: OrderRow[]): string {
+  return sumField(legs, "minOut");
+}
+
+function sumField(legs: OrderRow[], field: "amountIn" | "minOut"): string {
+  let total = 0n;
+  for (const l of legs) total += safeBig(l[field]);
+  return total.toString();
+}
+
+/** Parse a base-unit integer string to BigInt, tolerating a malformed value as 0. */
+function safeBig(value: string): bigint {
+  try {
+    return BigInt(value);
+  } catch {
+    return 0n;
+  }
+}
