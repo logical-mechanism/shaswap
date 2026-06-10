@@ -314,6 +314,36 @@ test("deepest pool wins as the single-best baseline on a large trade", () => {
   assert.equal(r.singleBestPoolId, "deep");
 });
 
+test("NEVER WORSE holds with >MAX_SUBSET_POOLS shards (best pool ranks last by spot)", () => {
+  // 12 shallow, higher-spot pools + 1 deep, lower-spot pool. The deep pool ranks 13th by
+  // marginal, so the top-12 subset search DROPS it — yet for a large trade it is the single
+  // best pool. The single-best fallback must still pick it; without it the router would
+  // return a thin split worth far less than one deep pool, breaking the never-worse promise.
+  const pools: Pool[] = [];
+  for (let i = 0; i < 12; i++) pools.push(tokAdaPool(`shallow${i}`, "1000", "1100", 0)); // spot 1.1, thin
+  pools.push(tokAdaPool("deep", "1000000", "1000000", 0)); // spot 1.0, deep — sorts last
+  const amt = 50_000n;
+  const r = planRoute(pools, "aa", "lovelace", amt.toString(), { tipLovelace: 0n });
+  assert.ok(r);
+  const indepBest = bestSinglePool(pools, "aa", "lovelace", amt);
+  assert.ok(BigInt(r.amountOut) >= indepBest, `never worse: ${r.amountOut} ≥ ${indepBest}`);
+  assert.equal(r.singleBestPoolId, "deep");
+  assert.equal(r.legs.length, 1, "the deep pool dwarfs the thin shards → collapses to it");
+  assert.equal(r.legs[0].poolId, "deep");
+});
+
+test("a pool with fee ≥ 100% (γ ≤ 0) is rejected, never routed through", () => {
+  const good = tokAdaPool("good", "1000", "1000", 30);
+  const dead = tokAdaPool("dead", "1000", "1000", 10_000); // 100% fee → γ = 0, pays ≤ 0 out
+  const r = planRoute([good, dead], "aa", "lovelace", "100", { tipLovelace: 0n });
+  assert.ok(r);
+  assert.equal(r.legs.length, 1);
+  assert.equal(r.legs[0].poolId, "good");
+  assert.equal(r.singleBestPoolId, "good");
+  // With ONLY the dead pool there are no valid candidates → null (not a 0-output route).
+  assert.equal(planRoute([dead], "aa", "lovelace", "100", { tipLovelace: 0n }), null);
+});
+
 test("FUZZ: 400 random configs — conserves + never worse than the best single pool", () => {
   // Wider net than the hand-picked cases: random pool counts, depths, fees, amounts, and
   // tips. Asserts the two load-bearing invariants on EVERY draw — conservation (legs sum to

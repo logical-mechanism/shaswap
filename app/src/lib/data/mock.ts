@@ -1,6 +1,7 @@
 import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
 import { planRoute } from "./route";
+import { toBigInt as toBig } from "../bigint";
 import type {
   LpIntentPosition,
   Pool,
@@ -162,9 +163,11 @@ export class MockProvider implements DataProvider {
     tipLovelace: string,
   ): Promise<Route | null> {
     if (!BY_UNIT.has(tokenInUnit) || !BY_UNIT.has(tokenOutUnit)) return null;
-    // Same split router as the real provider, over the mock's pool set.
+    // Same split router as the real provider, over the mock's pool set. `toBig` (not raw
+    // BigInt) for parity with BlockfrostDataProvider — a non-digit tip degrades to 0n rather
+    // than throwing, so the two providers stay swappable.
     return planRoute(POOLS, tokenInUnit, tokenOutUnit, amountIn, {
-      tipLovelace: BigInt(tipLovelace),
+      tipLovelace: toBig(tipLovelace),
     });
   }
 

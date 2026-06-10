@@ -74,6 +74,10 @@ export function planRoute(
     const reserveOut = toBig(inIsA ? pool.reserveB : pool.reserveA);
     if (reserveIn <= 0n || reserveOut <= 0n) continue;
     const gamma = 10_000n - BigInt(pool.feeBps);
+    // A fee ≥ 100% (γ ≤ 0) is a malformed/dead pool: it pays ≤ 0 out and would flip the
+    // marginal and tip math negative. Reject it here (BLUEPRINT §3: malformed inputs are
+    // strictly rejected) so it can never enter the split.
+    if (gamma <= 0n) continue;
     cands.push({
       pool,
       reserveIn,
@@ -112,8 +116,9 @@ export function planRoute(
   // Subsets are nested by neither size nor marginal in general (the deepest pool can be
   // the best singleton while a shallower-but-pricier pool joins a 2-split), so for a
   // handful of shards we enumerate ALL non-empty subsets — exact, and 2^n is tiny for the
-  // realistic n. Above MAX_SUBSET_POOLS we'd never want that many thin legs anyway; we
-  // cap the search at the top pools by spot price (the rest can't clear a full tip).
+  // realistic n. Above MAX_SUBSET_POOLS we cap the search at the top pools by spot price (we'd
+  // never want that many thin legs); the single-best fallback below still guarantees the
+  // result is never worse than the best single pool even when the cap drops it from the search.
   const searchCands = cands.slice(0, MAX_SUBSET_POOLS);
   // Token↔token: tip can't be priced → never split (singletons only).
   const allowSplit = tipOut !== null;
@@ -161,6 +166,18 @@ export function planRoute(
 
   if (!bestAlloc) return null;
 
+  // Unconditional NEVER-WORSE floor. The subset search is capped at MAX_SUBSET_POOLS by spot
+  // price, so on a pair with more shards the deepest pool — the best SINGLE pool for this
+  // size — can rank outside the search and be missed. Fall back to it whenever its one-leg
+  // net is at least the searched best. This makes "never worse than the best single pool"
+  // hold for ANY pool count, and is a no-op when ≤ MAX_SUBSET_POOLS pools (that singleton is
+  // already in the search, so its net can't exceed the chosen one).
+  const singleBestNet = singleBestOut - (tipOut ?? 0n);
+  if (singleBestNet >= bestNet!) {
+    const bestCand = cands.find((c) => c.pool.id === singleBestPoolId);
+    if (bestCand) bestAlloc = [{ cand: bestCand, x: amt }];
+  }
+
   // Build the legs from the exact display quote so every number the UI shows comes from
   // the canonical curve (and matches the standalone single-pool quote exactly).
   const legs: RouteLeg[] = bestAlloc.map(({ cand, x }) => {
@@ -175,10 +192,10 @@ export function planRoute(
   });
 
   const totalOut = legs.reduce((s, l) => s + toBig(l.amountOut), 0n);
-  // Defensive: a split must never pay less than the single best pool. By construction it
-  // can't (the best singleton is in the search), but clamp the reported baseline so the
-  // "improvement vs single pool" the UI shows is never negative from rounding.
-  const baseline = totalOut > singleBestOut ? singleBestOut : totalOut;
+  // `totalOut ≥ singleBestOut` now holds unconditionally (the never-worse fallback above), so
+  // report the TRUE single-best baseline — no clamp. The UI's "improvement vs one pool"
+  // (totalOut − singleBestOut) is therefore always a real, non-negative number, and a
+  // regression that made the split worse would surface as a 0 gain rather than being masked.
 
   // Blended execution price in HUMAN units = (totalOut/totalIn) × 10^(decIn − decOut).
   const RATIO_SCALE = 1_000_000_000_000n;
@@ -197,7 +214,7 @@ export function planRoute(
     price,
     priceImpact: Math.max(0, weightedImpact),
     legs,
-    singleBestOut: baseline.toString(),
+    singleBestOut: singleBestOut.toString(),
     singleBestPoolId,
   };
 }

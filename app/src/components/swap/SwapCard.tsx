@@ -194,8 +194,11 @@ export function SwapCard() {
   const splitView = useMemo(() => {
     if (!routeFresh || !route || route.legs.length < 2 || !toToken) return undefined;
     const totalIn = toBig(route.amountIn);
+    // Use the leg's OWN feeBps (the fee the route was priced at), not a fresh pairPools
+    // lookup — the latter can miss a refreshed/removed pool and show 0%, and would show the
+    // current fee rather than the quoted one.
     const legs = route.legs.map((l) => ({
-      feeBps: pairPools.find((p) => p.id === l.poolId)?.feeBps ?? 0,
+      feeBps: l.feeBps,
       pct: totalIn > 0n ? Number((toBig(l.amountIn) * 10_000n) / totalIn) / 100 : 0,
       outDisplay: formatUnits(l.amountOut, toToken.decimals),
     }));
@@ -204,7 +207,7 @@ export function SwapCard() {
       legs,
       improvementDisplay: gain > 0n ? formatUnits(gain.toString(), toToken.decimals) : "",
     };
-  }, [routeFresh, route, pairPools, toToken]);
+  }, [routeFresh, route, toToken]);
 
   // Wallet balance of the FROM token (ADA via useLovelace; other tokens via useAssets).
   // The spendable amount + the funding blockers (over-balance / over-spendable / not-enough
@@ -259,6 +262,11 @@ export function SwapCard() {
     !insufficientAda &&
     poolCount > 0 &&
     routeFresh &&
+    // Every routed leg must still resolve to a known pool (the route is priced server-side;
+    // pairPools is the client's list). If the lists diverge — a pool appeared/drained
+    // between the two fetches — disable rather than letting the post throw "pool no longer
+    // available"; a Refresh resyncs. (No-op in the common case where the lists agree.)
+    routePools.length === legCount &&
     !routeLoading &&
     floorsValid &&
     tipValid &&
