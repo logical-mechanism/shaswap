@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/", label: "Swap" },
   { href: "/pools", label: "Pools" },
   { href: "/orders", label: "Orders" },
+  { href: "/portfolio", label: "Portfolio" },
 ];
 
 export function Nav() {
