@@ -125,44 +125,55 @@ const evaluator: IEvaluator = {
   },
 };
 
-export interface PostOrderArgs {
-  /** The pool the order trades against (gives the pair + NFT identity binding). */
+export interface PostOrderLeg {
+  /** The pool this leg trades against (gives the pair + NFT identity binding). */
   pool: Pool;
   /** Unit being sold (must be one side of the pool pair). */
   sellUnit: string;
-  /** Amount of `sellUnit` to sell, base units. */
+  /** Amount of `sellUnit` routed to this leg, base units. */
   sellAmount: bigint;
-  /** Per-order floor — minimum amount of the bought asset (base units). */
+  /** Per-leg floor — minimum amount of the bought asset for this leg (base units). */
   limit: bigint;
-  /** Solver tip in lovelace. */
+}
+
+export interface PostOrdersArgs {
+  /** One leg for a single-pool swap; several for a split route across the pair's shards. */
+  legs: PostOrderLeg[];
+  /**
+   * Solver tip in lovelace, carried by EACH leg. Each leg is an independent order that must
+   * attract a solver on its own, so the tip is per-leg (the marginal cost of splitting).
+   */
   tip: bigint;
   partial: boolean;
   deadline: bigint | null;
 }
 
-/**
- * Build → sign → submit an order: a plain payment to the `S`-tagged order address
- * with the inline `OrderDatum`, funded by the wallet's own UTXOs. No script runs at
- * creation. Returns the submitted tx hash.
- *
- * The order is validated + encoded by `buildOrder` (it throws on anything malformed,
- * so a bad order never reaches the chain). The owner is the wallet's own payment key
- * hash — making the order owner-reclaimable (the non-custodial guarantee).
- *
- * Returns the tx hash, the order's output reference (`<hash>#0` — the order is the
- * first output; change is appended last), and the owner (change) address, so the UI
- * can record a pending-activity entry and match it against the on-chain order list.
- */
-export interface PostOrderResult {
+export interface PostOrdersResult {
   txHash: string;
-  orderRef: string;
+  /** Each leg's output reference, in leg order (`<hash>#0`, `<hash>#1`, …). */
+  orderRefs: string[];
+  /** The owner (change) address. */
   owner: string;
 }
 
-export async function postOrder(
+/**
+ * Build → sign → submit one or more orders in a SINGLE transaction: each leg is a plain
+ * payment to the `S`-tagged order address with its own inline `OrderDatum`, funded by the
+ * wallet's own UTXOs. No script runs at creation.
+ *
+ * A split route posts N pool-bound legs at once — one network fee, but each leg is its own
+ * UTXO carrying its own min-ADA and the full solver tip. The legs are the FIRST N outputs
+ * (`#0…#N-1`) in the order given; change is appended last (mirroring the single-order
+ * `<hash>#0` assumption). Each leg is validated + encoded by `buildOrder` (it throws on
+ * anything malformed, so a bad leg never reaches the chain). The owner is the wallet's own
+ * payment key hash, making every leg owner-reclaimable (the non-custodial guarantee).
+ */
+export async function postOrders(
   wallet: IWallet,
-  args: PostOrderArgs,
-): Promise<PostOrderResult> {
+  args: PostOrdersArgs,
+): Promise<PostOrdersResult> {
+  if (args.legs.length === 0) throw new Error("postOrders: no legs to post");
+
   const changeAddress = await wallet.getChangeAddress();
   const { pubKeyHash, stakeCredentialHash, stakeScriptCredentialHash } =
     deserializeAddress(changeAddress);
@@ -178,37 +189,42 @@ export async function postOrder(
       ? ({ kind: "script", hash: stakeScriptCredentialHash } as const)
       : null;
 
-  const built = buildOrder({
-    ownerPkh: pubKeyHash,
-    ownerStake,
-    poolNftUnit: args.pool.id,
-    assetAUnit: args.pool.tokenA.unit,
-    assetBUnit: args.pool.tokenB.unit,
-    sellUnit: args.sellUnit,
-    sellAmount: args.sellAmount,
-    limit: args.limit,
-    tip: args.tip,
-    partial: args.partial,
-    deadline: args.deadline,
-  });
+  const built = args.legs.map((leg) =>
+    buildOrder({
+      ownerPkh: pubKeyHash,
+      ownerStake,
+      poolNftUnit: leg.pool.id,
+      assetAUnit: leg.pool.tokenA.unit,
+      assetBUnit: leg.pool.tokenB.unit,
+      sellUnit: leg.sellUnit,
+      sellAmount: leg.sellAmount,
+      limit: leg.limit,
+      tip: args.tip,
+      partial: args.partial,
+      deadline: args.deadline,
+    }),
+  );
 
-  // postOrder is a plain payment (no Plutus script), so it needs no cost models.
+  // A plain payment (no Plutus script), so it needs no cost models.
   const [{ params }, utxos] = await Promise.all([
     fetchProtocolParams(),
     wallet.getUtxos(),
   ]);
 
   const txBuilder = new MeshTxBuilder({ params });
+  for (const b of built) {
+    // default "Mesh" datum type; outputs keep insertion order, change appended last.
+    txBuilder.txOut(b.address, b.value).txOutInlineDatumValue(b.datum);
+  }
   const unsignedTx = await txBuilder
-    .txOut(built.address, built.value)
-    .txOutInlineDatumValue(built.datum) // default "Mesh" datum type
     .changeAddress(changeAddress)
     .selectUtxosFrom(utxos)
     .complete();
 
   const signedTx = await wallet.signTx(unsignedTx);
   const txHash = await wallet.submitTx(signedTx);
-  return { txHash, orderRef: `${txHash}#0`, owner: changeAddress };
+  const orderRefs = built.map((_, i) => `${txHash}#${i}`);
+  return { txHash, orderRefs, owner: changeAddress };
 }
 
 /**

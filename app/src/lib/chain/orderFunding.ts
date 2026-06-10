@@ -26,22 +26,32 @@ export interface OrderFundingInput {
   fromBalance: bigint;
   /** Wallet ADA (lovelace) balance — funds min-ADA + tip + fee on a non-ADA sale. */
   lovelace: bigint;
-  /** Partial fills allowed → the order pre-funds 2× order_min_ada. */
+  /** Partial fills allowed → each order pre-funds 2× order_min_ada. */
   partial: boolean;
-  /** Solver tip, in lovelace (≥ 0). */
+  /** Solver tip, in lovelace (≥ 0) — carried by EACH leg. */
   tip: bigint;
-  /** Sell amount in base units (0 when no/invalid amount is entered). */
+  /** Sell amount in base units, TOTAL across legs (0 when no/invalid amount is entered). */
   amount: bigint;
+  /**
+   * Number of order legs the swap posts (a split route posts one pool-bound order per
+   * shard). Each leg is its own UTXO with its own min-ADA and its own full tip, all in one
+   * transaction. Defaults to 1 (a plain single-pool swap).
+   */
+  legs?: number;
 }
 
 export interface OrderFunding {
-  /** Order min-ADA: `order_min_ada`, doubled for a partial. */
+  /** Per-leg min-ADA: `order_min_ada`, doubled for a partial. */
   orderMinAda: bigint;
-  /** Non-tip ADA overhead = order min-ADA + fee buffer. */
+  /** TOTAL min-ADA across all legs = legs × orderMinAda. */
+  totalMinAda: bigint;
+  /** TOTAL solver tips across all legs = legs × tip. */
+  totalTip: bigint;
+  /** Non-tip ADA overhead = total min-ADA + a single tx fee buffer. */
   adaNeeded: bigint;
   /** ADA held back from a from=ADA balance so MAX can't build an un-submittable tx. */
   adaReserve: bigint;
-  /** Total ADA the wallet must hold to fund a non-ADA sale (min-ADA + fee + tip). */
+  /** Total ADA the wallet must hold to fund a non-ADA sale (total min-ADA + fee + total tips). */
   adaForOrder: bigint;
   /** Most of the FROM token actually spendable (ADA: balance − reserve, floored at 0). */
   spendable: bigint;
@@ -54,17 +64,24 @@ export interface OrderFunding {
 }
 
 /**
- * Derive the spendable amount + the three funding blockers for an order, from the
- * wallet's balances and the order's shape. Does NOT gate on wallet connectivity — the
- * caller ANDs the booleans with `connected`. `amount` of 0 means "no amount entered",
+ * Derive the spendable amount + the three funding blockers for an order (or split route),
+ * from the wallet's balances and the order's shape. Does NOT gate on wallet connectivity —
+ * the caller ANDs the booleans with `connected`. `amount` of 0 means "no amount entered",
  * which makes every blocker false (nothing to fund yet).
+ *
+ * A split route is N pool-bound legs in ONE tx: N min-ADAs and N tips (each leg must stand
+ * on its own), but only a SINGLE fee buffer — so min-ADA and tip scale by `legs` while the
+ * fee buffer does not.
  */
 export function orderFunding(i: OrderFundingInput): OrderFunding {
+  const legs = BigInt(Math.max(1, i.legs ?? 1));
   const orderMinAda = (i.partial ? 2n : 1n) * ORDER_MIN_ADA;
-  const adaNeeded = orderMinAda + ORDER_FEE_BUFFER;
-  // Selling ADA: the tip is also drawn from this balance, so reserve it too.
-  const adaReserve = adaNeeded + (i.fromIsAda ? i.tip : 0n);
-  const adaForOrder = adaNeeded + i.tip;
+  const totalMinAda = legs * orderMinAda;
+  const totalTip = legs * i.tip;
+  const adaNeeded = totalMinAda + ORDER_FEE_BUFFER;
+  // Selling ADA: the tips are also drawn from this balance, so reserve them too.
+  const adaReserve = adaNeeded + (i.fromIsAda ? totalTip : 0n);
+  const adaForOrder = adaNeeded + totalTip;
   const spendable = i.fromIsAda
     ? i.fromBalance > adaReserve
       ? i.fromBalance - adaReserve
@@ -78,6 +95,8 @@ export function orderFunding(i: OrderFundingInput): OrderFunding {
 
   return {
     orderMinAda,
+    totalMinAda,
+    totalTip,
     adaNeeded,
     adaReserve,
     adaForOrder,

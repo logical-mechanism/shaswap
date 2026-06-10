@@ -24,15 +24,15 @@ import {
 } from "@/lib/chain/deployment";
 import { lpIntentAddress } from "@/lib/chain/lpIntentScript";
 import type { DataProvider } from "./provider";
-import { quoteConstantProduct } from "./quote";
+import { planRoute } from "./route";
 import { getReferencePrice } from "./referencePrice";
 import { feeToBps, httpStatus, isRetriable } from "./providerUtil";
 import { qtyOfUnit, reserveOf, toLpIntentPosition, toPosition } from "./providerMap";
 import type {
   LpIntentPosition,
   Pool,
-  Quote,
   ReferencePrice,
+  Route,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -52,9 +52,10 @@ import { errText, log } from "../log";
  * policy filter). Reserves are read from the UTXO value with `pool_min_ada` carved
  * out of an ADA reserve (BLUEPRINT §5.2.1 / `reserve_of`).
  *
- * `priceQuote` is a plain constant-product estimate over the *real* reserves — for
- * display only. It is NOT ShaSwap's batch-auction clearing; the user posts an intent
- * and the untrusted solver settles it later, never worse than the per-order floor.
+ * `routeQuote` is a plain constant-product estimate over the *real* reserves (split across
+ * shards by the pure router) — for display only. It is NOT ShaSwap's batch-auction clearing;
+ * the user posts intent(s) and the untrusted solver settles them later, never worse than the
+ * per-order floor.
  */
 
 const ADA_TOKEN: TokenInfo = {
@@ -309,28 +310,18 @@ export class BlockfrostDataProvider implements DataProvider {
     return out;
   }
 
-  async priceQuote(
+  async routeQuote(
     tokenInUnit: string,
     tokenOutUnit: string,
     amountIn: string,
-  ): Promise<Quote | null> {
+    tipLovelace: string,
+  ): Promise<Route | null> {
+    // The swap layer's only quote: the pure split router picks the best split across the
+    // pair's shards (a one-leg route is just the single-best pool), gated by the per-leg tip.
     const pools = await this.listPools();
-    // When several pools trade the pair, quote against EACH and return the best
-    // (highest output) — so the order binds (via quote.poolId) to the pool the user
-    // was actually shown, and a second same-pair pool is reachable when it's better.
-    const candidates = pools.filter(
-      (p) =>
-        (p.tokenA.unit === tokenInUnit && p.tokenB.unit === tokenOutUnit) ||
-        (p.tokenA.unit === tokenOutUnit && p.tokenB.unit === tokenInUnit),
-    );
-    if (candidates.length === 0) return null;
-
-    let best: Quote | null = null;
-    for (const pool of candidates) {
-      const q = quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
-      if (!best || toBig(q.amountOut) > toBig(best.amountOut)) best = q;
-    }
-    return best;
+    return planRoute(pools, tokenInUnit, tokenOutUnit, amountIn, {
+      tipLovelace: toBig(tipLovelace),
+    });
   }
 
   referencePrice(

@@ -75,6 +75,50 @@ export interface Quote {
   poolId?: string;
 }
 
+/** One leg of a split route: the input routed to a single pool and what it returns. */
+export interface RouteLeg {
+  /** Pool NFT unit (policy+name) — the order leg's `pool_nft` binding. */
+  poolId: string;
+  /** Input routed to this pool, base units, decimal string. */
+  amountIn: string;
+  /** Exact (floored) output this pool pays for `amountIn`, base units, decimal string. */
+  amountOut: string;
+  /** This pool's fee, basis points. */
+  feeBps: number;
+  /** This leg's price impact as a fraction (0.012 = 1.2%). */
+  priceImpact: number;
+}
+
+/**
+ * A planned multi-pool route for one swap, produced by the split router (`route.ts`) over
+ * the sharded pools for a pair. When `legs.length === 1` it is exactly the single-best-pool
+ * behaviour. `amountOut` is the sum across legs and is GUARANTEED ≥ `singleBestOut` (a split
+ * is only chosen when it beats the best single pool net of the extra per-leg solver tips).
+ */
+export interface Route {
+  tokenIn: TokenInfo;
+  tokenOut: TokenInfo;
+  /** Total input, base units, decimal string. */
+  amountIn: string;
+  /**
+   * Per-leg solver tip (lovelace, decimal string) this split was planned for. The tip gates
+   * how far the swap splits, so it's part of the route's identity: a consumer must treat a
+   * route as stale if the current tip differs (just like a changed amount).
+   */
+  tip: string;
+  /** Total output across all legs, base units, decimal string. */
+  amountOut: string;
+  /** Blended execution price tokenOut-per-tokenIn in HUMAN units, for display. */
+  price: string;
+  /** Input-weighted blended price impact as a fraction. */
+  priceImpact: number;
+  legs: RouteLeg[];
+  /** Best output achievable from a SINGLE pool for this input — the no-split baseline. */
+  singleBestOut: string;
+  /** Pool the single-best baseline used. */
+  singleBestPoolId: string;
+}
+
 /**
  * A user's intent to swap — what the UI would eventually hand to the
  * order-builder. In the skeleton this is read-only/illustrative; NO settlement

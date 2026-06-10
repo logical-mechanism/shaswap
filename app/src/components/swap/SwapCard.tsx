@@ -16,7 +16,7 @@ import { HIGH_FEE_BPS, RECOMMENDED_MIN_TIP } from "@/lib/chain/deployment";
 import { isVerifiedPool } from "@/lib/chain/verifiedPools";
 import { useTokens } from "@/hooks/useTokens";
 import { usePools } from "@/hooks/usePools";
-import { useQuote } from "@/hooks/useQuote";
+import { useRoute } from "@/hooks/useRoute";
 import { recordPost } from "@/lib/client/activity";
 import { nowMs } from "@/lib/client/now";
 import { toUserMessage } from "@/lib/client/errors";
@@ -39,7 +39,7 @@ import { SlippageSettings } from "./SlippageSettings";
 type PostState =
   | { kind: "idle" }
   | { kind: "posting" }
-  | { kind: "success"; hash: string }
+  | { kind: "success"; hash: string; legCount: number }
   | { kind: "error"; message: string };
 
 export function SwapCard() {
@@ -91,30 +91,44 @@ export function SwapCard() {
   const baseAmountIn =
     fromToken && amount ? toBaseUnits(amount, fromToken.decimals) : "";
 
-  const {
-    quote,
-    loading: quoteLoading,
-    error: quoteError,
-    reload: reloadQuote,
-  } = useQuote(fromToken?.unit, toToken?.unit, baseAmountIn);
+  const tipLovelace = toBaseUnits(tip || "0", 6);
+  // The tip is the ONLY solver reward — a 0-tip order can never be picked up, so require
+  // a positive tip (mirrors the buildOrder guard) rather than post an un-settleable order.
+  const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") > 0n;
+  // Advisory (not blocking): a positive-but-low tip may still be skipped by solvers — a
+  // single-order settlement pays the whole tx fee. Surface a caution, don't disable.
+  const tipLow = tipValid && BigInt(tipLovelace || "0") < RECOMMENDED_MIN_TIP;
 
-  // useQuote debounces (~250ms), so after changing the AMOUNT or pair the PREVIOUS
-  // quote can still be in hand. Treat a quote as usable only when it matches the CURRENT
-  // pair AND the current input amount — otherwise the order could bind to the wrong pool,
-  // or (worse) to a floor computed for a different amount, during the debounce/fetch gap.
-  const quoteFresh =
-    !!quote &&
-    quote.tokenIn.unit === fromToken?.unit &&
-    quote.tokenOut.unit === toToken?.unit &&
-    quote.amountIn === baseAmountIn;
+  // The smart split route: how to spread this swap across the pair's sharded pools to
+  // maximise output. The tip is an INPUT — each leg carries one tip, so the router only
+  // splits while the extra output beats the extra tip. A single-pool pair (or a trade not
+  // worth splitting) yields a one-leg route, i.e. the old best-single-pool behaviour.
+  const {
+    route,
+    loading: routeLoading,
+    error: routeError,
+    reload: reloadRoute,
+  } = useRoute(fromToken?.unit, toToken?.unit, baseAmountIn, tipLovelace || "0");
+
+  // useRoute debounces (~250ms), so after changing the AMOUNT/pair/tip the PREVIOUS route
+  // can still be in hand. Treat a route as usable only when it matches the CURRENT pair, the
+  // current input, AND the current tip — the tip gates how far the swap splits, so a route
+  // priced for an old tip is stale even though its pair/amount still match (don't post a
+  // split decided on stale tip economics during the debounce/fetch gap).
+  const routeFresh =
+    !!route &&
+    route.tokenIn.unit === fromToken?.unit &&
+    route.tokenOut.unit === toToken?.unit &&
+    route.amountIn === baseAmountIn &&
+    route.tip === (tipLovelace || "0");
 
   const toAmount =
-    quoteFresh && quote && toToken
-      ? formatUnits(quote.amountOut, toToken.decimals)
+    routeFresh && route && toToken
+      ? formatUnits(route.amountOut, toToken.decimals)
       : "";
 
-  // The pools that trade this pair (single scan — `pool` and `poolCount` both derive
-  // from it). The quote auto-picks the best-priced one.
+  // The pools that trade this pair (single scan — `poolCount` and the empty-state derive
+  // from it). The router auto-splits across the best ones.
   const pairPools = useMemo(() => {
     if (!fromToken || !toToken) return [];
     return pools.filter(
@@ -125,30 +139,35 @@ export function SwapCard() {
   }, [pools, fromToken, toToken]);
   const poolCount = pairPools.length;
 
-  // The pool that trades this pair (also identifies the order's pool_nft binding).
-  // Bind to the SAME pool the FRESH quote was priced against (quote.poolId) so the
-  // floor and the order's pool_nft can never reference two different same-pair pools;
-  // fall back to the first pair match before/until a matching quote has loaded.
-  const pool: Pool | undefined = useMemo(() => {
-    if (!fromToken || !toToken) return undefined;
-    const byQuote =
-      quote &&
-      quote.tokenIn.unit === fromToken.unit &&
-      quote.tokenOut.unit === toToken.unit &&
-      quote.poolId
-        ? pairPools.find((p) => p.id === quote.poolId)
-        : undefined;
-    return byQuote ?? pairPools[0];
-  }, [pairPools, fromToken, toToken, quote]);
+  // The pools backing the FRESH route's legs (one for a single-pool swap; several for a
+  // split). Each leg's order binds to its own pool_nft, so trust cues are computed across
+  // ALL of them.
+  const routePools = useMemo(() => {
+    if (!routeFresh || !route) return [];
+    return route.legs
+      .map((l) => pairPools.find((p) => p.id === l.poolId))
+      .filter((p): p is Pool => !!p);
+  }, [routeFresh, route, pairPools]);
+  const legCount = routeFresh && route ? route.legs.length : 0;
 
-  // Per-order floor (limit): the worst output the user will accept = the estimated
-  // output minus slippage. Post-Rev-25 the limit is an ABORT condition, not the execution
-  // price: the pool's two-sided price pin makes the batch settle at the fair AMM-curve
-  // price (§5.2.5/§5.2.7), so the user receives ~estOut; the floor only aborts the order if
-  // the fair price drifts below it before settlement. The solver can never settle below it.
+  // Per-order floor (limit) PER LEG = that leg's estimated output minus slippage; the swap's
+  // total floor is their sum. Each leg is its own order with its own §5.2.5 floor, so the
+  // limit is per-leg (never one floor spanning two pools). Post-Rev-25 the limit is an ABORT
+  // condition, not the execution price: the two-sided pin settles each leg at its pool's fair
+  // curve price, so the user receives ~estimate; the floor only aborts a leg if its fair
+  // price drifts below it. A solver can never settle any leg below its floor.
   const slippageBps = BigInt(Math.round(slippage * 100));
-  const estOut = quoteFresh && quote ? toBig(quote.amountOut) : 0n;
-  const floor = estOut > 0n ? (estOut * (10_000n - slippageBps)) / 10_000n : 0n;
+  const legFloors = useMemo(
+    () =>
+      routeFresh && route
+        ? route.legs.map((l) => (toBig(l.amountOut) * (10_000n - slippageBps)) / 10_000n)
+        : [],
+    [routeFresh, route, slippageBps],
+  );
+  const floor = legFloors.reduce((s, f) => s + f, 0n);
+  // Every leg must clear its own positive floor (buildOrder rejects a 0 limit) — the tip
+  // gate keeps legs substantial, but guard anyway so a dust leg can't block the whole post.
+  const floorsValid = legFloors.length > 0 && legFloors.every((f) => f > 0n);
   const floorDisplay =
     toToken && floor > 0n ? formatUnits(floor.toString(), toToken.decimals) : "";
 
@@ -160,19 +179,35 @@ export function SwapCard() {
   // (networkId is undefined for a beat after connect — don't post a preprod order
   // through a wallet whose network we haven't confirmed yet).
   const networkReady = connected && networkId === APP_CONFIG.networkId;
-  const tipLovelace = toBaseUnits(tip || "0", 6);
-  // The tip is the ONLY solver reward — a 0-tip order can never be picked up, so require
-  // a positive tip (mirrors the buildOrder guard) rather than post an un-settleable order.
-  const tipValid = tipLovelace !== "" && BigInt(tipLovelace || "0") > 0n;
-  // Advisory (not blocking): a positive-but-low tip may still be skipped by solvers — a
-  // single-order settlement pays the whole tx fee. Surface a caution, don't disable.
-  const tipLow = tipValid && BigInt(tipLovelace || "0") < RECOMMENDED_MIN_TIP;
 
-  // Pool trust cues for the selected pool (display-only; not trust-critical to settlement,
-  // which is enforced on-chain). A high fee on an immutable, permissionlessly-created pool
-  // warrants a heads-up; a verified pool gets a positive badge.
-  const feeHigh = pool?.feeBps !== undefined && pool.feeBps >= HIGH_FEE_BPS;
-  const poolVerified = isVerifiedPool(pool?.id);
+  // Pool trust cues across the route's legs (display-only; not trust-critical to settlement,
+  // which is enforced on-chain). A high fee on ANY immutable, permissionlessly-created leg
+  // pool warrants a heads-up; the route is "verified" only when EVERY leg pool is.
+  const maxFeeBps = routePools.reduce((m, p) => Math.max(m, p.feeBps), 0);
+  const feeHigh = routePools.some((p) => p.feeBps >= HIGH_FEE_BPS);
+  const poolVerified =
+    routePools.length > 0 && routePools.every((p) => isVerifiedPool(p.id));
+
+  // Display model for a SPLIT route (≥2 legs): each leg's share of the input, its pool fee,
+  // and its estimated output, plus the extra output the split wins over the best single
+  // pool. undefined for a one-leg route (the normal single-pool case shows no breakdown).
+  const splitView = useMemo(() => {
+    if (!routeFresh || !route || route.legs.length < 2 || !toToken) return undefined;
+    const totalIn = toBig(route.amountIn);
+    // Use the leg's OWN feeBps (the fee the route was priced at), not a fresh pairPools
+    // lookup — the latter can miss a refreshed/removed pool and show 0%, and would show the
+    // current fee rather than the quoted one.
+    const legs = route.legs.map((l) => ({
+      feeBps: l.feeBps,
+      pct: totalIn > 0n ? Number((toBig(l.amountIn) * 10_000n) / totalIn) / 100 : 0,
+      outDisplay: formatUnits(l.amountOut, toToken.decimals),
+    }));
+    const gain = toBig(route.amountOut) - toBig(route.singleBestOut);
+    return {
+      legs,
+      improvementDisplay: gain > 0n ? formatUnits(gain.toString(), toToken.decimals) : "",
+    };
+  }, [routeFresh, route, toToken]);
 
   // Wallet balance of the FROM token (ADA via useLovelace; other tokens via useAssets).
   // The spendable amount + the funding blockers (over-balance / over-spendable / not-enough
@@ -191,6 +226,9 @@ export function SwapCard() {
       : toBig(assets?.find((a) => a.unit === toToken?.unit)?.quantity ?? "0");
   const fromIsAda = fromToken?.unit === "lovelace";
   const amountBig = hasAmount ? BigInt(baseAmountIn) : 0n;
+  // A split route posts `legCount` legs in one tx, so the funding gate must hold back
+  // `legCount`× min-ADA and `legCount`× tip (each leg is its own UTXO + tip). Before a fresh
+  // route loads, assume one leg.
   const funding = orderFunding({
     fromIsAda,
     fromBalance,
@@ -198,14 +236,15 @@ export function SwapCard() {
     partial,
     tip: BigInt(tipLovelace || "0"),
     amount: amountBig,
+    legs: Math.max(1, legCount),
   });
   const overBalance = connected && funding.overBalance;
   const overSpendable = connected && funding.overSpendable;
   const insufficientAda = connected && funding.insufficientAda;
   const balanceOk = !overBalance && !overSpendable;
 
-  // The quote read failed (provider blip) and we have no usable fresh quote to post.
-  const quoteFailed = !!quoteError && hasAmount && !!pool && !quoteFresh;
+  // The route read failed (provider blip) and we have no usable fresh route to post.
+  const routeFailed = !!routeError && hasAmount && poolCount > 0 && !routeFresh;
 
   // No pool trades the selected pair (and pools have loaded) — show a friendly Pip empty
   // state, not just a disabled button. Display-only (token tickers); not trust-critical.
@@ -221,10 +260,15 @@ export function SwapCard() {
     hasAmount &&
     balanceOk &&
     !insufficientAda &&
-    !!pool &&
-    quoteFresh &&
-    !quoteLoading &&
-    floor > 0n &&
+    poolCount > 0 &&
+    routeFresh &&
+    // Every routed leg must still resolve to a known pool (the route is priced server-side;
+    // pairPools is the client's list). If the lists diverge — a pool appeared/drained
+    // between the two fetches — disable rather than letting the post throw "pool no longer
+    // available"; a Refresh resyncs. (No-op in the common case where the lists agree.)
+    routePools.length === legCount &&
+    !routeLoading &&
+    floorsValid &&
     tipValid &&
     post.kind !== "posting";
 
@@ -238,49 +282,62 @@ export function SwapCard() {
     setPost({ kind: "idle" });
   }
 
-  // Re-scan pool reserves + re-quote on demand. The price is a live estimate as you type
+  // Re-scan pool reserves + re-route on demand. The price is a live estimate as you type
   // (computed from cached reserves), and this pulls the freshest reserves on request —
   // there is NO background polling (see documentation/app-data-caching.md).
   function refreshPrice() {
     reloadPools();
-    reloadQuote();
+    reloadRoute();
   }
 
   async function handlePost() {
-    if (!canPost || submitting.current || !pool || !fromToken || !toToken) return;
+    if (!canPost || submitting.current || !routeFresh || !route || !fromToken || !toToken) {
+      return;
+    }
     submitting.current = true;
     setPost({ kind: "posting" });
     try {
       // Dynamically imported so @meshsdk/core (MeshTxBuilder + WASM serialization) stays
       // out of the initial bundle — it's only needed once the user actually posts.
-      const { postOrder } = await import("@/lib/client/tx");
-      const res = await postOrder(wallet, {
-        pool,
-        sellUnit: fromToken.unit,
-        sellAmount: BigInt(baseAmountIn),
-        limit: floor,
+      const { postOrders } = await import("@/lib/client/tx");
+      // One pool-bound order leg per route leg, each with its own input + floor; all posted
+      // in a single tx, each carrying the full tip.
+      const legs = route.legs.map((l, idx) => {
+        const legPool = pairPools.find((p) => p.id === l.poolId);
+        if (!legPool) throw new Error("a routed pool is no longer available — refresh price");
+        return {
+          pool: legPool,
+          sellUnit: fromToken.unit,
+          sellAmount: toBig(l.amountIn),
+          limit: legFloors[idx],
+        };
+      });
+      const res = await postOrders(wallet, {
+        legs,
         tip: BigInt(tipLovelace || "0"),
         partial,
         deadline: expiryDeadline(expiry),
       });
-      // Record locally so it shows as "pending" under Orders until the chain indexes
-      // it (Blockfrost only lists live UTXOs).
-      recordPost(res.owner, {
-        ref: res.orderRef,
-        txHash: res.txHash,
-        inUnit: fromToken.unit,
-        inTicker: fromToken.ticker,
-        inDecimals: fromToken.decimals,
-        outTicker: toToken.ticker,
-        outDecimals: toToken.decimals,
-        amountIn: baseAmountIn,
-        minOut: floor.toString(),
-        partial,
-        ts: nowMs(),
+      // Record each leg locally (each is its own pending order) so they show under Orders
+      // until the chain indexes them (Blockfrost only lists live UTXOs).
+      res.orderRefs.forEach((ref, idx) => {
+        recordPost(res.owner, {
+          ref,
+          txHash: res.txHash,
+          inUnit: fromToken.unit,
+          inTicker: fromToken.ticker,
+          inDecimals: fromToken.decimals,
+          outTicker: toToken.ticker,
+          outDecimals: toToken.decimals,
+          amountIn: route.legs[idx].amountIn,
+          minOut: legFloors[idx].toString(),
+          partial,
+          ts: nowMs(),
+        });
       });
-      setPost({ kind: "success", hash: res.txHash });
+      setPost({ kind: "success", hash: res.txHash, legCount: res.orderRefs.length });
       setAmount("");
-      // The order moved funds out of the wallet — re-read the balance now (no polling).
+      // The orders moved funds out of the wallet — re-read the balance now (no polling).
       refreshWallet();
     } catch (e) {
       setPost({ kind: "error", message: toUserMessage(e) });
@@ -305,16 +362,16 @@ export function SwapCard() {
               ? { label: "Leave ADA for tip + fees", disabled: true }
               : insufficientAda
                 ? { label: "Not enough ADA for fees", disabled: true }
-              : !pool
+              : poolCount === 0
                 ? { label: "No pool for this pair", disabled: true }
-            : quoteFailed
+            : !tipValid
+              ? { label: "Enter a solver tip", disabled: true }
+            : routeFailed
               ? { label: "No price right now", disabled: true }
-            : !quoteFresh || quoteLoading
+            : !routeFresh || routeLoading
               ? { label: "Pip’s pricing it…", disabled: true }
-              : floor <= 0n
+              : !floorsValid
                 ? { label: "Amount too small", disabled: true }
-                : !tipValid
-                  ? { label: "Enter a solver tip", disabled: true }
                   : post.kind === "posting"
                     ? { label: "Posting order…", disabled: true }
                     : { label: "Post order", disabled: false };
@@ -404,7 +461,7 @@ export function SwapCard() {
         exclude={fromToken?.unit}
         amount={toAmount}
         editable={false}
-        skeleton={quoteLoading}
+        skeleton={routeLoading}
         onSelect={(t) => {
           setToUnit(t.unit);
           if (post.kind !== "idle") setPost({ kind: "idle" });
@@ -416,19 +473,21 @@ export function SwapCard() {
         }
       />
 
-      {/* mid price / impact / pool fee / tip / minimum received */}
+      {/* mid price / impact / pool fee / split breakdown / tip / minimum received */}
       <RateLine
         fromToken={fromToken}
         toToken={toToken}
-        price={quoteFresh ? quote?.price : undefined}
-        priceImpact={quoteFresh ? quote?.priceImpact : undefined}
-        loading={quoteLoading}
+        price={routeFresh ? route?.price : undefined}
+        priceImpact={routeFresh ? route?.priceImpact : undefined}
+        loading={routeLoading}
         slippage={slippage}
         floorDisplay={floorDisplay}
         poolCount={poolCount}
-        feeBps={pool?.feeBps}
+        maxFeeBps={maxFeeBps}
         verified={poolVerified}
+        split={splitView}
         tip={tip}
+        legCount={legCount}
         onRefresh={refreshPrice}
       />
 
@@ -445,41 +504,48 @@ export function SwapCard() {
         expiry={expiry}
         onExpiry={setExpiry}
         orderMinAda={funding.orderMinAda}
+        totalMinAda={funding.totalMinAda}
+        totalTip={funding.totalTip}
+        legCount={Math.max(1, legCount)}
         tipLovelace={BigInt(tipLovelace || "0")}
         fromIsAda={fromIsAda}
         tradedAda={fromIsAda ? amountBig : 0n}
       />
 
-      {/* high price-impact caution (the quote is an estimate over real reserves) */}
-      {quoteFresh &&
-        quote &&
+      {/* high price-impact caution (the route is an estimate over real reserves; for a
+          split this is the blended, input-weighted impact across the legs) */}
+      {routeFresh &&
+        route &&
         hasAmount &&
-        quote.priceImpact >= 0.05 &&
+        route.priceImpact >= 0.05 &&
         post.kind !== "posting" && (
           <div
             className={`mt-3 text-xs ${
-              quote.priceImpact >= 0.15 ? "k-note k-note-danger" : "k-note k-note-warn"
+              route.priceImpact >= 0.15 ? "k-note k-note-danger" : "k-note k-note-warn"
             }`}
           >
-            {quote.priceImpact >= 0.15 ? "Very high" : "High"} price impact (
-            {formatPercent(quote.priceImpact)}). This pool is shallow for that
+            {route.priceImpact >= 0.15 ? "Very high" : "High"} price impact (
+            {formatPercent(route.priceImpact)}).{" "}
+            {legCount > 1 ? "These pools are" : "This pool is"} shallow for that
             size. Consider a smaller amount or expect a worse fill.
           </div>
         )}
 
       {/* High pool-fee caution — pools are permissionless and immutable, so a steep fee is
-          permanent. Verified pools skip the nudge (they're known-good). */}
-      {feeHigh && !poolVerified && pool && post.kind !== "posting" && (
+          permanent. Verified routes skip the nudge (they're known-good). For a split it
+          fires when ANY leg pool is steep. */}
+      {feeHigh && !poolVerified && routePools.length > 0 && post.kind !== "posting" && (
         <div className="k-note k-note-warn mt-3 flex items-center gap-2 text-xs">
           <Pip size={22} mood="worried" />
           <span>
-            This pool charges a high fee ({((pool.feeBps ?? 0) / 100).toFixed(2)}%). It’s
-            not on Pip’s verified list — double-check before you trade.
+            {legCount > 1 ? "A routed pool charges" : "This pool charges"} a high fee (
+            {(maxFeeBps / 100).toFixed(2)}%). It’s not on Pip’s verified list — double-check
+            before you trade.
           </span>
         </div>
       )}
 
-      {quoteFailed && (
+      {routeFailed && (
         <div className="k-note k-note-danger mt-3 flex items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-2">
             <Pip size={22} mood="calm" still />
@@ -487,7 +553,7 @@ export function SwapCard() {
           </span>
           <button
             type="button"
-            onClick={reloadQuote}
+            onClick={reloadRoute}
             className="k-btn-danger-soft shrink-0 px-3 py-1 text-xs"
           >
             Try again
@@ -521,8 +587,9 @@ export function SwapCard() {
       {/* Announce the live estimate / minimum received to screen readers (the To field
           is read-only, so its updates are otherwise silent). */}
       <p aria-live="polite" className="sr-only">
-        {quoteFresh && toToken && toAmount
-          ? `Estimated ${toAmount} ${toToken.ticker}; minimum received ${floorDisplay} ${toToken.ticker}.`
+        {routeFresh && toToken && toAmount
+          ? `Estimated ${toAmount} ${toToken.ticker}; minimum received ${floorDisplay} ${toToken.ticker}.` +
+            (legCount > 1 ? ` Routed across ${legCount} pools.` : "")
           : ""}
       </p>
 
@@ -551,19 +618,26 @@ function expiryDeadline(key: string): bigint | null {
 
 function PostResult({ state }: { state: PostState }) {
   if (state.kind === "success") {
+    // A split route posts one order per pool — say so, so "Orders" plural and "each floor"
+    // match what's actually resting on-chain (and what shows under /orders).
+    const split = state.legCount > 1;
     return (
       <div className="k-note k-note-success relative mt-3 text-xs">
         <Confetti />
         <div className="relative flex items-center gap-2">
           <Pip size={26} mood="cheer" />
-          <div className="font-bold text-success">Order posted ✓</div>
+          <div className="font-bold text-success">
+            {split ? `${state.legCount} orders posted ✓` : "Order posted ✓"}
+          </div>
         </div>
         <p className="mt-1 text-muted">
-          Resting at your floor until the next batch settles — yours to grab back anytime.
+          {split
+            ? "Each resting at its own floor until the next batch settles — all yours to grab back anytime."
+            : "Resting at your floor until the next batch settles — yours to grab back anytime."}
         </p>
         <div className="mt-1.5 flex flex-col items-start gap-1">
           <a href="/orders" className="k-link font-semibold">
-            Watch it rest in Orders →
+            {split ? "Watch them rest in Orders →" : "Watch it rest in Orders →"}
           </a>
           <a
             href={explorerTxUrl(state.hash)}
@@ -608,6 +682,9 @@ function Advanced({
   expiry,
   onExpiry,
   orderMinAda,
+  totalMinAda,
+  totalTip,
+  legCount,
   tipLovelace,
   fromIsAda,
   tradedAda,
@@ -623,15 +700,22 @@ function Advanced({
   onPartial: (v: boolean) => void;
   expiry: string;
   onExpiry: (v: string) => void;
-  /** Min-ADA the order UTXO must carry (doubled when partial fills are on), in lovelace. */
+  /** Per-leg min-ADA the order UTXO must carry (doubled when partial fills are on), lovelace. */
   orderMinAda: bigint;
-  /** The posted solver tip, in lovelace. */
+  /** Total min-ADA across all legs (= legCount × orderMinAda), lovelace. */
+  totalMinAda: bigint;
+  /** Total solver tips across all legs (= legCount × tip), lovelace. */
+  totalTip: bigint;
+  /** Number of order legs the swap will post (a split route posts one per pool). */
+  legCount: number;
+  /** The posted per-leg solver tip, in lovelace. */
   tipLovelace: bigint;
-  /** Selling ADA → the traded lovelace also sits on the order UTXO. */
+  /** Selling ADA → the traded lovelace also sits on the order UTXO(s). */
   fromIsAda: boolean;
   /** ADA being sold (lovelace) when fromIsAda; 0 otherwise. */
   tradedAda: bigint;
 }) {
+  const split = legCount > 1;
   return (
     <div className="mt-3 border-t border-border pt-2">
       <button
@@ -646,10 +730,13 @@ function Advanced({
         <div className="mt-2 space-y-3 px-1">
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
-              Solver tip (ADA)
+              Solver tip (ADA){split ? " — per pool" : ""}
               <span className="block text-[11px] text-muted">
                 the only solver reward. Required: a 0-tip order won’t be picked up.
                 Higher tips settle sooner.
+                {split
+                  ? ` This swap routes across ${legCount} pools, so each of the ${legCount} orders carries this tip.`
+                  : ""}
               </span>
             </span>
             <input
@@ -707,23 +794,33 @@ function Advanced({
           </label>
 
           {/* Why the order holds exact ADA — the three roles ADA plays on one UTXO
-              (BLUEPRINT §5.2.1), plus a rough fee guess. Short and reassuring; not a gate. */}
+              (BLUEPRINT §5.2.1), plus a rough fee guess. Short and reassuring; not a gate.
+              A split route posts several orders in one tx, so min-ADA + tip count per leg. */}
           <div className="space-y-1.5 border-t border-border pt-2.5 text-[11px] text-muted">
-            <div className="font-semibold text-muted">ADA on your order</div>
+            <div className="font-semibold text-muted">
+              {split ? `ADA on your ${legCount} orders` : "ADA on your order"}
+            </div>
             <p className="leading-snug">
-              Your order is its own little UTXO, so it carries some ADA in separate roles.
+              {split
+                ? `To get you the best price, this swap is split into ${legCount} little orders (one per pool), posted together in a single transaction. Each carries some ADA in separate roles.`
+                : "Your order is its own little UTXO, so it carries some ADA in separate roles."}{" "}
               It all comes back when it settles or you grab it back — only the tip is ever kept.
             </p>
-            <DetailRow label="Held min-ADA (UTXO deposit)">
-              ~{formatAda(orderMinAda.toString())} ₳
+            <DetailRow
+              label={split ? `Held min-ADA (${legCount} × deposit)` : "Held min-ADA (UTXO deposit)"}
+            >
+              ~{formatAda((split ? totalMinAda : orderMinAda).toString())} ₳
             </DetailRow>
             {partial && (
               <p className="-mt-0.5 text-[10px] leading-snug text-muted">
-                Doubled because partial fills can leave a second reclaimable piece.
+                Doubled because partial fills can leave a second reclaimable piece
+                {split ? " (per order)" : ""}.
               </p>
             )}
-            <DetailRow label="Solver tip">
-              {tipLovelace > 0n ? `${formatAda(tipLovelace.toString())} ₳` : "—"}
+            <DetailRow label={split ? `Solver tips (${legCount} × tip)` : "Solver tip"}>
+              {tipLovelace > 0n
+                ? `${formatAda((split ? totalTip : tipLovelace).toString())} ₳`
+                : "—"}
             </DetailRow>
             {fromIsAda && tradedAda > 0n && (
               <DetailRow label="ADA you’re selling">
@@ -836,9 +933,11 @@ function RateLine({
   slippage,
   floorDisplay,
   poolCount,
-  feeBps,
+  maxFeeBps,
   verified,
+  split,
   tip,
+  legCount,
   onRefresh,
 }: {
   fromToken: TokenInfo | undefined;
@@ -847,13 +946,20 @@ function RateLine({
   priceImpact: number | undefined;
   loading?: boolean;
   slippage: number;
-  floorDisplay: string;
   poolCount: number;
-  feeBps: number | undefined;
-  /** Pool is on the verified allowlist — a positive trust badge (display-only). */
+  floorDisplay: string;
+  /** Highest fee among the route's leg pools (the only one for a single-pool swap), bps. */
+  maxFeeBps: number;
+  /** Every leg pool is on the verified allowlist — a positive trust badge (display-only). */
   verified: boolean;
+  /** Per-leg breakdown for a SPLIT route (≥2 legs); undefined for a single-pool swap. */
+  split:
+    | { legs: { feeBps: number; pct: number; outDisplay: string }[]; improvementDisplay: string }
+    | undefined;
   tip: string;
-  /** Re-scan reserves + re-quote on demand (no background polling). */
+  /** Number of legs the route uses (1 = single pool). */
+  legCount: number;
+  /** Re-scan reserves + re-route on demand (no background polling). */
   onRefresh: () => void;
 }) {
   // `price` is the pool MID price in HUMAN units (tokenOut per tokenIn, decimal-adjusted)
@@ -939,19 +1045,23 @@ function RateLine({
 
       {open && (
         <div className="animate-pop space-y-1.5 border-t border-border px-3 pb-3 pt-2.5">
-          <DetailRow label="Price impact">
+          <DetailRow label={split ? "Price impact (blended)" : "Price impact"}>
             {loading || priceImpact === undefined ? "—" : formatPercent(priceImpact)}
           </DetailRow>
           <DetailRow label="Pool fee">
-            {feeBps !== undefined ? `${(feeBps / 100).toFixed(2)}%` : "—"}
+            {split ? "varies (see split)" : maxFeeBps > 0 ? `${(maxFeeBps / 100).toFixed(2)}%` : "—"}
           </DetailRow>
           {verified && (
             <DetailRow label="Pool">
               <span className="font-semibold text-success">✓ Verified</span>
             </DetailRow>
           )}
-          <DetailRow label="Solver tip">
-            {Number.isFinite(tipNum) && tipNum > 0 ? `${tip} ADA` : "—"}
+          <DetailRow label={legCount > 1 ? `Solver tip (× ${legCount})` : "Solver tip"}>
+            {Number.isFinite(tipNum) && tipNum > 0
+              ? legCount > 1
+                ? `${tip} ADA each`
+                : `${tip} ADA`
+              : "—"}
           </DetailRow>
           <DetailRow label="Max slippage">{slippage.toFixed(1)}%</DetailRow>
           <div className="flex items-center justify-between font-bold text-ink">
@@ -963,14 +1073,41 @@ function RateLine({
               {floorDisplay && toToken ? `${floorDisplay} ${toToken.ticker}` : "—"}
             </span>
           </div>
-          {poolCount > 1 && (
-            <DetailRow label="Pool">best of {poolCount} pools</DetailRow>
+
+          {/* Split breakdown: how the swap is routed across pools, and what spreading wins
+              over the single best pool. Shown only when the router actually splits. */}
+          {split ? (
+            <div className="mt-1 space-y-1 rounded-lg bg-surface-sunk p-2">
+              <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                <Pip size={16} mood="happy" />
+                Routed across {split.legs.length} pools
+              </div>
+              {split.legs.map((leg, i) => (
+                <DetailRow
+                  key={i}
+                  label={`${leg.pct.toFixed(0)}% via ${(leg.feeBps / 100).toFixed(2)}% pool`}
+                >
+                  {leg.outDisplay} {toToken?.ticker}
+                </DetailRow>
+              ))}
+              {split.improvementDisplay && toToken && (
+                <DetailRow label="vs one pool">
+                  <span className="font-semibold text-success">
+                    +{split.improvementDisplay} {toToken.ticker}
+                  </span>
+                </DetailRow>
+              )}
+            </div>
+          ) : (
+            poolCount > 1 && <DetailRow label="Pool">best of {poolCount} pools</DetailRow>
           )}
+
           <p className="pt-1 text-[11px] leading-snug text-muted">
-            Settles at the pool’s fair price — the on-chain pin makes the batch clear at
-            the AMM curve, never worse. Max slippage is a safety abort: if the fair price
-            drifts below it before your order settles, the order rests instead of filling
-            worse.
+            {split
+              ? "Posted as one order per pool, all in a single transaction — each settles at its pool’s fair price, never below your floor. "
+              : "Settles at the pool’s fair price — the on-chain pin makes the batch clear at the AMM curve, never worse. "}
+            Max slippage is a safety abort: if the fair price drifts below it before your
+            order settles, the order rests instead of filling worse.
           </p>
         </div>
       )}
