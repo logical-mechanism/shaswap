@@ -12,6 +12,7 @@ const LINKS = [
   { href: "/", label: "Swap", icon: SwapIcon },
   { href: "/pools", label: "Pools", icon: PoolsIcon },
   { href: "/orders", label: "Orders", icon: OrdersIcon },
+  { href: "/portfolio", label: "Portfolio", icon: PortfolioIcon },
 ];
 
 export function MobileNav() {
@@ -89,6 +90,17 @@ function OrdersIcon() {
         strokeWidth="1.4"
         strokeLinecap="round"
       />
+    </svg>
+  );
+}
+
+function PortfolioIcon() {
+  // A little purse/wallet: where everything Pip's keeping for you lives.
+  return (
+    <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden>
+      <rect x="2" y="4" width="12" height="9" rx="2.5" stroke="currentColor" strokeWidth="1.4" fill="none" />
+      <path d="M2.4 6.6h11.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="11" cy="9.6" r="1" fill="currentColor" />
     </svg>
   );
 }

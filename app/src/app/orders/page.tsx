@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@/lib/wallet/hooks";
 import { useOrders } from "@/hooks/useOrders";
 import { useWriteGate } from "@/hooks/useWriteGate";
+import { useOwnerAddress } from "@/hooks/useOwnerAddress";
 import {
   clearReclaim,
   getRecent,
@@ -103,33 +104,11 @@ export default function OrdersPage() {
     // card + LP forms); the reclaim button shows it, else "Reclaim".
     baseReason,
   } = useWriteGate({ requireCollateral: true });
-  // Query by the wallet's CHANGE address — the payment key hash orders are posted
-  // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
-  // still see their own orders, and the local activity log keys match.
-  const [owner, setOwner] = useState<string | undefined>(undefined);
-  const [ownerAttempted, setOwnerAttempted] = useState(false);
-  useEffect(() => {
-    if (!connected) return;
-    let cancelled = false;
-    wallet
-      .getChangeAddress()
-      .then((a) => {
-        if (!cancelled) {
-          setOwner(a);
-          setOwnerAttempted(true);
-        }
-      })
-      .catch(() => {
-        // Don't hang on the loading skeleton forever — mark the attempt done so the
-        // error state can render (the wallet errored / disconnected mid-call).
-        if (!cancelled) setOwnerAttempted(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [connected, wallet]);
-  const ownerAddr = connected ? owner : undefined;
-  const ownerError = connected && ownerAttempted && !ownerAddr;
+  // Query by the wallet's CHANGE address — the payment key hash orders are posted under
+  // (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses still see their
+  // own orders, and the local activity log keys match. Shared with the Portfolio page via
+  // useOwnerAddress so both surfaces resolve the owner identically.
+  const { ownerAddr, ownerError } = useOwnerAddress();
 
   const { orders, loading, error, reload } = useOrders(ownerAddr);
   const [recent, setRecent] = useState<RecentOrder[]>([]);
