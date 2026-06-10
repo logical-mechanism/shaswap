@@ -1,11 +1,13 @@
 import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
+import { planRoute } from "./route";
 import type {
   LpIntentPosition,
   Pool,
   Quote,
   ReferencePrice,
+  Route,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -174,6 +176,19 @@ export class MockProvider implements DataProvider {
     if (!pool) return null;
     // Same shared constant-product display math as the real provider (NOT clearing).
     return quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
+  }
+
+  async routeQuote(
+    tokenInUnit: string,
+    tokenOutUnit: string,
+    amountIn: string,
+    tipLovelace: string,
+  ): Promise<Route | null> {
+    if (!BY_UNIT.has(tokenInUnit) || !BY_UNIT.has(tokenOutUnit)) return null;
+    // Same split router as the real provider, over the mock's pool set.
+    return planRoute(POOLS, tokenInUnit, tokenOutUnit, amountIn, {
+      tipLovelace: BigInt(tipLovelace),
+    });
   }
 
   async referencePrice(): Promise<ReferencePrice | null> {

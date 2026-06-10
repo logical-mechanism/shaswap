@@ -4,6 +4,7 @@ import type {
   Pool,
   Quote,
   ReferencePrice,
+  Route,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -59,6 +60,23 @@ export interface DataProvider {
     tokenOutUnit: string,
     amountIn: string,
   ): Promise<Quote | null>;
+
+  /**
+   * Plan the best SPLIT of `amountIn` (base units) of `tokenInUnit` into `tokenOutUnit`
+   * across the sharded pools for the pair (BLUEPRINT §5.5). Returns a multi-leg `Route`
+   * whose total output is ≥ the best single pool, or null when no pool trades the pair.
+   *
+   * Each leg is posted as its own pool-bound order carrying one `tipLovelace` solver tip,
+   * so the tip is the marginal cost of an extra leg: the router only splits while the extra
+   * output beats the extra tip. A single-pool pair (or a tip that isn't worth splitting for)
+   * yields a one-leg route — i.e. exactly `priceQuote`'s best pool.
+   */
+  routeQuote(
+    tokenInUnit: string,
+    tokenOutUnit: string,
+    amountIn: string,
+    tipLovelace: string,
+  ): Promise<Route | null>;
 
   /**
    * A non-binding external market reference price for a pair (human tokenB per 1 tokenA),

@@ -2,6 +2,27 @@ import type { Pool, Quote } from "./types";
 import { toBigInt as toBig } from "../bigint.ts";
 
 /**
+ * The pool curve's `amountOut` for `amountIn`, in base units — the SINGLE source of truth
+ * for ShaSwap's constant-product math, shared by the display quote AND the split router
+ * (`route.ts`) so the two can never disagree about what a pool would pay.
+ *
+ * Bit-exact with the on-chain pool curve `get_amount_out` (spend.ak): one floored fraction
+ * `floor(res_out·dx·γ / (res_in·fee_den + dx·γ))`, γ = fee_den − fee_num, NOT an
+ * early-floored `inAfterFee`. fee_den = 10_000 here (fee expressed as basis points).
+ * Returns 0 for any non-positive input or empty reserve.
+ */
+export function constantProductOut(
+  reserveIn: bigint,
+  reserveOut: bigint,
+  feeBps: number,
+  amountIn: bigint,
+): bigint {
+  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  const gamma = 10_000n - BigInt(feeBps);
+  return (reserveOut * amountIn * gamma) / (reserveIn * 10_000n + amountIn * gamma);
+}
+
+/**
  * Constant-product (x·y=k) quote with fee for ONE pool — a DISPLAY estimate over the
  * pool's real reserves, shared by every provider so the math can't drift between them.
  *
@@ -33,13 +54,10 @@ export function quoteConstantProduct(
     };
   }
 
-  const feeBps = BigInt(pool.feeBps);
-  // Bit-exact with the on-chain pool curve `get_amount_out` (spend.ak): a SINGLE floored
-  // fraction `floor(res_out·dx·γ / (res_in·fee_den + dx·γ))`, γ = fee_den − fee_num, NOT an
-  // early-floored `inAfterFee`. Post-Rev-25 execution is PINNED to this curve price, so the
-  // displayed estimate now equals what the batcher pays. (fee_den = 10_000 here, via feeBps.)
-  const gamma = 10_000n - feeBps;
-  const amountOut = (reserveOut * amtIn * gamma) / (reserveIn * 10_000n + amtIn * gamma);
+  // Post-Rev-25 execution is PINNED to this curve price, so the displayed estimate now
+  // equals what the batcher pays. The formula lives in `constantProductOut` (shared with
+  // the split router) so the two can never drift.
+  const amountOut = constantProductOut(reserveIn, reserveOut, pool.feeBps, amtIn);
 
   const SCALE = 1_000_000n;
   // Price impact is computed on the raw BASE-unit ratios; it's dimensionless, so token

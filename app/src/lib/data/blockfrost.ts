@@ -25,6 +25,7 @@ import {
 import { lpIntentAddress } from "@/lib/chain/lpIntentScript";
 import type { DataProvider } from "./provider";
 import { quoteConstantProduct } from "./quote";
+import { planRoute } from "./route";
 import { getReferencePrice } from "./referencePrice";
 import { feeToBps, httpStatus, isRetriable } from "./providerUtil";
 import { qtyOfUnit, reserveOf, toLpIntentPosition, toPosition } from "./providerMap";
@@ -33,6 +34,7 @@ import type {
   Pool,
   Quote,
   ReferencePrice,
+  Route,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -331,6 +333,20 @@ export class BlockfrostDataProvider implements DataProvider {
       if (!best || toBig(q.amountOut) > toBig(best.amountOut)) best = q;
     }
     return best;
+  }
+
+  async routeQuote(
+    tokenInUnit: string,
+    tokenOutUnit: string,
+    amountIn: string,
+    tipLovelace: string,
+  ): Promise<Route | null> {
+    // Same pool list `priceQuote` quotes against — the split router (pure) does the rest:
+    // it picks the best split across the pair's shards, gated by the per-leg tip.
+    const pools = await this.listPools();
+    return planRoute(pools, tokenInUnit, tokenOutUnit, amountIn, {
+      tipLovelace: toBig(tipLovelace),
+    });
   }
 
   referencePrice(

@@ -7,7 +7,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 27 — 2026-06-09. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 28 — 2026-06-10. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -314,6 +314,17 @@
 > datum, or protocol-shape change — retiring the "scaffolded / pre-launch / `deployed:false` /
 > Phase-4-pending" framing across the README, this blueprint's Status line, CLAUDE.md, the
 > app, and the batcher to reflect the now-live state. Records the mainnet-checklist §5 deploy.
+>
+> **Rev 28: reference-client smart-order router (app-only; no validator/datum/protocol
+> change).** The dApp's swap path now SPLITS a swap across the pair's shards for best
+> execution when that beats the best single pool — posting N pool-bound orders (one per
+> shard) in a SINGLE transaction, each with its own per-order floor and its own full solver
+> tip. This is realized entirely within the existing client-side, coordinator-free shard
+> model (§5.5): the order datum, the `pool_nft` binding, the per-order floor (§5.2.5), and
+> "one shard per settlement" (§5.3) are all unchanged; each leg is just another ordinary
+> order with a distinct `OutputReference`. The per-leg tip is the marginal cost that gates
+> how far it splits (the SAMM rational fee still discourages gratuitous splitting). §5.5
+> updated to document the pattern.
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
@@ -770,6 +781,16 @@ witness — the validator checks algebra, never solves (Principle 4).
   an existing pool's `n`; you add shards.
 - Shard selection is **client-side and coordinator-free**; the SAMM rational fee
   keeps shards balanced and discourages splitting.
+- **Client-side split routing (reference dApp, Rev 28).** Because an order is bound to one
+  `pool_nft`, a swap that wants more than one shard simply posts **N pool-bound orders, one
+  per shard, in a single transaction** (one network fee; each order an independent UTXO with
+  its own per-order floor §5.2.5 and its own full ADA tip — each must attract a solver on its
+  own, and each settles in its own per-shard settlement, §5.3). The reference client's router
+  spreads a swap across shards by **marginal-price equalisation** only when the extra output
+  beats the **extra per-leg tip** — so the tip (not a coordinator) bounds fragmentation, and
+  a single shard remains the common case. This needs **no protocol change**: it is ordinary
+  order posting, within the client-side/coordinator-free model above. Consequence: a split
+  swap can **fill partially** (some legs settle, others rest), and pays **N tips, not one**.
 - **Honest cost:** with `n > 1`, each settlement spends *one* shard, so orders
   against different shards in the same window **clear at different prices** —
   "uniform price" holds *per-shard-settlement, not pair-wide* — reintroducing

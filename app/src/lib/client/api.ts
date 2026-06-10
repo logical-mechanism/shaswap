@@ -4,6 +4,7 @@ import type {
   Pool,
   Quote,
   ReferencePrice,
+  Route,
   TokenInfo,
   WalletPosition,
 } from "@/lib/data";
@@ -71,6 +72,27 @@ export async function fetchQuote(
     signal,
   );
   return quote;
+}
+
+/**
+ * The best SPLIT route for a swap: how to spread `amount` across the pair's sharded pools
+ * to maximise output, gated by the per-leg solver `tip` (lovelace). A one-leg route is the
+ * single-best-pool case; null when no pool trades the pair. Read THROUGH our /api/route —
+ * never a provider SDK.
+ */
+export async function fetchRoute(
+  inUnit: string,
+  outUnit: string,
+  amount: string,
+  tip: string,
+  signal?: AbortSignal,
+): Promise<Route | null> {
+  const qs = new URLSearchParams({ in: inUnit, out: outUnit, amount, tip });
+  const { route } = await getJson<{ route: Route | null }>(
+    `/api/route?${qs.toString()}`,
+    signal,
+  );
+  return route;
 }
 
 /**

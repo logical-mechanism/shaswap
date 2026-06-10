@@ -1,9 +1,9 @@
 /**
  * Component tests for SwapCard — the disabled-button label ladder per app state, the
  * ADA-funding blockers (over-balance / over-spendable / insufficient-ADA incl. the partial
- * reserve), and stale-quote rejection. The MeshJS
- * wallet hooks, the read hooks, and the tx builder are mocked via vi.hoisted state so each
- * state is driven deterministically. Run with `npm run test:components`.
+ * reserve), stale-route rejection, and the split-route breakdown. The MeshJS wallet hooks,
+ * the read hooks, and the tx builder are mocked via vi.hoisted state so each state is driven
+ * deterministically. Run with `npm run test:components`.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -27,13 +27,13 @@ const h = vi.hoisted(() => ({
     tokensLoading: false,
     tokensError: null as string | null,
     pools: [] as unknown[],
-    quote: null as unknown,
-    quoteLoading: false,
-    quoteError: null as string | null,
+    route: null as unknown,
+    routeLoading: false,
+    routeError: null as string | null,
   },
-  postOrder: vi.fn(),
+  postOrders: vi.fn(),
   reloadPools: vi.fn(),
-  reloadQuote: vi.fn(),
+  reloadRoute: vi.fn(),
 }));
 
 vi.mock("@/lib/wallet/hooks", () => ({
@@ -62,15 +62,15 @@ vi.mock("@/hooks/usePools", () => ({
     reload: h.reloadPools,
   }),
 }));
-vi.mock("@/hooks/useQuote", () => ({
-  useQuote: () => ({
-    quote: h.data.quote,
-    loading: h.data.quoteLoading,
-    error: h.data.quoteError,
-    reload: h.reloadQuote,
+vi.mock("@/hooks/useRoute", () => ({
+  useRoute: () => ({
+    route: h.data.route,
+    loading: h.data.routeLoading,
+    error: h.data.routeError,
+    reload: h.reloadRoute,
   }),
 }));
-vi.mock("@/lib/client/tx", () => ({ postOrder: (...a: unknown[]) => h.postOrder(...a) }));
+vi.mock("@/lib/client/tx", () => ({ postOrders: (...a: unknown[]) => h.postOrders(...a) }));
 vi.mock("@/lib/client/activity", () => ({ recordPost: () => {} }));
 
 // Imported AFTER the mocks are registered.
@@ -80,16 +80,46 @@ import { SwapCard } from "./SwapCard";
 
 const BIG_ADA = "100000000000"; // 100k ADA — never the binding constraint
 
-/** A fresh ADA→TEST quote whose amountIn matches `amount` ADA (so quoteFresh passes). */
-function freshQuote(adaAmount: string, amountOut = "19000000000") {
+/**
+ * A fresh ADA→TEST single-leg route whose amountIn matches `adaAmount` (so routeFresh
+ * passes). One leg against the fixture POOL — i.e. the no-split, single-pool case.
+ */
+function freshRoute(adaAmount: string, amountOut = "19000000000") {
+  const amountIn = toBaseUnits(adaAmount, 6);
   return {
     tokenIn: ADA,
     tokenOut: TEST,
-    amountIn: toBaseUnits(adaAmount, 6),
+    amountIn,
+    tip: "500000", // matches the default 0.5 ₳ tip, so routeFresh's tip check passes
     amountOut,
     price: "1.9",
     priceImpact: 0.01,
-    poolId: POOL.id,
+    legs: [
+      { poolId: POOL.id, amountIn, amountOut, feeBps: POOL.feeBps, priceImpact: 0.01 },
+    ],
+    singleBestOut: amountOut,
+    singleBestPoolId: POOL.id,
+  };
+}
+
+/** A two-leg ADA→TEST split route across POOL and a second pool, beating the best single. */
+function splitRoute(adaAmount: string) {
+  const amountIn = toBaseUnits(adaAmount, 6);
+  const half = (BigInt(amountIn) / 2n).toString();
+  return {
+    tokenIn: ADA,
+    tokenOut: TEST,
+    amountIn,
+    tip: "500000",
+    amountOut: "19500000000",
+    price: "1.95",
+    priceImpact: 0.02,
+    legs: [
+      { poolId: POOL.id, amountIn: half, amountOut: "9800000000", feeBps: POOL.feeBps, priceImpact: 0.02 },
+      { poolId: "pool2", amountIn: half, amountOut: "9700000000", feeBps: 5, priceImpact: 0.02 },
+    ],
+    singleBestOut: "19000000000",
+    singleBestPoolId: POOL.id,
   };
 }
 
@@ -107,13 +137,13 @@ function reset() {
     tokensLoading: false,
     tokensError: null,
     pools: [POOL],
-    quote: null,
-    quoteLoading: false,
-    quoteError: null,
+    route: null,
+    routeLoading: false,
+    routeError: null,
   };
-  h.postOrder = vi.fn();
+  h.postOrders = vi.fn();
   h.reloadPools = vi.fn();
-  h.reloadQuote = vi.fn();
+  h.reloadRoute = vi.fn();
 }
 beforeEach(reset);
 
@@ -204,23 +234,23 @@ describe("SwapCard — disabled-button label ladder", () => {
     expect(screen.getByRole("button", { name: "No pool for this pair" })).toBeDisabled();
   });
 
-  it("quote read failed → No price right now", () => {
+  it("route read failed → No price right now", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = null;
-    h.data.quoteError = "provider blip";
+    h.data.route = null;
+    h.data.routeError = "provider blip";
     render(<SwapCard />);
     typeFrom("10");
     expect(screen.getByRole("button", { name: "No price right now" })).toBeDisabled();
   });
 
-  it("quote in flight → Pip’s pricing it…", () => {
+  it("route in flight → Pip’s pricing it…", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = null;
-    h.data.quoteLoading = true;
+    h.data.route = null;
+    h.data.routeLoading = true;
     render(<SwapCard />);
     typeFrom("10");
     expect(screen.getByRole("button", { name: "Pip’s pricing it…" })).toBeDisabled();
@@ -230,17 +260,17 @@ describe("SwapCard — disabled-button label ladder", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = freshQuote("10", "0"); // fresh quote (matches 10 ADA), but zero out → floor 0
+    h.data.route = freshRoute("10", "0"); // fresh route, but zero out → leg floor 0
     render(<SwapCard />);
     typeFrom("10");
     expect(screen.getByRole("button", { name: "Amount too small" })).toBeDisabled();
   });
 
-  it("valid quote but tip cleared → Enter a solver tip", () => {
+  it("valid route but tip cleared → Enter a solver tip", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = freshQuote("10");
+    h.data.route = freshRoute("10");
     render(<SwapCard />);
     typeFrom("10");
     // open Advanced (its button name is "Advanced Show"), clear the solver tip
@@ -256,7 +286,7 @@ describe("SwapCard — disabled-button label ladder", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = freshQuote("10");
+    h.data.route = freshRoute("10");
     render(<SwapCard />);
     typeFrom("10");
     expect(screen.getByRole("button", { name: "Post order" })).toBeEnabled();
@@ -298,13 +328,13 @@ describe("SwapCard — non-ADA sell funds min-ADA + tip + fee from wallet ADA", 
   });
 });
 
-describe("SwapCard — quoteFresh rejects a stale-amount quote", () => {
-  it("a quote for a different amount is ignored (no To value, not postable)", () => {
+describe("SwapCard — routeFresh rejects a stale-amount route", () => {
+  it("a route for a different amount is ignored (no To value, not postable)", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    // quote priced for a DIFFERENT amount than the one entered
-    h.data.quote = { ...freshQuote("999"), amountOut: "5000000000" };
+    // route priced for a DIFFERENT amount than the one entered
+    h.data.route = { ...freshRoute("999"), amountOut: "5000000000" };
     render(<SwapCard />);
     typeFrom("10");
     // the stale output never lands in the (read-only) To field
@@ -315,17 +345,36 @@ describe("SwapCard — quoteFresh rejects a stale-amount quote", () => {
   });
 });
 
-describe("SwapCard — on-demand price refresh", () => {
-  it("the rate-line ↻ re-scans pools and re-quotes (no background polling)", () => {
+describe("SwapCard — split route breakdown", () => {
+  it("a two-leg route shows the per-pool split and the gain over one pool", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = freshQuote("10");
+    h.data.pools = [POOL, { ...POOL, id: "pool2", feeBps: 5 }];
+    h.data.route = splitRoute("10");
+    render(<SwapCard />);
+    typeFrom("10");
+    // expand the rate-line details, then assert the split breakdown is shown. "Routed
+    // across 2 pools" appears both in the visible breakdown and the sr-only announcement.
+    fireEvent.click(screen.getByRole("button", { name: /1 ADA/ }));
+    expect(screen.getAllByText(/Routed across 2 pools/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/vs one pool/i)).toBeInTheDocument();
+    // still postable (one tx, two legs)
+    expect(screen.getByRole("button", { name: "Post order" })).toBeEnabled();
+  });
+});
+
+describe("SwapCard — on-demand price refresh", () => {
+  it("the rate-line ↻ re-scans pools and re-routes (no background polling)", () => {
+    h.state.connected = true;
+    h.state.networkId = 0;
+    h.state.lovelace = BIG_ADA;
+    h.data.route = freshRoute("10");
     render(<SwapCard />);
     typeFrom("10");
     fireEvent.click(screen.getByRole("button", { name: "Refresh price" }));
     expect(h.reloadPools).toHaveBeenCalledTimes(1);
-    expect(h.reloadQuote).toHaveBeenCalledTimes(1);
+    expect(h.reloadRoute).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -334,25 +383,25 @@ describe("SwapCard — posting", () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = freshQuote("10");
-    h.postOrder.mockReturnValue(new Promise(() => {})); // never resolves
+    h.data.route = freshRoute("10");
+    h.postOrders.mockReturnValue(new Promise(() => {})); // never resolves
     render(<SwapCard />);
     typeFrom("10");
     fireEvent.click(screen.getByRole("button", { name: "Post order" }));
     expect(
       await screen.findByRole("button", { name: "Posting order…" }),
     ).toBeDisabled();
-    expect(h.postOrder).toHaveBeenCalledTimes(1);
+    expect(h.postOrders).toHaveBeenCalledTimes(1);
   });
 
   it("a successful post shows the Order posted ✓ banner", async () => {
     h.state.connected = true;
     h.state.networkId = 0;
     h.state.lovelace = BIG_ADA;
-    h.data.quote = freshQuote("10");
-    h.postOrder.mockResolvedValue({
+    h.data.route = freshRoute("10");
+    h.postOrders.mockResolvedValue({
       txHash: "ab".repeat(32),
-      orderRef: `${"ab".repeat(32)}#0`,
+      orderRefs: [`${"ab".repeat(32)}#0`],
       owner: "addr_test1...",
     });
     render(<SwapCard />);
