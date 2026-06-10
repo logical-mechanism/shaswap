@@ -5,6 +5,7 @@
 //// covered at the lib layer in `lp_test.ak`; this closes the structural gap the audit
 //// flagged (the wrapper guard + dispatch were never executed under a context).
 
+use aiken/fuzz
 use cardano/address.{Address, Credential, Inline, Script, VerificationKey}
 use cardano/assets
 use cardano/transaction.{
@@ -12,7 +13,7 @@ use cardano/transaction.{
 }
 use pool
 use shaswap/constants.{lp_name, pool_min_ada, total_lp}
-use shaswap/types.{AssetId, LpAction, PoolDatum}
+use shaswap/types.{AssetId, ClosePool, LpAction, PoolDatum, PoolSettle}
 
 const s_hash = #"5555555555555555555555555555555555555555555555555555555a"
 
@@ -122,4 +123,74 @@ test pool_lpaction_blocked_by_settlement() fail {
 // no datum on the pool UTXO: `expect Some(d) = datum` aborts (phase-2 failure).
 test pool_spend_no_datum() fail {
   pool.pool.spend(s(), None, LpAction, pool_ref(), noop_tx([]))
+}
+
+// (audit I-01, Fable5) PoolSettle arm driven through the wrapper: a net-0 "touch"
+// settlement (reserves + held LP unchanged) with the withdraw-0 for S present passes
+// `spend.pool_settle` (S-tag self-check + held-LP pin + k/price all trivially hold). The
+// PoolSettle dispatch arm was never executed under a context before this.
+test pool_settle_via_wrapper_ok() {
+  pool.pool.spend(
+    s(),
+    Some(pool_datum()),
+    PoolSettle,
+    pool_ref(),
+    noop_tx([Pair(s(), 0)]),
+  )
+}
+
+// PoolSettle requires the withdraw-0 for S (`withdrawal_present`): with none present the
+// arm rejects — distinguishes it from `LpAction` (which requires the OPPOSITE), so a
+// swapped PoolSettle↔LpAction dispatch would be caught here.
+test pool_settle_via_wrapper_no_withdrawal() fail {
+  pool.pool.spend(s(), Some(pool_datum()), PoolSettle, pool_ref(), noop_tx([]))
+}
+
+// an unseeded pool input (held == total_lp), spendable only by its creator.
+fn pool_in_unseeded() -> Input {
+  Input {
+    output_reference: pool_ref(),
+    output: Output {
+      address: pool_addr(),
+      value: pool_value(total_lp),
+      datum: InlineDatum(pool_datum()),
+      reference_script: None,
+    },
+  }
+}
+
+// (audit I-01, Fable5) ClosePool arm driven through the wrapper: tear down a never-seeded
+// pool (held == total_lp), creator-signed, burning the NFT + full LP supply.
+test pool_close_via_wrapper_ok() {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in_unseeded()],
+    mint: assets.from_asset(nft.policy, nft.name, -1)
+      |> assets.add(nft.policy, lp_name, -total_lp),
+    extra_signatories: [creator_vkh],
+  }
+  pool.pool.spend(s(), Some(pool_datum()), ClosePool, pool_ref(), tx)
+}
+
+// ClosePool without the creator's signature: the arm rejects (proves the dispatch reaches
+// `pool_close`, whose VK-signature gate is distinct from the other arms).
+test pool_close_via_wrapper_no_creator_sig() fail {
+  let tx = Transaction {
+    ..transaction.placeholder,
+    inputs: [pool_in_unseeded()],
+    mint: assets.from_asset(nft.policy, nft.name, -1)
+      |> assets.add(nft.policy, lp_name, -total_lp),
+  }
+  pool.pool.spend(s(), Some(pool_datum()), ClosePool, pool_ref(), tx)
+}
+
+// (audit O-01, Fable5) wrapper-inclusive bench: drive `pool.spend` PoolSettle through the
+// validator entrypoint so the wrapper dispatch is part of the per-input ex-unit figure
+// (the per-order/pool spend the batch-size ceiling must budget for).
+fn pool_settle_wrapper_sampler(_n: Int) -> Fuzzer<Transaction> {
+  fuzz.constant(noop_tx([Pair(s(), 0)]))
+}
+
+bench pool__spend__pool_settle(tx via pool_settle_wrapper_sampler) {
+  pool.pool.spend(s(), Some(pool_datum()), PoolSettle, pool_ref(), tx)
 }
