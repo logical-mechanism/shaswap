@@ -8,16 +8,16 @@
  * on-chain privilege whatsoever; an unverified pool is still fully tradeable.
  *
  * Identity is the pool's NFT unit (`policyId(56) + nft_name`), which is unique per pool
- * (each pool has its own one-shot mint policy). Populate per network at launch from the
- * bootstrap set (see documentation/spec/liquidity-bootstrap.md). Kept network-keyed so a
+ * (each pool has its own one-shot mint policy). Populate per network as canonical/bootstrap
+ * pools are created (see documentation/spec/liquidity-bootstrap.md). Kept network-keyed so a
  * preprod id can never mark a mainnet pool verified.
  */
 
 import { APP_CONFIG, type Network } from "../config.ts";
 
 /**
- * Per-network set of verified pool NFT units (lowercase `policy+name` hex). Seed these at
- * launch with the canonical bootstrap pools; community pools remain unverified-but-usable.
+ * Per-network set of verified pool NFT units (lowercase `policy+name` hex). Add each
+ * canonical bootstrap pool as it is created; community pools remain unverified-but-usable.
  */
 const VERIFIED_POOL_NFTS: Record<Network, ReadonlySet<string>> = {
   preprod: new Set<string>([
