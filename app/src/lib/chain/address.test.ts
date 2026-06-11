@@ -25,15 +25,16 @@ import {
   SETTLEMENT_HASH,
 } from "./deployment.ts";
 
-// Golden order/pool addresses = base(payment = order/pool script, stake = `S`).
+// Golden order/pool addresses = base(payment = order/pool script, stake = `S`). Both networks
+// run the same H-01 pool (Rev 29); only the bech32 network tag differs.
 const PREPROD_ORDER =
   "addr_test1xrnl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzjxy5";
 const PREPROD_POOL =
-  "addr_test1xq6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu5dngl";
+  "addr_test1xp6hhf4h8y3texyzgesm7n0tjrn2qcgyzuzuqv4vua26l5arqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qvt5def";
 const MAINNET_ORDER =
   "addr1x8nl5x3ctgzvzqlvue6xhs2m3ecumuwvk6z5m0f4yna3frdrqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qu50xgt";
 const MAINNET_POOL =
-  "addr1xy6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzsnyq";
+  "addr1x96hhf4h8y3texyzgesm7n0tjrn2qcgyzuzuqv4vua26l5arqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84q0afd4k";
 
 test("ORDER_ADDR derivation pins to golden preprod address", () => {
   assert.equal(deriveBaseAddress(ORDER_SCRIPT_HASH, SETTLEMENT_HASH, 0), PREPROD_ORDER);

@@ -7,7 +7,7 @@
 > When a decision conflicts with this document, either change the code or change
 > this document — never let them silently diverge.
 >
-> **Revision:** Rev 28 — 2026-06-10. (Rev 1: initial draft. Rev 2: threat model,
+> **Revision:** Rev 29 — 2026-06-10. (Rev 1: initial draft. Rev 2: threat model,
 > known-risks split, user-limit floor + settlement trust anchor, batch
 > amortization, honesty fixes from review #1. Rev 3: locked ADA-tip reward +
 > withdraw-0 hook. Rev 4: review #2 — double-satisfaction rule, withdraw-0
@@ -230,6 +230,11 @@
 > residual address-placement invariant stays an off-chain-builder responsibility (the
 > policy is seed-only and cannot see `S`; the one-shot NFT + post-creation continuity
 > make a mis-placement a creator self-grief, never third-party theft) and is documented.
+> **[SUPERSEDED by Rev 29 / audit 061026 H-01:** this "self-grief, never third-party theft"
+> claim was wrong — a mis-*tagged* pool (correct `pool(S)` **payment** credential, non-`S`
+> **stake** tag) is invisible to the anchor's enumeration yet still spendable via `PoolSettle`,
+> and was a **held-LP-extraction trap**. Now closed on-chain by `pool_settle`'s `S`-tag
+> self-check + held-LP pin, which removes the off-chain placement dependency entirely.**]**
 > - **Informational:** README `OrderDatum` field count 8→9 (**I-01**); `mint.close`
 > self-harm-only doc note (**I-03**); the anchor's `publish`/`allow_registration`
 > certificate authority and the `pool.LpAction` wrapper guard + `expect Some(datum)` are
@@ -325,6 +330,50 @@
 > order with a distinct `OutputReference`. The per-leg tip is the marginal cost that gates
 > how far it splits (the SAMM rational fee still discourages gratuitous splitting). §5.5
 > updated to document the pattern.
+>
+> **Rev 29: external audit remediation (audit-machine 2026-06-10,
+> `contracts/audit/audit_report_061026.md`) — closes H-01 (held-LP extraction) + I-01/O-01;
+> PARTIAL FORK, only the `pool` hash changes.** A fresh multi-agent audit of the live Rev 25
+> set found one **High** cross-validator gap (and reconfirmed the rest sound):
+> - **H-01 (High, pool/spend — held-LP extraction from a non-`S` pool):** `pool_settle` pinned
+> the pool's NFT/reserves/datum but **not its held LP**, and — unlike its sibling
+> `order_settle` — did **not** self-check the spent input's `S` tag. `clearing.run` enumerates
+> and full-value-pins pools **by the `S` stake tag only**, and `mint.create` cannot see `S`
+> (seed-only policy) so it can't reject placement. So an attacker could create a look-alike
+> pool at the `pool(S)` **payment** credential with a **non-`S` stake tag** (invisible to the
+> anchor), induce victim deposits, then spend it via `PoolSettle` alongside any real `S`-tagged
+> carrier pool (zero orders) — stripping its held LP to an attacker output (reserves/NFT/datum
+> unchanged) and later draining the reserves via `LpAction`. **Verified reachable** by a
+> regression test that *passes against the old code* (the strip and the non-`S` PoolSettle both
+> succeed) and fails after the fix. **Closed** in `pool_settle` with two teeth:
+> `expect is_tagged(own.output, s)` (parity with `order_settle`; forces every settled pool to
+> be `S`-tagged ⇒ enumerated + value-pinned by the anchor) **and** a direct held-LP pin
+> `expect asset_qty(out, LP) == asset_qty(in, LP)` (belt-and-suspenders; a settlement never
+> moves LP). This **removes the on-chain reliance on the off-chain pool-placement invariant**
+> and **supersedes the Rev 23 L-03 claim**. +7 tests (drop/skim held-LP, non-`S`-tag +
+> enterprise rejection, held-LP-preserved positive, held-LP-strip fuzz). 171 tests green.
+> - **O-01 (opt, pool/spend):** `pool_settle`'s `n_orders` dust-band count now uses a single
+> counting fold instead of `list.length(list.filter(...))` (one fewer input traversal +
+> intermediate-list allocation); semantically identical.
+> - **I-01 (doc):** corrected the `lp_intent_types.ak` "unparameterised" comment (it is
+> parameterised by `S`) and added the `lp_intent` row to the README validator table.
+> - **Deliberately NOT taken:** **I-02** (defensive `tip >= 0` / `sell_amount >= 1` in
+> `clearing.check_one`) is Informational and non-exploitable, and it lives in the **settlement
+> anchor** — adding it changes the immutable `S` hash and would force a full re-anchor, so it is
+> **deferred** (fold in only if a future finding already forces an `S` change). **L-01**
+> (`Script`-owner order/intent settle-able-but-not-reclaimable) has no on-chain creation gate —
+> stays a documented builder precondition (VK owner), to be enforced by an app/UI guard at fork
+> time. **I-03** (the `min_liq` lock matcher pins only the payment credential) is
+> Not-Exploitable (the matched mint-policy address is unspendable) — cosmetic, left as-is.
+> **I-04** (design docs out of the audited tree) is a packaging note for audit-machine scope;
+> the docs live here.
+> - **Hash impact (partial fork):** only the **`pool`** validator changes (`07332aa6…` →
+> `b41bd84a…`, unapplied); **`settlement`/`S` `a305a3cf…`, `order` `56bf4693…`, `pool_mint`
+> `f558dfb2…`, and `lp_intent` `05451fe2…` are byte-identical.** The fork republishes the new
+> `pool` reference script and recreates pools at the new `pool(S)` address; the anchor, order,
+> lp-intent, and mint policy are untouched. **Deploy order: preprod first** (fork + batcher
+> config + reference-client `deployment.ts` pool hash/addr, then exercise the
+> test-token/test-ADA bootstrap), **then mainnet** (drained/empty, frontend in maintenance).
 >
 > **⚠ Make-or-break risk — MEASURED (Rev 5, §13.1):** on-chain verification cost per
 > order bounds the whole thesis. The spike says it is **viable** — **~40–50
