@@ -5,7 +5,7 @@
 //// the wrapper-dispatch gap. `Fulfill`'s FIRST check is `!withdrawal_present(S)` (the
 //// no-settlement-fold guard); `ReclaimLp` is owner-VK-signature only.
 
-use cardano/address.{Address, Credential, Inline, Script, VerificationKey}
+use cardano/address.{Address, Credential, Script, VerificationKey}
 use cardano/assets
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
