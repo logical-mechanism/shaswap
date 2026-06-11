@@ -75,8 +75,8 @@ vi.mock("@/lib/client/tx", () => ({
   closePool: (...a: unknown[]) => h.close(...a),
 }));
 // The panel renders the per-pool LP-intent surface; mock its hook so it doesn't hit the network.
-// (LP_INTENTS_LIVE is false under the test config — preprod default, no lp_intent ref — so the
-// panel defaults to the Direct mode the existing add/remove tests exercise.)
+// (LP_INTENTS_LIVE is true on the preprod test config, so the panel defaults to the batcher
+// intent mode; the direct add/remove tests switch over via useDirect().)
 vi.mock("@/hooks/useLpIntents", () => ({
   useLpIntents: () => ({ intents: [], loading: false, error: null, reload: () => {} }),
 }));
