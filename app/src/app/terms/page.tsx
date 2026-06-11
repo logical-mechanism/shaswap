@@ -13,7 +13,7 @@ export const metadata: Metadata = {
  * rely on: entity↔protocol separation, eligibility self-attestation, assumption of
  * risk, "as is" disclaimer, limitation of liability, and a one-year limit on claims.
  * Adapted to ShaSwap's facts: an immutable protocol with no upgrade authority and no
- * governance token, non-custodial, no protocol fee. DRAFT — counsel must finalize.
+ * governance token, non-custodial, no protocol fee.
  */
 export default function TermsPage() {
   return (
@@ -94,10 +94,10 @@ export default function TermsPage() {
       <p>
         IN NO EVENT SHALL {LEGAL.entity}, ITS AFFILIATES, OR THEIR RESPECTIVE OFFICERS,
         DIRECTORS, EMPLOYEES, OR CONTRACTORS BE LIABLE FOR ANY DAMAGES ARISING OUT OF OR
-        RELATED TO: (I) YOUR USE OF OR INABILITY TO USE THE PROTOCOL OR THE SITE,
-        INCLUDING (A) DIRECT, INDIRECT, INCIDENTAL, SPECIAL, PUNITIVE, OR CONSEQUENTIAL
-        DAMAGES, AND (B) LOSS OF REVENUES, PROFITS, GOODWILL, CRYPTOCURRENCIES, TOKENS,
-        OR ANYTHING ELSE OF VALUE.
+        RELATED TO YOUR USE OF OR INABILITY TO USE THE PROTOCOL OR THE SITE, INCLUDING
+        (A) DIRECT, INDIRECT, INCIDENTAL, SPECIAL, PUNITIVE, OR CONSEQUENTIAL DAMAGES,
+        AND (B) LOSS OF REVENUES, PROFITS, GOODWILL, CRYPTOCURRENCIES, TOKENS, OR
+        ANYTHING ELSE OF VALUE.
       </p>
 
       <h2>7. Time Limitation on Claims</h2>

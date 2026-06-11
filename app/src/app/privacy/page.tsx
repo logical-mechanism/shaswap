@@ -12,9 +12,9 @@ export const metadata: Metadata = {
  * Privacy Policy. Modeled on SundaeSwap's: contemplates worldwide access, treats
  * on-chain (staking/payment) addresses as public blockchain data rather than personal
  * information, and describes no compliance-driven data collection. Kept honest to
- * ShaSwap's actual data flow: no accounts, no KYC, local-only preferences, and a
- * read-only chain-data provider behind the data-access abstraction. DRAFT — counsel
- * must finalize.
+ * ShaSwap's actual data flow: no accounts, no KYC, local-only preferences and
+ * activity logs, and a chain-data provider (reads plus draft-tx evaluation) behind
+ * the data-access abstraction.
  */
 export default function PrivacyPage() {
   return (
@@ -30,8 +30,9 @@ export default function PrivacyPage() {
       <p>
         The Site does not require you to create an account and does not collect names,
         email addresses, government identifiers, or other identity information to use
-        it. {LEGAL.protocol} is non-custodial: you interact with the Protocol directly
-        from your own wallet, and we do not take custody of your assets.
+        it. The {LEGAL.protocol} protocol (the &ldquo;Protocol&rdquo;) is non-custodial:
+        you interact with it directly from your own wallet, and we do not take custody
+        of your assets.
       </p>
 
       <h2>2. On-Chain Information</h2>
@@ -44,18 +45,25 @@ export default function PrivacyPage() {
 
       <h2>3. Information Stored Locally</h2>
       <p>
-        The Site stores a small amount of data in your browser&rsquo;s local storage on
-        your device, such as your display-theme preference and a record that you
-        accepted the current <Link href="/terms">Terms</Link> and this Privacy Policy.
-        This data stays on your device and is not transmitted to us. You can clear it at
-        any time through your browser.
+        The Site stores data in your browser&rsquo;s local storage on your device: your
+        display-theme preference, a record that you accepted the current{" "}
+        <Link href="/terms">Terms</Link> and this Privacy Policy, the name of the wallet
+        you connected (so the Site can reconnect to it), a short-lived log of your
+        recent orders and liquidity actions keyed to your wallet address (kept for
+        about a day so the Site can show pending activity), and minor interface state
+        such as dismissed hints. This data stays on your device and is not transmitted
+        to us. You can clear it at any time through your browser.
       </p>
 
       <h2>4. Chain Data Provider</h2>
       <p>
         To display pools, balances, and quotes, the Site reads public blockchain data
-        through a third-party data provider. These reads are server-side and read-only;
-        we do not sell your information and do not use it for advertising.
+        through a third-party data provider. These reads are server-side. For some
+        actions (such as reclaims and liquidity transactions), the draft transaction you
+        build in the app is also sent through the same provider to estimate its
+        execution budget; a draft contains only data that becomes public if you submit
+        the transaction. Signed transactions are submitted by your own wallet, not by
+        the Site. We do not sell your information and do not use it for advertising.
       </p>
 
       <h2>5. Server Logs</h2>
