@@ -242,7 +242,17 @@ fork_pool_ref() {
   fi
 
   pick_funding
-  echo "    input=$TXIN"
+  # `pick_funding` selects the single LARGEST ada UTXO as the sole input, so we need ONE
+  # UTXO that covers the 40 ADA ref output + fee + min-ada change (~42 ADA). Check it up
+  # front and fail with guidance, rather than letting `transaction build` emit a raw
+  # "balance is negative" error (or worse, a wallet with enough TOTAL ada but fragmented
+  # across small UTXOs picking one that's too small). Nothing is signed/submitted on failure.
+  local have
+  have=$(cli query utxo --tx-in "$TXIN" --mainnet --output-json \
+    | python3 -c "import sys,json;print(next(iter(json.load(sys.stdin).values()))['value']['lovelace'])")
+  [ "$have" -ge 42000000 ] \
+    || die "funding UTXO $TXIN holds only $((have / 1000000)) ADA; need a single ada-only UTXO of ~42+ ADA (40 locked in the recoverable ref + fee + change). Consolidate the wallet into one larger ada UTXO and re-run (idempotent)."
+  echo "    input=$TXIN ($((have / 1000000)) ADA)"
   # One output: the new pool ref locked at DEPLOY_ADDR (recoverable). 40 ADA covers the
   # ~3 kB ref-script min-UTXO with margin; the rest returns as change.
   cli transaction build --tx-in "$TXIN" \
