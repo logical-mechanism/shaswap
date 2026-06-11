@@ -5,6 +5,7 @@ import { useWallet } from "@/lib/wallet/hooks";
 import type { Pool } from "@/lib/data";
 import { useLpIntents } from "@/hooks/useLpIntents";
 import { useWriteGate } from "@/hooks/useWriteGate";
+import { useOwnerAddress } from "@/hooks/useOwnerAddress";
 import { fetchTxConfirmed } from "@/lib/client/api";
 import { nowMs } from "@/lib/client/now";
 import {
@@ -65,25 +66,10 @@ export function PendingLpIntents({
   const { networkReady, collateralReady, needsCollateral, recheckCollateral, baseReason } =
     useWriteGate({ requireCollateral: true });
 
-  // Owner = the wallet's CHANGE address (the key intents are posted + logged under), resolved
-  // in the async callback only (the project's effect convention — never set synchronously in an
-  // effect body). On disconnect we DERIVE `ownerAddr` as undefined rather than resetting state,
-  // mirroring the Orders page, so a stale value can't leak through.
-  const [owner, setOwner] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    if (!connected) return;
-    let cancelled = false;
-    wallet
-      .getChangeAddress()
-      .then((a) => {
-        if (!cancelled) setOwner(a);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [connected, wallet]);
-  const ownerAddr = connected ? owner : undefined;
+  // Owner = the wallet's CHANGE address (the key intents are posted + logged under), via the
+  // shared useOwnerAddress hook (DRY with the Orders + Portfolio pages). This surface never
+  // surfaces an owner-resolution error, so `ownerError` is intentionally ignored.
+  const { ownerAddr } = useOwnerAddress();
 
   const { intents, loading, reload } = useLpIntents(ownerAddr);
   const [recent, setRecent] = useState<RecentLpIntent[]>([]);

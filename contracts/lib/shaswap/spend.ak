@@ -85,6 +85,15 @@ pub fn pool_settle(
 ) -> Bool {
   expect utils.withdrawal_present(tx, s)
   expect Some(own) = list.find(tx.inputs, fn(i) { i.output_reference == utxo })
+  // (audit H-01) self-enforce that our own input is S-tagged — parity with
+  // `order_settle` (which self-tags too). The settlement anchor enumerates pools by
+  // the `S` tag (`clearing.run`), so an UNtagged pool placed at the `pool(S)` payment
+  // credential (mint.create can't see `S`, so it can't reject the placement) would be
+  // spendable here yet INVISIBLE to the anchor's full-value pin — letting a solver
+  // strip its held LP (then drain reserves via `LpAction`). Requiring the S tag forces
+  // every `PoolSettle`'d pool to be enumerated AND fully value-pinned by the anchor,
+  // and removes the on-chain reliance on the off-chain pool-placement invariant (§5.4).
+  expect utils.is_tagged(own.output, s)
   // the spent input must itself be the NFT-bearing pool (parity with lp_action,
   // which checks this too). The settlement anchor also enforces a single
   // NFT-bearing pool input, but the pool owns its own continuity (§5.4).
@@ -98,6 +107,14 @@ pub fn pool_settle(
   // pool identity/params unchanged across the settlement (nft, pair, fee) — the
   // settlement anchor also pins this, but the pool owns its own continuity
   expect out.datum == own.output.datum
+
+  // (audit H-01, defense-in-depth) a settlement NEVER moves LP — LP only moves
+  // pool<->user under `LpAction`. Pin the pool's held LP across the settlement
+  // directly, so even if the anchor's enumeration is ever sidestepped the pool itself
+  // refuses to release a single LP token. Belt-and-suspenders with the S-tag check
+  // above and the anchor's full-value pin (clearing.ak).
+  let lp = AssetId { policy: d.nft.policy, name: lp_name }
+  expect utils.asset_qty(out.value, lp) == utils.asset_qty(own.output.value, lp)
 
   // reserves with the per-UTXO min-ADA carved out of whichever side is ADA
   let res_a_in = reserve_of(own.output.value, d.asset_a)
@@ -145,8 +162,20 @@ pub fn pool_settle(
   // batch-size-derived bound — never a fraction of k — so any residual underpayment is
   // ≤ n_orders sub-units of the paid asset (vs the unbounded corridor it closes). A solver
   // can always pick `p = get_amount_out(net_a)/net_a` and clear within the band (liveness).
-  let n_orders = list.length(
-    list.filter(tx.inputs, fn(i) { utils.is_tagged(i.output, s) }),
+  // (audit O-01) count the S-tagged inputs in a single fold — no intermediate
+  // filtered list allocated — then subtract the pool itself (guaranteed S-tagged by
+  // the `is_tagged(own.output, s)` check above). Semantically identical to the prior
+  // `list.length(list.filter(...))`, one fewer full-input traversal/allocation.
+  let n_orders = list.foldl(
+    tx.inputs,
+    0,
+    fn(i, acc) {
+      if utils.is_tagged(i.output, s) {
+        acc + 1
+      } else {
+        acc
+      }
+    },
   ) - 1
   let pin_ok = if net_a > 0 && net_b < 0 {
     // pool took asset_a, paid asset_b: paid-out ≥ fair − dust

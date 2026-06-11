@@ -5,7 +5,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hasPending, mergeRows, OBSERVE_FALLBACK_MS } from "./orderRows.ts";
+import {
+  groupFloor,
+  groupRowsByTx,
+  groupTotalIn,
+  hasPending,
+  mergeRows,
+  OBSERVE_FALLBACK_MS,
+  type OrderRow,
+} from "./orderRows.ts";
 
 const tok = (ticker: string, decimals = 0) => ({
   unit: ticker.toLowerCase(),
@@ -129,4 +137,83 @@ test("live entry dedups its recent counterpart and is ordered first", () => {
       ["e#0", "completed"],
     ],
   );
+});
+
+// ---- grouping split-swap legs by their shared post-tx hash --------------------------
+
+const mkRow = (ref: string, over: Partial<OrderRow> = {}): OrderRow => ({
+  ref,
+  inTicker: "TEST",
+  inDecimals: 0,
+  outTicker: "ADA",
+  outDecimals: 6,
+  amountIn: "100",
+  minOut: "50",
+  partial: false,
+  status: "open",
+  canReclaim: true,
+  ...over,
+});
+
+test("groupRowsByTx: a single-pool swap is a group of one, order preserved", () => {
+  const groups = groupRowsByTx([mkRow("a#0"), mkRow("b#0")]);
+  assert.deepEqual(
+    groups.map((g) => [g.txHash, g.legs.length]),
+    [
+      ["a", 1],
+      ["b", 1],
+    ],
+  );
+});
+
+test("groupRowsByTx: legs of one split swap group under their shared txHash", () => {
+  // mergeRows sorts by status, so legs can arrive out of index order — they must still
+  // group together AND render back in output-index order.
+  const groups = groupRowsByTx([
+    mkRow("tx#1", { status: "open" }),
+    mkRow("tx#0", { status: "completed", canReclaim: false }),
+    mkRow("tx#2", { status: "open" }),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].txHash, "tx");
+  assert.deepEqual(
+    groups[0].legs.map((l) => l.ref),
+    ["tx#0", "tx#1", "tx#2"],
+  );
+  // A mixed-state group keeps each leg's honest status — never collapsed to one.
+  assert.deepEqual(
+    groups[0].legs.map((l) => l.status),
+    ["completed", "open", "open"],
+  );
+});
+
+test("groupRowsByTx: singletons and a split group coexist, ordered by first appearance", () => {
+  const groups = groupRowsByTx([
+    mkRow("s1#0"),
+    mkRow("split#0"),
+    mkRow("split#1"),
+    mkRow("s2#0"),
+  ]);
+  assert.deepEqual(
+    groups.map((g) => [g.txHash, g.legs.length]),
+    [
+      ["s1", 1],
+      ["split", 2],
+      ["s2", 1],
+    ],
+  );
+});
+
+test("groupTotalIn / groupFloor sum exactly across legs (BigInt, beyond 2^53)", () => {
+  const legs = [
+    mkRow("tx#0", { amountIn: "9007199254740993", minOut: "10" }), // 2^53 + 1
+    mkRow("tx#1", { amountIn: "2", minOut: "25" }),
+  ];
+  assert.equal(groupTotalIn(legs), "9007199254740995");
+  assert.equal(groupFloor(legs), "35");
+});
+
+test("groupTotalIn tolerates a malformed amount as zero", () => {
+  const legs = [mkRow("tx#0", { amountIn: "oops" }), mkRow("tx#1", { amountIn: "5" })];
+  assert.equal(groupTotalIn(legs), "5");
 });

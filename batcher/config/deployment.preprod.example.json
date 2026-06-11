@@ -7,12 +7,12 @@
 
   "settlement_hash": "a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea",
   "order_script_hash": "e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d",
-  "pool_script_hash": "34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac",
+  "pool_script_hash": "757ba6b73922bc98824661bf4deb90e6a061041705c032ace755afd3",
   "lp_intent_script_hash": "fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d",
 
   "settlement_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 0 },
   "order_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 2 },
-  "pool_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 1 },
+  "pool_ref": { "tx_id": "6bd62b207786741f623348d1d3e1be40ac141d96b134deb4f4b8af678dba5bdc", "index": 0 },
   "lp_intent_ref": { "tx_id": "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5", "index": 3 },
 
   "signing_key_path": "/opt/shaswap/keys/solver-preprod.skey",

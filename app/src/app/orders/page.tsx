@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@/lib/wallet/hooks";
 import { useOrders } from "@/hooks/useOrders";
 import { useWriteGate } from "@/hooks/useWriteGate";
+import { useOwnerAddress } from "@/hooks/useOwnerAddress";
 import {
   clearReclaim,
   getRecent,
@@ -15,8 +16,12 @@ import {
 import { fetchTxConfirmed } from "@/lib/client/api";
 import { nowMs } from "@/lib/client/now";
 import {
+  groupFloor,
+  groupRowsByTx,
+  groupTotalIn,
   mergeRows,
   type OrderRow,
+  type OrderRowGroup,
   type RowStatus,
 } from "@/lib/client/orderRows";
 import { toUserMessage } from "@/lib/client/errors";
@@ -55,6 +60,23 @@ const STATUS_LABEL: Record<RowStatus, string> = {
 };
 
 /**
+ * The honest, accessible status pill — shared by the single-order row and each split-swap
+ * leg so the label + tooltip + sr-name stay identical wherever a status is shown.
+ */
+function StatusChip({ status }: { status: RowStatus }) {
+  return (
+    <span
+      className={`k-chip ${STATUS_STYLE[status]} cursor-help`}
+      tabIndex={0}
+      title={STATUS_HELP[status]}
+      aria-label={`${STATUS_LABEL[status]}: ${STATUS_HELP[status]}`}
+    >
+      {STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+/**
  * Grace window before the Orders view reconciles a logged entry against the chain — used
  * for BOTH an optimistic reclaim (verify its tx landed) and a "pending" post we never saw
  * live (verify the post landed). It's measured from the relevant tx's submit time and is
@@ -82,33 +104,11 @@ export default function OrdersPage() {
     // card + LP forms); the reclaim button shows it, else "Reclaim".
     baseReason,
   } = useWriteGate({ requireCollateral: true });
-  // Query by the wallet's CHANGE address — the payment key hash orders are posted
-  // under (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses
-  // still see their own orders, and the local activity log keys match.
-  const [owner, setOwner] = useState<string | undefined>(undefined);
-  const [ownerAttempted, setOwnerAttempted] = useState(false);
-  useEffect(() => {
-    if (!connected) return;
-    let cancelled = false;
-    wallet
-      .getChangeAddress()
-      .then((a) => {
-        if (!cancelled) {
-          setOwner(a);
-          setOwnerAttempted(true);
-        }
-      })
-      .catch(() => {
-        // Don't hang on the loading skeleton forever — mark the attempt done so the
-        // error state can render (the wallet errored / disconnected mid-call).
-        if (!cancelled) setOwnerAttempted(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [connected, wallet]);
-  const ownerAddr = connected ? owner : undefined;
-  const ownerError = connected && ownerAttempted && !ownerAddr;
+  // Query by the wallet's CHANGE address — the payment key hash orders are posted under
+  // (`postOrder` uses getChangeAddress) — so HD wallets that rotate addresses still see their
+  // own orders, and the local activity log keys match. Shared with the Portfolio page via
+  // useOwnerAddress so both surfaces resolve the owner identically.
+  const { ownerAddr, ownerError } = useOwnerAddress();
 
   const { orders, loading, error, reload } = useOrders(ownerAddr);
   const [recent, setRecent] = useState<RecentOrder[]>([]);
@@ -416,8 +416,15 @@ function OrderGroups({
   collateralReady: boolean;
   onReclaim: (row: OrderRow) => void;
 }) {
-  const resting = rows.filter((r) => r.status === "open");
-  const others = rows.filter((r) => r.status !== "open");
+  // Group the flat row list by post-tx hash so a smart-order-routed swap (N legs posted in
+  // one tx) reads as ONE basket; a plain single-pool swap is a group of one. A group rests
+  // (sits in the resting section) if ANY of its legs is still open, else it's recent activity.
+  const groups = groupRowsByTx(rows);
+  const resting = groups.filter((g) => g.legs.some((l) => l.status === "open"));
+  const others = groups.filter((g) => !g.legs.some((l) => l.status === "open"));
+  // The chip + copy count resting ORDERS (open legs), not cards — a split holds several at
+  // once. (Equals the old per-row count, so the number's meaning is unchanged.)
+  const restingCount = rows.filter((r) => r.status === "open").length;
 
   const renderRow = (row: OrderRow) => (
     <OrderRowItem
@@ -436,6 +443,24 @@ function OrderGroups({
     />
   );
 
+  // A singleton renders exactly as before (the unchanged single-order row); a multi-leg
+  // split renders as one grouped card with each leg visible and independently reclaimable.
+  const renderGroup = (group: OrderRowGroup) =>
+    group.legs.length === 1 ? (
+      renderRow(group.legs[0])
+    ) : (
+      <OrderGroupCard
+        key={group.txHash}
+        group={group}
+        now={now}
+        reclaim={reclaim}
+        baseReason={baseReason}
+        networkReady={networkReady}
+        collateralReady={collateralReady}
+        onReclaim={onReclaim}
+      />
+    );
+
   return (
     <div className="space-y-6">
       {resting.length > 0 && (
@@ -445,10 +470,10 @@ function OrderGroups({
             <h2 className="font-display text-base font-extrabold text-ink">
               Resting in the next batch
             </h2>
-            <span className="k-chip k-chip-accent">{resting.length}</span>
+            <span className="k-chip k-chip-accent">{restingCount}</span>
           </div>
           <p className="mb-3 text-xs text-muted">
-            Pip’s holding {resting.length === 1 ? "it" : `all ${resting.length}`} at your
+            Pip’s holding {restingCount === 1 ? "it" : `all ${restingCount}`} at your
             floor until the next batch settles. Waiting is normal here — and they’re always
             yours to grab back.
           </p>
@@ -470,7 +495,7 @@ function OrderGroups({
               </div>
             </div>
           </Disclosure>
-          <ul className="space-y-2">{resting.map(renderRow)}</ul>
+          <ul className="space-y-2">{resting.map(renderGroup)}</ul>
         </section>
       )}
 
@@ -481,10 +506,182 @@ function OrderGroups({
               Recent activity
             </h2>
           )}
-          <ul className="space-y-2">{others.map(renderRow)}</ul>
+          <ul className="space-y-2">{others.map(renderGroup)}</ul>
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * A smart-order-routed swap rendered as ONE basket: the legs of a single split (posted in
+ * one tx by `postOrders`) grouped so the split reads as a unit instead of N stray rows. The
+ * header states the WHOLE swap — total in → out, combined floor, and "routed across N pools"
+ * (a fact about the post, never a fabricated batch number). Each leg keeps its OWN honest
+ * status chip and its own "grab back" (reclaim is per-order), so a mixed group (one settled,
+ * one resting, one grabbed back) reads truthfully — the card never claims a single status.
+ */
+function OrderGroupCard({
+  group,
+  now,
+  reclaim,
+  baseReason,
+  networkReady,
+  collateralReady,
+  onReclaim,
+}: {
+  group: OrderRowGroup;
+  now: number;
+  reclaim: ReclaimState;
+  baseReason: string | null;
+  networkReady: boolean;
+  collateralReady: boolean;
+  onReclaim: (row: OrderRow) => void;
+}) {
+  const { txHash, legs } = group;
+  // Every leg is the same pair (one swap), so read the display units off the first leg.
+  const head = legs[0];
+  // The header describes the swap AS POSTED — total input and combined floor summed across
+  // ALL legs — exactly as a single order's header shows its posted amount + floor whatever
+  // its status (OrderRowItem). Current state is conveyed PER-LEG by each leg's status chip,
+  // never collapsed up here; summing only open legs would wrongly zero out a settled group.
+  const totalIn = groupTotalIn(legs);
+  const floor = groupFloor(legs);
+  const anyPartial = legs.some((l) => l.partial);
+  const anyOpen = legs.some((l) => l.status === "open");
+  const anyReclaimable = legs.some((l) => l.canReclaim);
+  // Reclaims are serialized by one global latch, so disable EVERY leg's button while any
+  // reclaim runs (mirrors OrderRowItem) — otherwise idle legs look clickable but no-op.
+  const anyBusy = reclaim.kind === "busy";
+  // Resting legs of one post share a settle-by deadline; show it once, from the first open
+  // leg. `now` is 0 until the first refresh stamps it — don't compute a bogus duration then.
+  const openDeadline = legs.find(
+    (l) => l.status === "open" && l.deadline != null,
+  )?.deadline;
+  const restsFor =
+    anyOpen && openDeadline != null && now > 0
+      ? relativeFuture(Number(openDeadline), now)
+      : null;
+  const windowClosed =
+    anyOpen && openDeadline != null && now > 0 ? Number(openDeadline) <= now : false;
+
+  return (
+    <li className="k-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 font-medium text-ink">
+            {formatUnits(totalIn, head.inDecimals)} {head.inTicker} → {head.outTicker}
+            <span
+              className="k-chip k-chip-accent cursor-help"
+              tabIndex={0}
+              title={`Pip split this swap across ${legs.length} pools (shards) in one drop-off, so more of it can fill — each leg rests and settles on its own, at its own floor. See each leg below for where it is now.`}
+              aria-label={`Routed across ${legs.length} pools`}
+            >
+              routed across {legs.length} pools
+            </span>
+            {anyPartial && (
+              <span
+                className="k-chip k-chip-muted"
+                title="Partial fills allowed. A partly-filled leg leaves a separate, reclaimable remainder order with the unfilled amount."
+              >
+                partial ok
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-xs text-muted">
+            <a
+              href={explorerTxUrl(txHash)}
+              target="_blank"
+              rel="noreferrer"
+              title="View this split swap’s transaction on Cardanoscan"
+              className="underline decoration-dotted underline-offset-2 hover:text-accent"
+            >
+              {truncate(txHash, 10, 4)} ↗
+            </a>{" "}
+            · combined floor {formatUnits(floor, head.outDecimals)} {head.outTicker}
+          </div>
+        </div>
+      </div>
+
+      {/* Each leg, honestly: its own share, status, and per-order grab back. */}
+      <ul className="mt-3 space-y-2 border-t border-border pt-3">
+        {legs.map((leg, i) => {
+          const busy = anyBusy && reclaim.ref === leg.ref;
+          const legError =
+            reclaim.kind === "error" && reclaim.ref === leg.ref
+              ? reclaim.message
+              : undefined;
+          const reclaimDisabled =
+            busy || anyBusy || !networkReady || !collateralReady;
+          return (
+            <li key={leg.ref}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 text-xs">
+                  <span className="font-medium text-ink">Leg {i + 1}</span>
+                  <span className="text-muted">
+                    {" · "}
+                    {formatUnits(leg.amountIn, leg.inDecimals)} {leg.inTicker} · floor{" "}
+                    {formatUnits(leg.minOut, leg.outDecimals)} {leg.outTicker}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <StatusChip status={leg.status} />
+                  {leg.canReclaim && (
+                    <button
+                      type="button"
+                      onClick={() => onReclaim(leg)}
+                      disabled={reclaimDisabled}
+                      title={baseReason ?? undefined}
+                      className="k-btn-ghost px-3 py-1.5 text-xs"
+                    >
+                      {busy ? "Grabbing back…" : (baseReason ?? "Grab back")}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {leg.reclaimTx && (
+                <div className="mt-1 text-[11px] text-success">
+                  Grabbed back ✓. Your input, the small ADA deposit and tip are home in
+                  your wallet.{" "}
+                  <a
+                    href={explorerTxUrl(leg.reclaimTx)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="View the reclaim transaction on Cardanoscan"
+                    className="font-mono underline decoration-dotted underline-offset-2"
+                  >
+                    {truncate(leg.reclaimTx, 10, 8)} ↗
+                  </a>
+                </div>
+              )}
+              {legError && (
+                <div className="mt-1 flex items-center gap-1.5 break-words text-[11px] text-danger">
+                  <Pip size={16} mood="calm" still />
+                  <span>{legError}</span>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {/* Calm, static "still here, on purpose" signal — at group scope when any leg rests. */}
+      {anyOpen && (
+        <div className="mt-2 text-[11px] text-muted">
+          {windowClosed
+            ? "Their settle window has closed — still resting, and yours to grab back anytime."
+            : restsFor
+              ? `Resting in the next batch · snug for ${restsFor} more`
+              : "Resting in the next batch · grab any leg back anytime"}
+        </div>
+      )}
+      {anyReclaimable && (
+        <div className="mt-1 text-[11px] text-muted">
+          Grabbing a leg back returns its input plus the small ADA deposit and tip to your
+          wallet.
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -557,14 +754,7 @@ function OrderRowItem({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span
-            className={`k-chip ${STATUS_STYLE[row.status]} cursor-help`}
-            tabIndex={0}
-            title={STATUS_HELP[row.status]}
-            aria-label={`${STATUS_LABEL[row.status]}: ${STATUS_HELP[row.status]}`}
-          >
-            {STATUS_LABEL[row.status]}
-          </span>
+          <StatusChip status={row.status} />
           {row.canReclaim && (
             <button
               type="button"

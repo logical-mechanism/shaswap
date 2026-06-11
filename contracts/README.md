@@ -47,8 +47,9 @@ Core guarantees enforced on-chain (BLUEPRINT §5.2):
 |---|---|
 | [`settlement.ak`](validators/settlement.ak) | The immutable trust anchor — an **unparameterised withdraw-0** staking script. Enumerates every input tagged with its own credential `S`, classifies each as order/pool, and enforces the curve-agnostic §5.2 batch rules (conservation, uniform price, floor, O(N) binding, deadlines, partial fills). Delegates the heavy logic to `lib/shaswap/clearing`. |
 | [`order.ak`](validators/order.ak) | User-facing order validator, parameterised by `S`. `Settle` defers to the settlement anchor (and self-checks its own `S` tag); `Reclaim` is owner-signature-only. |
-| [`pool.ak`](validators/pool.ak) | Constant-product pool validator, parameterised by `S`. Owns its curve: `PoolSettle` checks `k_after ≥ k_before` with the static fee; `LpAction` runs the value-derived LP deposit/withdraw; `ClosePool` tears down an unseeded pool (creator signature required). |
+| [`pool.ak`](validators/pool.ak) | Constant-product pool validator, parameterised by `S`. Owns its curve: `PoolSettle` checks `k_after ≥ k_before` with the static fee, and self-enforces its own continuity — the spent pool must be `S`-tagged and its held LP is pinned across the settlement (audit H-01); `LpAction` runs the value-derived LP deposit/withdraw; `ClosePool` tears down an unseeded pool (creator signature required). |
 | [`pool_mint.ak`](validators/pool_mint.ak) | One-shot pool-creation/closure minting policy, parameterised by a seed `OutputReference` (so the pool NFT is unique). `Create` mints `{NFT, full LP supply}` into a validated pool UTXO; `Close` is burn-only. |
+| [`lp_intent.ak`](validators/lp_intent.ak) | Batcher-fulfilled LP deposit/withdraw validator, parameterised by `S`. `Fulfill` settles a single LP intent against the pool (via `LpAction`) and asserts `!withdrawal_present(S)` so an intent is never folded into a settlement; `ReclaimLp` is owner-signature-only. Its UTXOs sit at an **enterprise** (non-`S`) address, so the settlement anchor never enumerates them. |
 
 ### `lib/shaswap/`
 

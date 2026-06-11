@@ -1,0 +1,10 @@
+# Pinned toolchain for reproducible on-chain builds (asdf / mise). Mirrors the
+# repo-root .tool-versions so the `contracts/` tree is self-contained for hash
+# reproducibility (audit 061026 Fable5 I-02 — the root pin is invisible when only
+# this subtree is checked out / audited).
+#
+# `1.1.22` is the installable release pin (aikup / asdf-aiken). The EXACT reproducible
+# compiler build is `v1.1.22+39d6b04`, recorded in `plutus.json` `preamble.compiler.version`.
+# The validators are IMMUTABLE once deployed, so the on-chain script hashes must be
+# re-derivable from source with this compiler; CI fails on any plutus.json hash drift.
+aiken 1.1.22

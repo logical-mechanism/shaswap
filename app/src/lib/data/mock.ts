@@ -1,11 +1,12 @@
 import type { Action, Protocol, UTxO } from "@meshsdk/core";
 import type { DataProvider } from "./provider";
-import { quoteConstantProduct } from "./quote";
+import { planRoute } from "./route";
+import { toBigInt as toBig } from "../bigint";
 import type {
   LpIntentPosition,
   Pool,
-  Quote,
   ReferencePrice,
+  Route,
   TokenInfo,
   WalletPosition,
 } from "./types";
@@ -132,15 +133,6 @@ const LP_INTENTS: LpIntentPosition[] = [
   },
 ];
 
-/** Find the pool that trades exactly {inUnit, outUnit} in either direction. */
-function findPool(inUnit: string, outUnit: string): Pool | undefined {
-  return POOLS.find(
-    (p) =>
-      (p.tokenA.unit === inUnit && p.tokenB.unit === outUnit) ||
-      (p.tokenA.unit === outUnit && p.tokenB.unit === inUnit),
-  );
-}
-
 export class MockProvider implements DataProvider {
   readonly name = "mock";
 
@@ -164,16 +156,19 @@ export class MockProvider implements DataProvider {
     return POOLS.find((p) => p.id === poolId) ?? null;
   }
 
-  async priceQuote(
+  async routeQuote(
     tokenInUnit: string,
     tokenOutUnit: string,
     amountIn: string,
-  ): Promise<Quote | null> {
+    tipLovelace: string,
+  ): Promise<Route | null> {
     if (!BY_UNIT.has(tokenInUnit) || !BY_UNIT.has(tokenOutUnit)) return null;
-    const pool = findPool(tokenInUnit, tokenOutUnit);
-    if (!pool) return null;
-    // Same shared constant-product display math as the real provider (NOT clearing).
-    return quoteConstantProduct(pool, tokenInUnit, tokenOutUnit, amountIn);
+    // Same split router as the real provider, over the mock's pool set. `toBig` (not raw
+    // BigInt) for parity with BlockfrostDataProvider — a non-digit tip degrades to 0n rather
+    // than throwing, so the two providers stay swappable.
+    return planRoute(POOLS, tokenInUnit, tokenOutUnit, amountIn, {
+      tipLovelace: toBig(tipLovelace),
+    });
   }
 
   async referencePrice(): Promise<ReferencePrice | null> {
