@@ -10,7 +10,7 @@
   "pool_script_hash": "757ba6b73922bc98824661bf4deb90e6a061041705c032ace755afd3",
   "lp_intent_script_hash": "fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d",
 
-  "settlement_ref": { "tx_id": "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb", "index": 0 },
+  "settlement_ref": { "tx_id": "8d788d74f3ab0f1a29ee35a6d3385a2e307d1c17a6479b5c72fd12415ef7b99f", "index": 0 },
   "order_ref": { "tx_id": "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb", "index": 2 },
   "pool_ref": { "tx_id": "bfce12e4fa296212608808b35fc697b6d251a820e1025cb2486b05ce64b5d92d", "index": 0 },
   "lp_intent_ref": { "tx_id": "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb", "index": 3 },

@@ -93,13 +93,38 @@ open('$WORK/_refchk.plutus','w').write(json.dumps(s))" 2>/dev/null \
     && cli transaction policyid --script-file "$WORK/_refchk.plutus" 2>/dev/null || true
 }
 
-# Funding input = the largest UTXO (sets $TXIN). Collateral = the smallest ada-only UTXO
-# distinct from it (sets $COLL); collateral is returned on success and must be pure-ADA and
-# disjoint from the inputs.
+# Funding input = the largest ada-only UTXO carrying NO reference script (sets $TXIN).
+# Ref-bearing UTXOs must NEVER fund: spending one melts its reference script into change.
+# (Incident 2026-06-10: the original picker chose "largest UTXO" unconditionally, and the
+# largest was the 60-ADA settlement-ref UTXO d56e729c#0 — the 02b fork publisher consumed
+# it and destroyed the mainnet settlement ref. Republished by 02c.)
 pick_funding() {
   TXIN=$(cli query utxo --address "$DEPLOY_ADDR" --mainnet --output-json \
-    | python3 -c "import sys,json;u=json.load(sys.stdin);(print(max(u,key=lambda k:u[k]['value'].get('lovelace',0))) if u else sys.exit('no UTXOs'))") \
-    || die "no UTXOs at $DEPLOY_ADDR — fund the wallet and re-run."
+    | python3 -c "
+import sys,json
+u=json.load(sys.stdin)
+c={k:v for k,v in u.items() if not v.get('referenceScript') and list(v['value'])==['lovelace']}
+(print(max(c,key=lambda k:c[k]['value']['lovelace'])) if c else sys.exit(1))") \
+    || die "no ada-only, reference-script-free UTXOs at $DEPLOY_ADDR — fund the wallet and re-run."
+}
+
+# Funding inputs = ada-only, ref-free UTXOs covering <lovelace>, greedy largest-first (sets
+# $TXINS, newline-separated). For outputs too big for any single wallet UTXO (e.g. the
+# settlement ref republish, ~25 ADA, against a wallet fragmented into smaller change).
+pick_funding_multi() { # <lovelace needed>
+  TXINS=$(cli query utxo --address "$DEPLOY_ADDR" --mainnet --output-json \
+    | python3 -c "
+import sys,json
+need=int(sys.argv[1]); u=json.load(sys.stdin)
+c=sorted(((k,v['value']['lovelace']) for k,v in u.items()
+          if not v.get('referenceScript') and list(v['value'])==['lovelace']),
+         key=lambda kv:-kv[1])
+take=[];tot=0
+for k,l in c:
+    take.append(k);tot+=l
+    if tot>=need: break
+(print('\n'.join(take)) if tot>=need else sys.exit(1))" "$1") \
+    || die "ada-only, ref-free funds at $DEPLOY_ADDR don't cover $(($1 / 1000000)) ADA — top up and re-run (idempotent)."
 }
 pick_collateral() {
   COLL=$(cli query utxo --address "$DEPLOY_ADDR" --mainnet --output-json \
@@ -212,15 +237,16 @@ verify_onchain() {
 # NO new tx. Self-verifies the on-chain ref hash before recording, and writes
 # $WORK/pool-ref.json { tx_id, index } for wiring into the app + batcher config.
 
-# Print the txid#idx of a DEPLOY_ADDR UTXO whose reference script hashes to POOL_HASH (the
-# new pool), or nothing. Scans only ref-script-bearing UTXOs; re-hashes each via ref_hash.
-_find_pool_ref() {
+# Print the txid#idx of a DEPLOY_ADDR UTXO whose reference script hashes to <hash>, or
+# nothing. Scans only ref-script-bearing UTXOs; re-hashes each via ref_hash.
+_find_ref_by_hash() { # <script-hash>
   local k
   for k in $(cli query utxo --address "$DEPLOY_ADDR" --mainnet --output-json \
       | python3 -c "import sys,json;u=json.load(sys.stdin);print('\n'.join(k for k,v in u.items() if v.get('referenceScript')))"); do
-    if [ "$(ref_hash "$k")" = "$POOL_HASH" ]; then echo "$k"; return 0; fi
+    if [ "$(ref_hash "$k")" = "$1" ]; then echo "$k"; return 0; fi
   done
 }
+_find_pool_ref() { _find_ref_by_hash "$POOL_HASH"; }
 
 _write_pool_ref() { # <txid#idx>
   python3 - "${1%%#*}" "${1##*#}" > "$WORK/pool-ref.json" <<'PY'
@@ -270,4 +296,51 @@ fork_pool_ref() {
   [ "$(ref_hash "$ref")" = "$POOL_HASH" ] || die "on-chain ref $ref hash != $POOL_HASH — aborting."
   _write_pool_ref "$ref"
   echo "    pool ref VERIFIED on-chain: $ref carries $POOL_HASH"
+}
+
+# ── REPUBLISH (incident 2026-06-10): the settlement reference UTXO was destroyed ────────
+# 02b's funding picker chose the largest wallet UTXO, which was the 60-ADA UTXO carrying
+# the settlement reference script (d56e729c#0); spending it melted the ref into change
+# (tx bfce12e4). The settlement VALIDATOR is untouched — the hash a305a3cf… is immutable
+# and `S` stays registered — only the convenience reference UTXO was lost, and anyone may
+# republish one. Idempotent + self-verifying, same shape as fork_pool_ref. Writes
+# $WORK/settlement-ref.json { tx_id, index } for wiring into the batcher config.
+_write_settlement_ref() { # <txid#idx>
+  python3 - "${1%%#*}" "${1##*#}" > "$WORK/settlement-ref.json" <<'PY'
+import sys, json
+json.dump({"settlement_ref": {"tx_id": sys.argv[1], "index": int(sys.argv[2])}}, sys.stdout, indent=2)
+PY
+  echo "    wrote $WORK/settlement-ref.json"
+}
+
+republish_settlement_ref() {
+  echo "==> [republish] settlement reference script"
+  _verify_hash "$SETTLEMENT_SCRIPT" "$S_HASH" settlement
+
+  local existing; existing=$(_find_ref_by_hash "$S_HASH")
+  if [ -n "$existing" ]; then
+    echo "    settlement ref already on-chain at $existing — recording, no new tx."
+    _write_settlement_ref "$existing"; return 0
+  fi
+
+  # 25 ADA covers the ~4.9 kB ref-script min-UTXO (~22.3 ADA) with margin; recoverable.
+  # Multi-input funding: the wallet's free ada is fragmented change, no single UTXO covers it.
+  pick_funding_multi 28000000
+  local tx_in_args=() k
+  while IFS= read -r k; do tx_in_args+=(--tx-in "$k"); done <<< "$TXINS"
+  echo "    inputs: $TXINS" | tr '\n' ' '; echo
+  cli transaction build "${tx_in_args[@]}" \
+    --tx-out "$DEPLOY_ADDR+25000000" --tx-out-reference-script-file "$SETTLEMENT_SCRIPT" \
+    --change-address "$DEPLOY_ADDR" --mainnet --out-file "$WORK/sref.tx"
+  cli transaction sign --tx-file "$WORK/sref.tx" --signing-key-file "$DEPLOY_SKEY" \
+    --mainnet --out-file "$WORK/sref.signed"
+  local stx; stx=$(txid "$WORK/sref.signed")
+  cli transaction submit --tx-file "$WORK/sref.signed" --mainnet
+  echo "    submitted settlement ref in tx $stx"
+  wait_for_tx "$stx" "settlement ref"
+
+  local ref; ref=$(_find_ref_by_hash "$S_HASH")
+  [ -n "$ref" ] || die "submitted $stx but could not locate the settlement ref UTXO after confirmation."
+  _write_settlement_ref "$ref"
+  echo "    settlement ref VERIFIED on-chain: $ref carries $S_HASH"
 }
