@@ -21,11 +21,16 @@ WORK="$REPO/scripts/work-mainnet"             # tx drafts + refs.json (gitignore
 mkdir -p "$WORK"
 
 # Committed identities (must equal contracts/plutus.json + constants.ak; pinned by the
-# app's address.test.ts). Rev 25 clearing-price-pin set (BLUEPRINT Rev 25). Deploy REFUSES
-# bytecode whose hash differs. lp_intent is the fifth, additive immutable hash (Rev 22).
+# app's address.test.ts). Deploy REFUSES bytecode whose hash differs. lp_intent is the
+# fifth, additive immutable hash (Rev 22). The POOL hash is the **Rev 29 H-01 fork** pool
+# (`pool_settle` S-tag self-check + held-LP pin); settlement/order/lp_intent are byte-
+# identical to the Rev 25 set. The mainnet H-01 fork is a PARTIAL fork — publish ONLY the
+# new pool ref (`fork_pool_ref` / `02b-fork-pool-ref.sh`); the existing settlement/order/
+# lp_intent refs (deploy d56e729c) stay. `publish_refs`/`verify_onchain` below are the
+# FULL from-scratch deploy (already done on mainnet) — do NOT run them for the fork.
 S_HASH="a305a3cfd8343c03abffa0ef2b3ab6c756557a0dc5fb298c747259ea"      # settlement = stake cred S
 ORDER_HASH="e7fa1a385a04c103ece6746bc15b8e71cdf1ccb6854dbd3524fb148d"  # order(S)
-POOL_HASH="34b30c7a2d34c8185838544f5746afcc69056fa1ef15b0a5cf97e4ac"   # pool(S) — Rev 25
+POOL_HASH="757ba6b73922bc98824661bf4deb90e6a061041705c032ace755afd3"   # pool(S) — Rev 29 (H-01 fork; was 34b30c7a)
 LP_INTENT_HASH="fa885b037442ac10e65e7b1aeb6056f350446446ea51d92878240e5d"  # lp_intent(S) — Rev 25
 
 SETTLEMENT_SCRIPT="$SCRIPTS_DIR/settlement.plutus"
@@ -198,4 +203,61 @@ verify_onchain() {
   done
   [ "$failed" = 0 ] || die "on-chain verification FAILED — deployed refs do not match audited hashes (re-run to re-verify)."
   echo "REFS_TXID=$rtxid"
+}
+
+# ── PARTIAL FORK (H-01, Rev 29): publish ONLY the new pool reference script ────────────
+# Only the `pool` validator changed, so we add a single new pool ref and LEAVE the existing
+# settlement/order/lp_intent refs (deploy d56e729c) in place. Idempotent: if a UTXO at
+# DEPLOY_ADDR already carries a ref script hashing to POOL_HASH, it records that and makes
+# NO new tx. Self-verifies the on-chain ref hash before recording, and writes
+# $WORK/pool-ref.json { tx_id, index } for wiring into the app + batcher config.
+
+# Print the txid#idx of a DEPLOY_ADDR UTXO whose reference script hashes to POOL_HASH (the
+# new pool), or nothing. Scans only ref-script-bearing UTXOs; re-hashes each via ref_hash.
+_find_pool_ref() {
+  local k
+  for k in $(cli query utxo --address "$DEPLOY_ADDR" --mainnet --output-json \
+      | python3 -c "import sys,json;u=json.load(sys.stdin);print('\n'.join(k for k,v in u.items() if v.get('referenceScript')))"); do
+    if [ "$(ref_hash "$k")" = "$POOL_HASH" ]; then echo "$k"; return 0; fi
+  done
+}
+
+_write_pool_ref() { # <txid#idx>
+  python3 - "${1%%#*}" "${1##*#}" > "$WORK/pool-ref.json" <<'PY'
+import sys, json
+json.dump({"pool_ref": {"tx_id": sys.argv[1], "index": int(sys.argv[2])}}, sys.stdout, indent=2)
+PY
+  echo "    wrote $WORK/pool-ref.json"
+}
+
+fork_pool_ref() {
+  echo "==> [fork] publishing the NEW pool reference script (partial fork — pool only)"
+  # The local pool.plutus MUST be the audited H-01 pool before we spend a single lovelace.
+  _verify_hash "$POOL_SCRIPT" "$POOL_HASH" pool
+
+  local existing; existing=$(_find_pool_ref)
+  if [ -n "$existing" ]; then
+    echo "    pool ref already on-chain at $existing — recording, no new tx."
+    _write_pool_ref "$existing"; return 0
+  fi
+
+  pick_funding
+  echo "    input=$TXIN"
+  # One output: the new pool ref locked at DEPLOY_ADDR (recoverable). 40 ADA covers the
+  # ~3 kB ref-script min-UTXO with margin; the rest returns as change.
+  cli transaction build --tx-in "$TXIN" \
+    --tx-out "$DEPLOY_ADDR+40000000" --tx-out-reference-script-file "$POOL_SCRIPT" \
+    --change-address "$DEPLOY_ADDR" --mainnet --out-file "$WORK/poolref.tx"
+  cli transaction sign --tx-file "$WORK/poolref.tx" --signing-key-file "$DEPLOY_SKEY" \
+    --mainnet --out-file "$WORK/poolref.signed"
+  local ptx; ptx=$(txid "$WORK/poolref.signed")
+  cli transaction submit --tx-file "$WORK/poolref.signed" --mainnet
+  echo "    submitted pool ref in tx $ptx"
+  wait_for_tx "$ptx" "pool ref"
+
+  local ref; ref=$(_find_pool_ref)
+  [ -n "$ref" ] || die "submitted $ptx but could not locate the pool ref UTXO after confirmation."
+  [ "$(ref_hash "$ref")" = "$POOL_HASH" ] || die "on-chain ref $ref hash != $POOL_HASH — aborting."
+  _write_pool_ref "$ref"
+  echo "    pool ref VERIFIED on-chain: $ref carries $POOL_HASH"
 }
