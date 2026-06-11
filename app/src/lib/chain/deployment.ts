@@ -65,6 +65,13 @@ interface NetworkDeployment {
    * the `pool` validator changed.
    */
   poolScriptHash: string;
+  /**
+   * Byte size of THIS network's pool reference script (cborHex length / 2), for the Conway
+   * ref-script fee in `spendingTxInReference`. PER-NETWORK during the H-01 fork: the fixed
+   * pool is larger (3028 B) than the Rev 25 pool (2928 B). A stale/too-small value
+   * underprices the fee and the node rejects the spend at submit (`FeeTooSmallUTxO`).
+   */
+  poolScriptSize: number;
   /** Order reference-script UTXO — `null` until this network is deployed. */
   orderRef: RefScript | null;
   /** Pool reference-script UTXO — `null` until this network is deployed. */
@@ -113,6 +120,7 @@ const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
     orderAddr: TESTNET_ORDER_ADDR,
     poolAddr: TESTNET_POOL_ADDR,
     poolScriptHash: PREPROD_POOL_SCRIPT_HASH,
+    poolScriptSize: 3028,
     orderRef: {
       txHash: "9088f8dc39a97a547b184054c50254b1069c73dedca2f6985357db84750a29e5",
       outputIndex: 2,
@@ -137,6 +145,7 @@ const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
     orderAddr: TESTNET_ORDER_ADDR,
     poolAddr: TESTNET_POOL_ADDR,
     poolScriptHash: PREPROD_POOL_SCRIPT_HASH,
+    poolScriptSize: 3028,
     orderRef: null,
     poolRef: null,
     lpIntentRef: null,
@@ -154,6 +163,7 @@ const DEPLOYMENTS: Record<Network, NetworkDeployment> = {
       "addr1xy6txrr6956vsxzc8p2y746x4lxxjpt058h3tv99e7t7ft9rqk3ulkp58sp6hlaqau4n4dk82e2h5rw9lv5ccarjt84qlzsnyq",
     // Mainnet still on the Rev 25 pool until its own H-01 fork (frontend in maintenance).
     poolScriptHash: MAINNET_POOL_SCRIPT_HASH,
+    poolScriptSize: 2928,
     orderRef: {
       txHash: "d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb",
       outputIndex: 2,
@@ -341,12 +351,13 @@ export function requireDeployed(): { orderRef: RefScript; poolRef: RefScript } {
 export const ORDER_SCRIPT_SIZE = 537;
 
 /**
- * Byte size of the deployed pool validator (the `cborHex` of
- * `contracts/happy_path/scripts/pool.plutus` is 5856 hex chars = 2928 bytes; the pool
- * validator was re-hashed for the Rev 25 two-sided clearing-price pin). Same role as
- * `ORDER_SCRIPT_SIZE` for the `LpAction` spend.
+ * Byte size of the ACTIVE network's pool reference script (cborHex length / 2), passed to
+ * `spendingTxInReference` for the Conway ref-script fee. PER-NETWORK during the H-01 fork:
+ * preprod's fixed pool is 3028 B (`scripts/pool.plutus` cborHex = 6056), mainnet's Rev 25
+ * pool is 2928 B — see `poolScriptSize` in `DEPLOYMENTS`. A stale/too-small value underprices
+ * the fee and the node rejects the `LpAction` spend at submit (`FeeTooSmallUTxO`).
  */
-export const POOL_SCRIPT_SIZE = 2928;
+export const POOL_SCRIPT_SIZE = ACTIVE.poolScriptSize;
 
 /**
  * Where orders live: a base address tagged with `S`.
