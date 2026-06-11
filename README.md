@@ -17,9 +17,11 @@ clearings off-chain; the on-chain validators only *verify* them.
 | **preprod** | ✅ deployed | `NEXT_PUBLIC_NETWORK=preprod` (testnet rehearsal) |
 
 ShaSwap's immutable validators are **live on mainnet** as of 2026-06-08 (deploy tx
-`d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb` — settlement, pool,
-order, and `lp_intent` reference scripts). The deploy/verify procedure that produced them
-is in [`documentation/launch/mainnet-checklist.md`](documentation/launch/mainnet-checklist.md).
+`d56e729ca24c10188d27023e9c80d681a6e9705220188bfed618b869096087cb`). The order and
+`lp_intent` reference scripts still live in that tx; the pool ref was re-published by the
+H-01 fork (tx `bfce12e4…#0`, Rev 29) and the settlement ref republished on 2026-06-11
+(tx `8d788d74…#0`). The deploy/verify procedure that produced them is in
+[`documentation/launch/mainnet-checklist.md`](documentation/launch/mainnet-checklist.md).
 
 ## Monorepo layout
 
