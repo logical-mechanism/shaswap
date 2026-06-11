@@ -8,6 +8,12 @@
 # machine's layout.
 set -euo pipefail
 
+# --- machine-local overrides (gitignored) --------------------------------------
+# Put your real node/keys paths in env.local.sh next to this file; the defaults
+# below are placeholders so the repo carries no machine-local paths.
+_HP_ENV_LOCAL="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/env.local.sh"
+[ -f "$_HP_ENV_LOCAL" ] && source "$_HP_ENV_LOCAL"
+
 # --- node / tooling (assumption: the node is already running) -----------------
 : "${NET_MAGIC:=1}"   # preprod
 : "${CARDANO_NODE_SOCKET_PATH:=${HOME}/cardano-preprod/node-preprod/db-testnet/node.socket}"
