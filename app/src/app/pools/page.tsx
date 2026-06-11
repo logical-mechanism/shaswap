@@ -103,8 +103,7 @@ export default function PoolsPage() {
             <h1 className="font-display text-2xl font-extrabold text-ink">Pools</h1>
           </div>
           <p className="mt-1 text-sm text-muted">
-            Liquidity gardens — every pair Pip tends. Pop one open to add or pull out
-            liquidity.
+            Liquidity gardens — pop one open to add or pull out liquidity.
           </p>
           {!loading && !error && poolCount > 0 && (
             <p className="mt-1 text-xs text-muted">

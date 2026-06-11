@@ -16,8 +16,8 @@ export default function SwapPage() {
           </span>
         </h1>
         <p className="mt-2 max-w-sm text-sm text-muted">
-          Drop off an order and Pip settles everyone together at one fair price —
-          so no one can jump the queue ahead of you.
+          Drop off an order; everyone settles at one fair price — nobody jumps
+          the queue.
         </p>
       </div>
 
@@ -30,10 +30,9 @@ export default function SwapPage() {
           </span>
           <div className="space-y-2">
             <p>
-              You don’t swap on the spot. You drop off an order, and Pip does the
-              rest. Every little while, all the orders for a pair settle
-              together at one shared price — so everyone in a batch trades at the
-              same price and no one can sneak in front of you to move it.
+              You don’t swap on the spot — you drop off an order. Every little
+              while, all orders for a pair settle together at one shared price,
+              so no one can sneak in front of you to move it.
             </p>
             <p>
               You always get at least the floor you set. Changed your mind? Grab your
@@ -41,13 +40,13 @@ export default function SwapPage() {
             </p>
             <p>
               One honest note: your order rests on a public chain until it settles
-              or you grab it back — so its price is visible, and it can fill whenever
+              or you grab it back. Its price is visible, and it can fill whenever
               the market reaches your floor. A tight floor and a shorter expiry keep
               it snug.
             </p>
             <p className="text-muted">
-              Prices come from live pool reserves, so a quote is just a friendly
-              estimate until the batch settles.
+              Quotes come from live pool reserves — estimates until the batch
+              settles.
             </p>
           </div>
         </div>

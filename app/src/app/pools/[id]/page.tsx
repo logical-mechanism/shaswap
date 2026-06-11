@@ -55,8 +55,8 @@ export default function PoolManagePage({
         <div className="k-card flex flex-col items-center px-4 py-12 text-center text-sm text-muted">
           <Pip size={56} mood="thinking" />
           <p className="mt-3 max-w-xs">
-            Pip can’t find this garden yet. If you just planted it, it may still be taking
-            root (~20–40s). Give it a moment, then refresh.
+            Pip can’t find this garden yet — if you just planted it, it may still be taking
+            root (~20–40s).
           </p>
           <button
             type="button"

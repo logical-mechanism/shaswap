@@ -60,7 +60,7 @@ export function PipCoachmark({
         <button
           type="button"
           onClick={dismiss}
-          aria-label="Dismiss Pip's tip"
+          aria-label="Dismiss Pip's note"
           className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full text-muted transition-colors hover:bg-surface-sunk hover:text-ink"
         >
           <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden>

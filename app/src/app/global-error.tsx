@@ -49,8 +49,7 @@ export default function GlobalError({
             ShaSwap hit a snag
           </div>
           <p style={{ margin: "8px auto 20px", lineHeight: 1.5 }}>
-            Something unexpected happened. Reloading usually clears it, and your funds
-            are safe on-chain regardless.
+            Reloading usually clears it — your funds stay safe on-chain.
           </p>
           <button
             type="button"

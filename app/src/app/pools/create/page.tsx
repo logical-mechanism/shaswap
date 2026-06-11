@@ -231,30 +231,29 @@ export default function CreatePoolPage() {
       <header className="mb-4">
         <h1 className="font-display text-2xl font-extrabold text-ink">Create pool</h1>
         <p className="mt-1 text-sm text-muted">
-          Plant a new garden for any pair you hold (anyone can). It starts empty, then you
-          sow the first liquidity right after.
+          Plant a new garden for any pair — anyone can. You sow the first liquidity right
+          after.
         </p>
         <p className="mt-1 text-xs text-muted">
-          Creating an empty pool locks a ~2 ₳ seed (plus network fees). As the creator you
-          can close it and reclaim that seed any time, until someone seeds it with
-          liquidity, after which it’s permanent.
+          Creating an empty pool locks a ~2 ₳ seed (plus network fees). As creator you can
+          close it and grab the seed back anytime — once it holds liquidity, it’s
+          permanent.
         </p>
       </header>
 
       <div className="k-card w-full p-5 sm:p-6">
         <div className="mb-2 px-1 text-xs text-muted">
           {!connected
-            ? "Connect a wallet to choose tokens. The list is ADA + the registered tokens you hold."
+            ? "Connect a wallet to choose tokens — ADA + the registered tokens you hold."
             : tokensLoading
               ? "Pip’s sorting your wallet for registered tokens…"
-              : "Tokens to choose from: ADA + the registered tokens in your wallet (NFTs are hidden)."}
+              : "ADA + the registered tokens in your wallet (NFTs are hidden)."}
         </div>
 
         {noRegisteredTokens && (
           <div className="k-note k-note-info mb-2 text-xs">
-            Pip only found NFTs or unlisted assets in your wallet. The picker shows tokens
-            in the Cardano token registry, so you can still pair anything with ADA — but the
-            other token has to be a registered token.
+            Pip only found NFTs or unlisted assets in your wallet — the non-ADA token must
+            be in the Cardano token registry.
           </div>
         )}
 
@@ -310,8 +309,8 @@ export default function CreatePoolPage() {
         {duplicate && (
           <div className="k-note k-note-warn mt-3 text-xs">
             A {duplicate.tokenA.ticker}/{duplicate.tokenB.ticker} pool at{" "}
-            {(duplicate.feeBps / 100).toFixed(2)}% already exists. You can still create
-            another, but you may prefer to{" "}
+            {(duplicate.feeBps / 100).toFixed(2)}% already exists — you can still create
+            another, or{" "}
             <Link
               href={`/pools/${encodeURIComponent(duplicate.id)}`}
               className="k-link"
@@ -338,9 +337,8 @@ export default function CreatePoolPage() {
               <div className="font-bold text-success">Pool created ✓</div>
             </div>
             <p className="mt-1 text-muted">
-              Confirming on-chain (~20–40s). Sow the first liquidity to start trading. On
-              the next screen, hit ↻ Refresh once it’s confirmed (it won’t show in the
-              pools list until then).
+              Confirming on-chain (~20–40s). Sow the first liquidity to start trading. Hit
+              ↻ Refresh on the next screen — it won’t be listed until it lands.
             </p>
             <div className="mt-2 flex flex-col gap-2">
               <Link

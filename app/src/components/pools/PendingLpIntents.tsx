@@ -193,8 +193,7 @@ export function PendingLpIntents({
         <span className="text-sm font-bold text-ink">Your LP intents</span>
       </div>
       <p className="mb-2 px-1 text-[11px] text-muted">
-        An intent is a request a batcher fulfils for you — grab one back anytime it’s still
-        waiting.
+        A request a batcher fulfils — grab one back anytime it’s still waiting.
       </p>
 
       {needsCollateral && rows.some((r) => r.canReclaim) && (
