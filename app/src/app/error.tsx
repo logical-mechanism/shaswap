@@ -32,7 +32,7 @@ export default function Error({
           Something tripped Pip up
         </h1>
         <p className="mt-2 max-w-xs text-sm text-muted">
-          A snag loading this page — usually momentary. Your funds are never
+          A snag loading this page, usually momentary. Your funds are never
           affected (everything lives on-chain).
         </p>
         <div className="mt-5 flex flex-wrap items-center justify-center gap-3">

@@ -44,7 +44,7 @@ export function recoverSeed(
     if (policyOf(c) === policyId) return c;
   }
   throw new Error(
-    "could not recover the pool's mint seed from its creation tx — cannot close it",
+    "could not recover the pool's mint seed from its creation tx, so it cannot be closed",
   );
 }
 

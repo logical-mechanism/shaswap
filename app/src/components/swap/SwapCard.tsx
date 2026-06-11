@@ -100,9 +100,9 @@ export function SwapCard() {
   const tipLow = tipValid && BigInt(tipLovelace || "0") < RECOMMENDED_MIN_TIP;
 
   // The smart split route: how to spread this swap across the pair's sharded pools to
-  // maximise output. The tip is an INPUT — each leg carries one tip, so the router only
+  // maximize output. The tip is an INPUT — each leg carries one tip, so the router only
   // splits while the extra output beats the extra tip. A single-pool pair (or a trade not
-  // worth splitting) yields a one-leg route, i.e. the old best-single-pool behaviour.
+  // worth splitting) yields a one-leg route, i.e. the old best-single-pool behavior.
   const {
     route,
     loading: routeLoading,
@@ -304,7 +304,7 @@ export function SwapCard() {
       // in a single tx, each carrying the full tip.
       const legs = route.legs.map((l, idx) => {
         const legPool = pairPools.find((p) => p.id === l.poolId);
-        if (!legPool) throw new Error("a routed pool is no longer available — refresh price");
+        if (!legPool) throw new Error("a routed pool is no longer available. Refresh the price");
         return {
           pool: legPool,
           sellUnit: fromToken.unit,
@@ -385,7 +385,7 @@ export function SwapCard() {
             <h1 className="font-display text-xl font-extrabold text-ink">Swap</h1>
           </div>
           <p className="mt-1 text-[11px] leading-snug text-muted">
-            One fair batch price, never below your floor — grab it back anytime.
+            One fair batch price, never below your floor. Grab it back anytime.
           </p>
         </div>
         <SlippageSettings value={slippage} onChange={setSlippage} context="swap" />
@@ -393,12 +393,12 @@ export function SwapCard() {
 
       <PipCoachmark id="batch-intro" mood="wave" className="mb-4">
         No instant trades here: your order rests until the whole batch settles at one
-        fair price — nobody can jump the queue. Always yours to grab back.
+        fair price, so nobody can jump the queue. It’s always yours to grab back.
       </PipCoachmark>
 
       {tokensError && (
         <div className="k-note k-note-danger mb-3 text-xs">
-          Pip couldn’t load the token list — check your connection and refresh.
+          Pip couldn’t load the token list. Check your connection and refresh.
         </div>
       )}
 
@@ -523,9 +523,9 @@ export function SwapCard() {
             }`}
           >
             {route.priceImpact >= 0.15 ? "Very high" : "High"} price impact (
-            {formatPercent(route.priceImpact)}) —{" "}
-            {legCount > 1 ? "these pools are" : "this pool is"} shallow for that
-            size; go smaller or expect a worse fill.
+            {formatPercent(route.priceImpact)}).{" "}
+            {legCount > 1 ? "These pools are" : "This pool is"} shallow for that
+            size, so go smaller or expect a worse fill.
           </div>
         )}
 
@@ -537,7 +537,7 @@ export function SwapCard() {
           <Pip size={22} mood="worried" />
           <span>
             {legCount > 1 ? "A routed pool charges" : "This pool charges"} a high fee (
-            {(maxFeeBps / 100).toFixed(2)}%) and isn’t on Pip’s verified list — double-check
+            {(maxFeeBps / 100).toFixed(2)}%) and isn’t on Pip’s verified list. Double-check
             before you trade.
           </span>
         </div>
@@ -630,8 +630,8 @@ function PostResult({ state }: { state: PostState }) {
         </div>
         <p className="mt-1 text-muted">
           {split
-            ? "Each resting at its own floor until the next batch settles — all yours to grab back anytime."
-            : "Resting at your floor until the next batch settles — yours to grab back anytime."}
+            ? "Each resting at its own floor until the next batch settles. All yours to grab back anytime."
+            : "Resting at your floor until the next batch settles. Yours to grab back anytime."}
         </p>
         <div className="mt-1.5 flex flex-col items-start gap-1">
           <a href="/orders" className="k-link font-semibold">
@@ -728,9 +728,9 @@ function Advanced({
         <div className="mt-2 space-y-3 px-1">
           <label className="flex items-center justify-between gap-3 text-xs">
             <span className="text-muted">
-              Solver tip (ADA){split ? " — per pool" : ""}
+              Solver tip (ADA){split ? " per pool" : ""}
               <span className="block text-[11px] text-muted">
-                the only solver reward — a 0-tip order won’t be picked up; higher
+                the only solver reward. A 0-tip order won’t be picked up, and higher
                 tips settle sooner.
                 {split
                   ? ` Each of the ${legCount} orders carries this tip.`
@@ -752,8 +752,8 @@ function Advanced({
           </label>
           {tipLow && (
             <p className="-mt-1 text-[11px] text-warning">
-              Low tip — a solver may skip it. 0.5 ₳ covers a solo batch; a higher tip
-              settles sooner.
+              That tip is low, so a solver may skip it. 0.5 ₳ covers a solo batch, and
+              a higher tip settles sooner.
             </p>
           )}
           <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
@@ -802,7 +802,7 @@ function Advanced({
               {split
                 ? `For the best price, this swap splits into ${legCount} little orders (one per pool), posted in one transaction. Each carries ADA in separate roles.`
                 : "Your order is its own little UTXO, so it carries ADA in separate roles."}{" "}
-              It all comes back when it settles or you grab it back — only the tip is ever kept.
+              It all comes back when it settles or you grab it back. Only the tip is ever kept.
             </p>
             <DetailRow
               label={split ? `Held min-ADA (${legCount} × deposit)` : "Held min-ADA (UTXO deposit)"}
@@ -1102,8 +1102,8 @@ function RateLine({
 
           <p className="pt-1 text-[11px] leading-snug text-muted">
             {split
-              ? "One order per pool in a single transaction — each settles at its pool’s fair price, never below your floor. "
-              : "Settles at the pool’s fair AMM price — pinned on-chain, never worse. "}
+              ? "One order per pool in a single transaction. Each settles at its pool’s fair price, never below your floor. "
+              : "Settles at the pool’s fair AMM price, pinned on-chain and never worse. "}
             Max slippage is a safety abort: if the fair price drifts below it, your
             order rests instead of filling worse.
           </p>

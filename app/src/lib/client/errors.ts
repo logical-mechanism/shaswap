@@ -45,7 +45,7 @@ const RULES: { match: RegExp; message: string }[] = [
   {
     match: /badinputsutxo|input.*(not\s*found|does\s*not\s*exist|already|spent)|valuenotconserved/i,
     message:
-      "An input was already spent — the order may have settled or been reclaimed. Refresh and try again.",
+      "An input was already spent. The order may have settled or been reclaimed, so refresh and try again.",
   },
   {
     match: /insufficient|not\s*enough|balance.*insufficient|min(imum)?\s*ada|outputtoosmall/i,
@@ -54,7 +54,7 @@ const RULES: { match: RegExp; message: string }[] = [
   {
     match: /collateral/i,
     message:
-      "No collateral set — a small ADA buffer your wallet holds for smart-contract actions. Add one, then retry.",
+      "No collateral set. That's a small ADA buffer your wallet holds for smart-contract actions. Add one, then retry.",
   },
   {
     match: /wrong\s*network|network\s*(mismatch|id)|network\s*magic|networkmagic|different\s*network/i,

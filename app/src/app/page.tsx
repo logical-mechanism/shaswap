@@ -16,7 +16,7 @@ export default function SwapPage() {
           </span>
         </h1>
         <p className="mt-2 max-w-sm text-sm text-muted">
-          Drop off an order; everyone settles at one fair price — nobody jumps
+          Drop off an order and everyone settles at one fair price. Nobody jumps
           the queue.
         </p>
       </div>
@@ -30,8 +30,8 @@ export default function SwapPage() {
           </span>
           <div className="space-y-2">
             <p>
-              You don’t swap on the spot — you drop off an order. Every little
-              while, all orders for a pair settle together at one shared price,
+              You don’t swap on the spot. You drop off an order, and every little
+              while all orders for a pair settle together at one shared price,
               so no one can sneak in front of you to move it.
             </p>
             <p>
@@ -45,8 +45,8 @@ export default function SwapPage() {
               it snug.
             </p>
             <p className="text-muted">
-              Quotes come from live pool reserves — estimates until the batch
-              settles.
+              Quotes come from live pool reserves, so they’re estimates until the
+              batch settles.
             </p>
           </div>
         </div>

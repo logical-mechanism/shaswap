@@ -92,7 +92,7 @@ export function SlippageSettings({
           <p className="mb-2 text-[11px] leading-snug text-muted">
             {context === "liquidity"
               ? "The most the pool can move before your deposit/withdrawal settles, or it backs out."
-              : "The worst price you’ll accept — your order never settles below it."}
+              : "The worst price you’ll accept. Your order never settles below it."}
           </p>
           <div className="flex gap-1.5">
             {PRESETS.map((p) => {
@@ -136,7 +136,7 @@ export function SlippageSettings({
 
           {value > 5 && (
             <p className="mt-2 text-[11px] font-semibold text-warning">
-              That’s a wide gap — you could accept a noticeably worse fill.
+              That’s a wide gap, so you could accept a noticeably worse fill.
             </p>
           )}
         </div>

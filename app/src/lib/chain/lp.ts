@@ -195,7 +195,7 @@ export function buildDeposit(args: {
       throw new Error("internal: isqrt failed the is_sqrt invariant");
     }
     if (!(circOut > MIN_LIQ)) {
-      throw new Error("first deposit too small — circulating LP must exceed min_liq");
+      throw new Error("first deposit too small: circulating LP must exceed min_liq");
     }
     lockLp = MIN_LIQ;
     lpToUser = circOut - MIN_LIQ;
@@ -204,7 +204,7 @@ export function buildDeposit(args: {
     const lpB = (deltaB * s.circ) / s.resB; // floor
     lpToUser = lpA < lpB ? lpA : lpB;
     if (lpToUser <= 0n) {
-      throw new Error("deposit too small — rounds to zero LP");
+      throw new Error("deposit too small: rounds to zero LP");
     }
     circOut = s.circ + lpToUser;
     lockLp = null;
@@ -250,7 +250,7 @@ export function buildWithdraw(args: {
   const recvA = (lpToBurn * s.resA) / s.circ; // floor
   const recvB = (lpToBurn * s.resB) / s.circ; // floor
   if (recvA <= 0n && recvB <= 0n) {
-    throw new Error("withdraw too small — rounds to zero on both sides");
+    throw new Error("withdraw too small: rounds to zero on both sides");
   }
   if (minAOut !== undefined && recvA < minAOut) {
     throw new Error(`asset A slippage: ${recvA} < minimum ${minAOut}`);

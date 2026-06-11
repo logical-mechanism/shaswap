@@ -104,7 +104,7 @@ test("OrderDatum with a SCRIPT stake credential round-trips", () => {
 // (`contracts/lib/shaswap/lp_intent_types.ak`) and the pallas encoder
 // (`batcher/crates/txbuild/src/plutus.rs` `lp_intent_datum` / `lp_intent_action`)
 // byte-for-byte, or a posted intent decodes to a different value and the validator
-// rejects (or the batcher mis-fulfils). The golden CBOR below was produced by THIS
+// rejects (or the batcher mis-fulfills). The golden CBOR below was produced by THIS
 // encoder and hand-verified field-by-field against `plutus.rs`; the same primitives
 // (`constr`/`int`/`asset_id`/`credential`/`option_*`) are already cross-pinned to the
 // pallas encoder by the OrderDatum golden above, so the LP datum is transitively pinned.

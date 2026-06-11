@@ -45,9 +45,9 @@ const STATUS_STYLE: Record<RowStatus, string> = {
 /** Honest, plain-language explanation of each row state (badge tooltip + legend). */
 const STATUS_HELP: Record<RowStatus, string> = {
   pending: "On its way onto the chain (~20–40s). Refresh in a moment to see it rest.",
-  open: "Resting in the next batch, held at your floor — a solver may settle it at the batch price. Yours to grab back anytime.",
+  open: "Resting in the next batch, held at your floor. A solver may settle it at the batch price, and it's yours to grab back anytime.",
   completed:
-    "Out of the basket. Settled by a solver, or grabbed back elsewhere — check the explorer for the outcome.",
+    "Out of the basket. Settled by a solver, or grabbed back elsewhere. Check the explorer for the outcome.",
   reclaimed: "You grabbed this order back; the funds are home in your wallet.",
 };
 
@@ -302,7 +302,7 @@ export default function OrdersPage() {
             <h1 className="font-display text-2xl font-extrabold text-ink">Orders</h1>
           </div>
           <p className="mt-1 text-sm text-muted">
-            Everything you’ve dropped off — resting orders are yours to grab back
+            Everything you’ve dropped off. Resting orders are yours to grab back
             anytime.
           </p>
         </div>
@@ -365,7 +365,7 @@ export default function OrdersPage() {
         <PipEmptyState
           mood="sleepy"
           title="Your basket’s empty"
-          body="Drop off an order from the Swap page — it’ll rest in the basket for the next batch."
+          body="Drop off an order from the Swap page and it’ll rest in the basket for the next batch."
         >
           <Link href="/" className="k-btn mt-4 px-4 py-2 text-sm">
             Drop off an order →
@@ -473,7 +473,7 @@ function OrderGroups({
             <span className="k-chip k-chip-accent">{restingCount}</span>
           </div>
           <p className="mb-3 text-xs text-muted">
-            Held at your floor until the batch settles — always yours to grab back.
+            Held at your floor until the batch settles, and always yours to grab back.
           </p>
           <Disclosure summary="Why is my order just resting?" className="mb-3">
             <div className="k-note k-note-info flex gap-3 text-xs leading-relaxed">
@@ -483,7 +483,7 @@ function OrderGroups({
               <div className="space-y-2">
                 <p>
                   You don’t trade on the spot. Every little while, all the orders for a pair
-                  settle together at one shared price — so no one can sneak in front of you
+                  settle together at one shared price, so no one can sneak in front of you
                   to move it.
                 </p>
                 <p>
@@ -572,7 +572,7 @@ function OrderGroupCard({
             <span
               className="k-chip k-chip-accent cursor-help"
               tabIndex={0}
-              title={`Pip split this swap across ${legs.length} pools (shards) in one drop-off, so more of it can fill — each leg rests and settles on its own, at its own floor.`}
+              title={`Pip split this swap across ${legs.length} pools (shards) in one drop-off, so more of it can fill. Each leg rests and settles on its own, at its own floor.`}
               aria-label={`Routed across ${legs.length} pools`}
             >
               routed across {legs.length} pools
@@ -639,7 +639,7 @@ function OrderGroupCard({
               </div>
               {leg.reclaimTx && (
                 <div className="mt-1 text-[11px] text-success">
-                  Grabbed back ✓ — your input, ADA deposit and tip are home in your
+                  Grabbed back ✓. Your input, ADA deposit and tip are home in your
                   wallet.{" "}
                   <a
                     href={explorerTxUrl(leg.reclaimTx)}
@@ -667,7 +667,7 @@ function OrderGroupCard({
       {anyOpen && (
         <div className="mt-2 text-[11px] text-muted">
           {windowClosed
-            ? "Their settle window has closed — still resting, and yours to grab back anytime."
+            ? "Their settle window has closed. Still resting, and yours to grab back anytime."
             : restsFor
               ? `Resting in the next batch · snug for ${restsFor} more`
               : "Resting in the next batch · grab any leg back anytime"}
@@ -771,7 +771,7 @@ function OrderRowItem({
       {row.status === "open" && (
         <div className="mt-1.5 text-[11px] text-muted">
           {windowClosed
-            ? "Its settle window has closed — still resting, and yours to grab back anytime."
+            ? "Its settle window has closed. Still resting, and yours to grab back anytime."
             : restsFor
               ? `Resting in the next batch · snug for ${restsFor} more`
               : "Resting in the next batch · grab it back anytime"}
@@ -786,7 +786,7 @@ function OrderRowItem({
 
       {row.reclaimTx && (
         <div className="mt-2 text-xs text-success">
-          Grabbed back ✓ — your input, ADA deposit and tip are home in your
+          Grabbed back ✓. Your input, ADA deposit and tip are home in your
           wallet.{" "}
           <a
             href={explorerTxUrl(row.reclaimTx)}

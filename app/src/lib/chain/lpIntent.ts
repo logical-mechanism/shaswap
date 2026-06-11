@@ -19,7 +19,7 @@
  * No script runs at creation — posting is a plain payment to the `lp_intent` address with an
  * inline datum (the address is enterprise / stake = None, so the settlement anchor never
  * enumerates it). The floors (`min_shares` for deposit, `min_a`/`min_b` for withdraw) come
- * from a conservative quote (`lpQuote.ts`) so an honest batcher can always fulfil the intent.
+ * from a conservative quote (`lpQuote.ts`) so an honest batcher can always fulfill the intent.
  */
 
 import type { Asset, Data } from "@meshsdk/core";
@@ -104,7 +104,7 @@ function validateBase(b: LpIntentBase): void {
     throw new Error("pool pair assets must differ");
   }
   // The tip is the ONLY solver reward — a 0-tip intent has no incentive and no batcher will
-  // ever fulfil it, so reject it client-side rather than post a stuck (only-reclaimable) intent.
+  // ever fulfill it, so reject it client-side rather than post a stuck (only-reclaimable) intent.
   if (b.tip <= 0n) throw new Error("tip must be positive (the only solver reward)");
   if (b.deadline !== null && b.deadline <= 0n) {
     throw new Error("deadline, if set, must be a positive POSIX timestamp");

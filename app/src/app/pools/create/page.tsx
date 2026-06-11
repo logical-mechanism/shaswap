@@ -231,12 +231,12 @@ export default function CreatePoolPage() {
       <header className="mb-4">
         <h1 className="font-display text-2xl font-extrabold text-ink">Create pool</h1>
         <p className="mt-1 text-sm text-muted">
-          Plant a new garden for any pair — anyone can. You sow the first liquidity right
+          Anyone can plant a new garden for any pair. You sow the first liquidity right
           after.
         </p>
         <p className="mt-1 text-xs text-muted">
           Creating an empty pool locks a ~2 ₳ seed (plus network fees). As creator you can
-          close it and grab the seed back anytime — once it holds liquidity, it’s
+          close it and grab the seed back anytime. Once it holds liquidity, it’s
           permanent.
         </p>
       </header>
@@ -244,7 +244,7 @@ export default function CreatePoolPage() {
       <div className="k-card w-full p-5 sm:p-6">
         <div className="mb-2 px-1 text-xs text-muted">
           {!connected
-            ? "Connect a wallet to choose tokens — ADA + the registered tokens you hold."
+            ? "Connect a wallet to choose tokens: ADA plus the registered tokens you hold."
             : tokensLoading
               ? "Pip’s sorting your wallet for registered tokens…"
               : "ADA + the registered tokens in your wallet (NFTs are hidden)."}
@@ -252,7 +252,7 @@ export default function CreatePoolPage() {
 
         {noRegisteredTokens && (
           <div className="k-note k-note-info mb-2 text-xs">
-            Pip only found NFTs or unlisted assets in your wallet — the non-ADA token must
+            Pip only found NFTs or unlisted assets in your wallet. The non-ADA token must
             be in the Cardano token registry.
           </div>
         )}
@@ -309,7 +309,7 @@ export default function CreatePoolPage() {
         {duplicate && (
           <div className="k-note k-note-warn mt-3 text-xs">
             A {duplicate.tokenA.ticker}/{duplicate.tokenB.ticker} pool at{" "}
-            {(duplicate.feeBps / 100).toFixed(2)}% already exists — you can still create
+            {(duplicate.feeBps / 100).toFixed(2)}% already exists. You can still create
             another, or{" "}
             <Link
               href={`/pools/${encodeURIComponent(duplicate.id)}`}
@@ -338,7 +338,7 @@ export default function CreatePoolPage() {
             </div>
             <p className="mt-1 text-muted">
               Confirming on-chain (~20–40s). Sow the first liquidity to start trading. Hit
-              ↻ Refresh on the next screen — it won’t be listed until it lands.
+              ↻ Refresh on the next screen, since it won’t be listed until it lands.
             </p>
             <div className="mt-2 flex flex-col gap-2">
               <Link

@@ -71,7 +71,7 @@ export function WalletWatcher() {
         variant: "danger",
         mood: "worried",
         title: "Wrong network",
-        message: `Your wallet’s on ${walletNet}; ShaSwap lives on ${networkLabel()}. Switch networks in your wallet.`,
+        message: `Your wallet’s on ${walletNet}, but ShaSwap lives on ${networkLabel()}. Switch networks in your wallet.`,
         duration: 8000,
       });
     } else if (prev === true) {

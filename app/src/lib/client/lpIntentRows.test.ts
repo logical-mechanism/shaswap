@@ -80,7 +80,7 @@ test("never-seen post past the fallback window is completed (not stuck pending)"
 test("a locally-reclaimed intent shows reclaimed and is NOT duplicated by its live row", () => {
   const r = recent({ ref: "x#0", txHash: "x", reclaimTx: "rtx", reclaimTs: 1500, seenLive: 1200 });
   const rows = mergeLpIntentRows([live("x#0", "withdraw")], [r], 2000);
-  assert.equal(rows.length, 1); // the live row is suppressed in favour of the reclaimed entry
+  assert.equal(rows.length, 1); // the live row is suppressed in favor of the reclaimed entry
   assert.equal(rows[0].status, "reclaimed");
   assert.equal(rows[0].reclaimTx, "rtx");
   assert.equal(rows[0].canReclaim, false);

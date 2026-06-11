@@ -86,7 +86,7 @@ function createDataProvider(): DataProvider {
         });
         throw new Error(
           `BLOCKFROST_PROJECT_ID is a ${keyNet} key but NEXT_PUBLIC_NETWORK=${APP_CONFIG.network}. ` +
-            "These must match — refusing to start to avoid reading the wrong chain.",
+            "These must match. Refusing to start to avoid reading the wrong chain.",
         );
       }
       return new BlockfrostDataProvider(projectId);

@@ -142,7 +142,7 @@ function ConnectedMenu() {
         aria-expanded={open}
         title={
           mismatch
-            ? `Your wallet is on a different network — switch to ${networkLabel()}.`
+            ? `Your wallet is on a different network. Switch to ${networkLabel()}.`
             : undefined
         }
         className="flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-2.5 pr-2 text-sm transition-colors hover:border-accent/40"

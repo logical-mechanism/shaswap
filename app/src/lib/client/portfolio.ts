@@ -12,7 +12,7 @@
 import type { Pool, TokenInfo } from "@/lib/data";
 import type { RowStatus } from "./orderRows";
 // Relative `.ts` import (not the `@/` alias) so the Node test runner can resolve it — it strips
-// types but doesn't honour the alias. `lpUnitForPool` is a pure, Mesh-free derivation.
+// types but doesn't honor the alias. `lpUnitForPool` is a pure, Mesh-free derivation.
 import { lpUnitForPool } from "../chain/deployment.ts";
 
 /**
@@ -30,12 +30,12 @@ export interface HeldAsset {
 }
 
 export interface WalletTokenSummary {
-  /** Distinct recognised fungible tokens held (non-ADA, in the tradeable registry, qty > 0). */
+  /** Distinct recognized fungible tokens held (non-ADA, in the tradeable registry, qty > 0). */
   count: number;
   /** Their tickers, in registry order, for a friendly inline list. */
   tickers: string[];
   /**
-   * Distinct non-ADA holdings the registry does NOT name — unrecognised fungibles or NFTs — so
+   * Distinct non-ADA holdings the registry does NOT name — unrecognized fungibles or NFTs — so
    * the wallet card can stay honest (claim "just ADA" only when there's genuinely nothing else).
    */
   otherCount: number;
@@ -45,8 +45,8 @@ export interface WalletTokenSummary {
  * Summarise the wallet's fungible-token holdings against the app's tradeable registry.
  *
  * `useAssets()` already excludes lovelace, but a `"lovelace"` unit is skipped defensively too —
- * ADA is shown separately. We only count and name tokens the app RECOGNISES (those in the
- * `useTokens()` registry): the Portfolio is a view of tradeable capital, and an unrecognised
+ * ADA is shown separately. We only count and name tokens the app RECOGNIZES (those in the
+ * `useTokens()` registry): the Portfolio is a view of tradeable capital, and an unrecognized
  * asset has no ticker / decimals we could honestly surface (it may even be an NFT). Holdings are
  * summed per unit with BigInt (a malformed quantity counts as 0), and tickers come out in
  * registry order so the list is stable regardless of the wallet's asset ordering. Pure.
@@ -76,13 +76,13 @@ export function summarizeWalletTokens(
     if (t.unit === "lovelace") continue;
     if ((held.get(t.unit) ?? 0n) > 0n) tickers.push(t.ticker);
   }
-  // `held` holds every non-ADA unit with a positive balance; the recognised ones become tickers,
-  // so whatever's left is unrecognised (other fungibles or NFTs the registry can't name).
+  // `held` holds every non-ADA unit with a positive balance; the recognized ones become tickers,
+  // so whatever's left is unrecognized (other fungibles or NFTs the registry can't name).
   return { count: tickers.length, tickers, otherCount: held.size - tickers.length };
 }
 
 export interface LpPositionSummary {
-  /** Distinct pools the wallet holds LP for — realised liquidity positions. */
+  /** Distinct pools the wallet holds LP for — realized liquidity positions. */
   count: number;
   /** The pairs those positions are in, deduped, in pools order — for a friendly inline list. */
   pairs: string[];
@@ -91,7 +91,7 @@ export interface LpPositionSummary {
 }
 
 /**
- * Match the wallet's holdings against each pool's LP token to surface realised liquidity
+ * Match the wallet's holdings against each pool's LP token to surface realized liquidity
  * positions. Fully derivable on-chain — an LP balance is a proportional claim on the pool's
  * reserves — with no price feed or time series: `lpUnitForPool` maps a pool's NFT unit to its
  * LP unit, and a positive held balance of that unit is an open position in that pool. Counts
