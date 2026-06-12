@@ -79,7 +79,7 @@ test("recent post never observed on-chain stays pending past the old 3-min cutof
   assert.ok(hasPending(fresh));
 
   // Indexer lag: 5 min old, still never seen on-chain → MUST remain pending (the old
-  // behaviour flipped this to a terminal "settled" and killed the poll).
+  // behavior flipped this to a terminal "settled" and killed the poll).
   const lagging = mergeRows([], [recent("b#0", now - 5 * 60 * 1000)], now);
   assert.equal(lagging[0].status, "pending");
   assert.ok(hasPending(lagging));

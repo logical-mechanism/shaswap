@@ -1,7 +1,7 @@
 /**
  * Hook tests for useWriteGate — the shared connect → wrong-network → network-ready →
  * collateral gating ladder every script-spend flow reuses. Pins the boolean derivations
- * and the `baseReason` label ladder, incl. the fail-closed behaviour (network "ready" only
+ * and the `baseReason` label ladder, incl. the fail-closed behavior (network "ready" only
  * once the id is KNOWN and equal; collateral "ready" while the check is still in flight).
  * Run with `npm run test:components`.
  */

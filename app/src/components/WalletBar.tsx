@@ -86,8 +86,8 @@ function ConnectMenu() {
             </p>
           ) : wallets.length === 0 ? (
             <p className="px-2 py-2 text-xs leading-relaxed text-muted">
-              Pip can’t find a Cardano wallet. Install one (like Eternl, Lace, or
-              Nami), then refresh the page.
+              Pip can’t find a Cardano wallet. Install one (like Eternl, Lace,
+              Nami), then refresh.
             </p>
           ) : (
             <div className="mt-1 space-y-1">
@@ -142,7 +142,7 @@ function ConnectedMenu() {
         aria-expanded={open}
         title={
           mismatch
-            ? `Your wallet is on a different network. Switch it to ${networkLabel()} to continue.`
+            ? `Your wallet is on a different network. Switch to ${networkLabel()}.`
             : undefined
         }
         className="flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-2.5 pr-2 text-sm transition-colors hover:border-accent/40"

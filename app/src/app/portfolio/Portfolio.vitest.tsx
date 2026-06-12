@@ -116,7 +116,7 @@ describe("PortfolioPage", () => {
     const liqPair = `${POOL.tokenA.ticker}/${POOL.tokenB.ticker}`;
     h.orders = [order("a#0"), order("b#0")];
     h.intents = [intent("c#0")]; // one pending move, shown as a secondary "in flight" note
-    // A TEST balance (recognised) + an LP token for POOL (a realised liquidity position).
+    // A TEST balance (recognized) + an LP token for POOL (a realized liquidity position).
     h.assets = [
       { unit: "u_test", quantity: "5" },
       { unit: POOL_LP_UNIT, quantity: "500000" },
@@ -156,14 +156,14 @@ describe("PortfolioPage", () => {
     expect(within(wallet).getByText(/Nothing else in here for now/i)).toBeInTheDocument();
   });
 
-  it("owns up to unrecognised holdings instead of claiming ADA-only", () => {
+  it("owns up to unrecognized holdings instead of claiming ADA-only", () => {
     // The wallet holds an asset the registry can't name (e.g. an NFT) — the card must NOT
-    // claim "just ADA"; it acknowledges the unrecognised holding honestly.
+    // claim "just ADA"; it acknowledges the unrecognized holding honestly.
     h.assets = [{ unit: "policy.nft", quantity: "1" }];
     h.tokens = [ADA];
     render(<PortfolioPage />);
     const wallet = card("Wallet");
-    expect(within(wallet).getByText(/Plus 1 thing Pip doesn’t recognise/i)).toBeInTheDocument();
+    expect(within(wallet).getByText(/Plus 1 thing Pip doesn’t recognize/i)).toBeInTheDocument();
     expect(within(wallet).queryByText(/Nothing else in here/i)).toBeNull();
   });
 });

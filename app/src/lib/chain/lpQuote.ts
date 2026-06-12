@@ -3,7 +3,7 @@
  * generator `batcher/crates/solver-core/src/lp.rs` (`withdraw_amounts` / `deposit_plan`) and
  * the on-chain `lp_intent.fulfill` floor checks.
  *
- * The FAIR amount an honest batcher fulfils is rounded the pool's favour (floor of the
+ * The FAIR amount an honest batcher fulfills is rounded the pool's favor (floor of the
  * proportional share), exactly as the pool's per-share-backing inequality requires:
  *  - withdraw: `released_x = floor(L · res_x / circ)` per asset;
  *  - deposit:  `shares = min(floor(dA · circ / res_a), floor(dB · circ / res_b))`.
@@ -49,7 +49,7 @@ export function quoteLpDeposit(
 ): DepositQuote {
   if (stats.circ <= 0n) {
     throw new Error(
-      "first deposit is not intent-fulfillable — seed this pool via the Direct path",
+      "first deposit is not intent-fulfillable: seed this pool via the Direct path",
     );
   }
   if (amountA <= 0n || amountB <= 0n) {
@@ -61,10 +61,10 @@ export function quoteLpDeposit(
   const sharesA = (amountA * stats.circ) / stats.resA; // floor
   const sharesB = (amountB * stats.circ) / stats.resB; // floor
   const fairShares = sharesA < sharesB ? sharesA : sharesB;
-  if (fairShares < 1n) throw new Error("deposit too small — would mint no LP");
+  if (fairShares < 1n) throw new Error("deposit too small: would mint no LP");
   const minShares = withSlippage(fairShares, slippagePct);
   if (minShares < 1n) {
-    throw new Error("deposit too small for this slippage — would not guarantee any LP");
+    throw new Error("deposit too small for this slippage: would not guarantee any LP");
   }
   return { fairShares, minShares };
 }
@@ -101,12 +101,12 @@ export function quoteLpWithdraw(
   const fairA = (lpAmount * stats.resA) / stats.circ; // floor
   const fairB = (lpAmount * stats.resB) / stats.circ; // floor
   if (fairA <= 0n && fairB <= 0n) {
-    throw new Error("withdraw too small — rounds to zero on both sides");
+    throw new Error("withdraw too small: rounds to zero on both sides");
   }
   const minA = withSlippage(fairA, slippagePct);
   const minB = withSlippage(fairB, slippagePct);
   if (minA <= 0n && minB <= 0n) {
-    throw new Error("withdraw too small for this slippage — no guaranteed output");
+    throw new Error("withdraw too small for this slippage: no guaranteed output");
   }
   return { fairA, fairB, minA, minB };
 }

@@ -1,6 +1,6 @@
 /**
  * Hook tests for usePoolUtxo — resolving the live pool UTXO for the LP previews. With no
- * interval poll, the key behaviour is that a transient reload failure must NOT wipe a
+ * interval poll, the key behavior is that a transient reload failure must NOT wipe a
  * usable panel (a first-load failure still surfaces the error). The /api seam is mocked at
  * `fetchPoolUtxo`. Run with `npm run test:components`.
  */

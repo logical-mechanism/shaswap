@@ -41,7 +41,7 @@ const STATUS_STYLE: Record<RowStatus, string> = {
 
 const STATUS_HELP: Record<RowStatus, string> = {
   pending: "Submitted, waiting to be confirmed on-chain.",
-  open: "Live on-chain. A batcher may fulfil it, or you can reclaim it anytime.",
+  open: "Live on-chain. A batcher may fulfill it, or you can reclaim it anytime.",
   completed:
     "No longer on-chain. Fulfilled by a batcher, or reclaimed elsewhere. Confirm on the explorer.",
   reclaimed: "You reclaimed this intent; the locked value is back in your wallet.",
@@ -193,8 +193,7 @@ export function PendingLpIntents({
         <span className="text-sm font-bold text-ink">Your LP intents</span>
       </div>
       <p className="mb-2 px-1 text-[11px] text-muted">
-        An intent is a request a batcher fulfils for you — grab one back anytime it’s still
-        waiting.
+        A request a batcher fulfills. Grab one back anytime it’s still waiting.
       </p>
 
       {needsCollateral && rows.some((r) => r.canReclaim) && (

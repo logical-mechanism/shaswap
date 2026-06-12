@@ -10,21 +10,19 @@
  * ShaSwap's hyperstructure invariant (CLAUDE.md) and could impede non-custodial
  * reclaim. ShaSwap is a true DEX — the protocol is reachable without this site.
  *
- * These documents are a DRAFT modeled on SundaeSwap's; a licensed US attorney must
- * review and finalize them before mainnet. See `documentation/` if a posture note
- * is added to the blueprint.
+ * These documents are modeled on SundaeSwap's. See `documentation/` if a posture
+ * note is added to the blueprint.
  */
 
 /** Single source for the documents' effective date — drives both the displayed
  * "Last Updated" line and the accepted-terms version. Bump this one string when the
  * text changes. */
-const TERMS_DATE = "2026-06-04";
+const TERMS_DATE = "2026-06-11";
 
 export const LEGAL = {
   /**
    * The operating entity named in the documents and the entity↔protocol separation
-   * clause. The documents themselves remain a DRAFT pending counsel review before
-   * mainnet (the attorney memo recommended an LLC as a liability shield, mirroring
+   * clause (the attorney memo recommended an LLC as a liability shield, mirroring
    * SundaeSwap Labs, Inc.).
    */
   entity: "Logical Mechanism LLC",

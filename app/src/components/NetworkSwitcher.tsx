@@ -71,7 +71,7 @@ export function NetworkSwitcher() {
             strokeLinejoin="round"
           />
         </svg>
-        <span className="sr-only">network {active} — switch network</span>
+        <span className="sr-only">network {active}, switch network</span>
       </button>
 
       {open && (

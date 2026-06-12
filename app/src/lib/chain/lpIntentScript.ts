@@ -8,7 +8,7 @@
  * **enterprise** form of that hash — payment = the `lp_intent` script hash, stake = **None**
  * — NEVER `S`-tagged, so the settlement anchor (which enumerates only `stake == Some(S)`)
  * can never pull an intent into a settlement (a hard invariant; the spec's no-fold guard is
- * a second, on-chain line of defence). Contrast the order/pool addresses, which ARE `S`-tagged
+ * a second, on-chain line of defense). Contrast the order/pool addresses, which ARE `S`-tagged
  * base addresses.
  *
  * Derived (not a committed literal) so the hash/address auto-track whatever `S` this

@@ -61,7 +61,7 @@ export async function fetchRegisteredTokens(
 
 /**
  * The best SPLIT route for a swap: how to spread `amount` across the pair's sharded pools
- * to maximise output, gated by the per-leg solver `tip` (lovelace). A one-leg route is the
+ * to maximize output, gated by the per-leg solver `tip` (lovelace). A one-leg route is the
  * single-best-pool case; null when no pool trades the pair. Read THROUGH our /api/route —
  * never a provider SDK.
  */

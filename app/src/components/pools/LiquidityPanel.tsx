@@ -154,12 +154,11 @@ function FirstDepositReference({
           onClick={() => onUse(suggestStr)}
           className="k-btn-ghost mt-2 w-full py-1.5 text-xs"
         >
-          Match market — set {tokenB.ticker} to {suggestStr}
+          Match market: set {tokenB.ticker} to {suggestStr}
         </button>
       )}
       <p className="mt-1 text-[10px] leading-snug text-muted">
-        Just a hint from {ref.source}, not gospel — double-check it. You set the real opening
-        price.
+        A hint from {ref.source}, so double-check it. You set the real opening price.
       </p>
     </div>
   );
@@ -275,8 +274,7 @@ export function LiquidityPanel({ pool }: { pool: Pool }) {
             <div className="font-bold text-success">Pool closed ✓</div>
           </div>
           <p className="mt-0.5 text-xs text-muted">
-            The pool was permanently burned and the ~2 ₳ seed is on its way back to your
-            wallet (~20–40s).
+            Permanently burned. The ~2 ₳ seed is on its way back to your wallet (~20–40s).
           </p>
           <div className="mt-2 flex items-center justify-between gap-3 text-xs">
             <a
@@ -575,9 +573,8 @@ function AddForm({
               <span className="font-bold">You set the opening price</span>
             </div>
             <p className="mt-1">
-              You’re first to add liquidity, so your two amounts set the pool’s starting
-              price. Try to match what the pair is worth, so it opens fair. A little LP is
-              locked in to seed the pool.
+              Your two amounts set the pool’s starting price, so try to match what the pair
+              is worth. A little LP is locked in to seed the pool.
             </p>
           </div>
 
@@ -610,8 +607,8 @@ function AddForm({
           )}
 
           <p className="px-1 text-[11px] text-muted">
-            This is just the <em>opening</em> price. Trades and new deposits move it from
-            here, and the deeper the pool, the less each trade swings it.
+            Trades and new deposits move the opening price from here. The deeper the pool,
+            the less each trade swings it.
           </p>
         </div>
       )}
@@ -652,8 +649,7 @@ function AddForm({
 
       {!first && deltaB > 0n && (
         <p className="mt-1 px-1 text-[11px] text-muted">
-          Paired automatically at the current pool ratio and rounded up, so your share
-          backing holds on both sides.
+          Rounded up so your share backing holds on both sides.
         </p>
       )}
 
@@ -805,7 +801,7 @@ function RemoveForm({
       : overBalance
         ? "More than your LP"
         : preview?.error
-          ? "Can't withdraw that amount"
+          ? "Can’t withdraw that amount"
           : state.kind === "busy"
             ? "Withdrawing…"
             : "Remove liquidity");
@@ -908,8 +904,8 @@ function ModeToggle({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void 
       </div>
       <p className="mt-1.5 px-1 text-[11px] text-muted">
         {mode === "intent"
-          ? "A batcher fulfils your deposit/withdraw like an order, so it never loses the per-block race for the pool on a busy market. You post a tip; it’s the only thing the batcher keeps."
-          : "You spend the pool yourself in one tx (no batcher, no trust). Best on a quiet pool — on a busy one your tx can keep losing the pool to the batcher."}
+          ? "A batcher fulfills your deposit/withdraw like an order, so you never lose the per-block race on a busy pool. Your tip is all it keeps."
+          : "You spend the pool yourself in one tx, no batcher and no trust. Best on a quiet pool, since on a busy one you can keep losing the race."}
       </p>
     </div>
   );
@@ -993,8 +989,7 @@ function IntentControls({
       </div>
       {lowTip && (
         <p className="mt-1 px-1 text-[11px] text-warning">
-          A low tip may not be picked up — a batcher only fulfils intents whose tip covers its
-          fee. ~0.5 ₳ is a safe floor.
+          That tip is low, so a batcher may skip it (the tip must cover its fee). ~0.5 ₳ is a safe floor.
         </p>
       )}
     </div>
@@ -1016,8 +1011,7 @@ function FirstDepositIntentNote({ onSwitchToDirect }: { onSwitchToDirect: () => 
         <span className="font-bold">This pool needs its first deposit</span>
       </div>
       <p className="mt-1">
-        Seeding a brand-new pool sets its opening price, so it’s done directly (a batcher can’t
-        fulfil the very first deposit). Switch to Direct to seed it; once it has liquidity,
+        The first deposit sets the opening price, so a batcher can’t fulfill it. Once seeded,
         batcher deposits work here.
       </p>
       <button
@@ -1040,8 +1034,7 @@ function NotLiveNote({ onSwitchToDirect }: { onSwitchToDirect: () => void }) {
         <span className="font-bold">Batcher LP isn&apos;t available here</span>
       </div>
       <p className="mt-1">
-        Batcher-processed deposits/withdrawals aren&apos;t available on this network. Use the
-        Direct path — it works on every pool.
+        Not available on this network. Use the Direct path, which works on every pool.
       </p>
       <button
         type="button"
@@ -1091,7 +1084,7 @@ function AddIntentForm({
   const first = stats.firstDeposit;
 
   // Pair Δb from Δa at the pool ratio (rounded up), exactly like the direct AddForm — a
-  // balanced deposit minimises the excess the batcher would ride back to the owner.
+  // balanced deposit minimizes the excess the batcher would ride back to the owner.
   const sA = toBaseUnits(amountA, pool.tokenA.decimals);
   const deltaA = sA ? toBig(sA) : 0n;
   let deltaB = 0n;
@@ -1464,9 +1457,10 @@ function RemoveIntentForm({
 
       {/* UX honesty (§13): a withdraw intent has no reclaim-to-underlying backstop. */}
       <div className="k-note k-note-info mt-3 text-[11px]">
-        If no batcher fulfils it, you can reclaim the intent anytime — but a withdraw reclaim
-        returns your <strong>LP tokens</strong>, not the underlying (converting LP back to
-        reserves is itself a pool spend). On a quiet pool, Direct withdraws to underlying in one tx.
+        Until a batcher fulfills it, the intent is yours to grab back anytime. Just know a
+        withdraw reclaim returns your <strong>LP tokens</strong>, not the underlying
+        (converting LP to reserves is itself a pool spend). On a quiet pool, Direct
+        withdraws to underlying in one tx.
       </div>
 
       <SubmitButton disabled={!canSubmit} onClick={submit} label={label} />
@@ -1551,8 +1545,8 @@ function CloseEmptyPool({
   return (
     <div className="k-note k-note-danger mt-3">
       <div className="px-0.5 text-xs text-muted">
-        You created this empty pool. Closing permanently burns it and returns the
-        ~2 ₳ seed to your wallet. (Once it has liquidity it can never be closed.)
+        Closing permanently burns this empty pool and returns the ~2 ₳ seed to your
+        wallet. Once it has liquidity, it can never be closed.
       </div>
 
       {!confirming ? (
@@ -1622,7 +1616,7 @@ function withdrawErrorMessage(err: string): string {
     return "The pool data shown may be a step behind a recent deposit. Hit ↻ to refresh, then try again.";
   }
   if (/below min_liq/i.test(err)) {
-    return "That would leave less than the pool's permanently-locked minimum liquidity. Withdraw a little less (use Max for the largest allowed).";
+    return "That would leave less than the pool’s permanently-locked minimum liquidity. Withdraw less (use Max for the largest allowed).";
   }
   if (/rounds to zero/i.test(err)) {
     return "That amount is too small to return any tokens. Increase it.";
@@ -1660,7 +1654,7 @@ function PositionLine({
         <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 tabular-nums">
           <dt
             className="cursor-help text-muted"
-            title="LP — your share of the garden (the pool's liquidity tokens you hold)"
+            title="LP: your share of the garden (the pool's liquidity tokens you hold)"
           >
             LP
           </dt>
@@ -1807,7 +1801,7 @@ function ResultBanner({
         </div>
         <p className="mt-0.5 text-muted">
           {intent
-            ? "A batcher will fulfil it shortly. It appears under “Your LP intents” below — you can grab it back anytime until then."
+            ? "It rests under “Your LP intents” below. Grab it back anytime until a batcher fulfills it."
             : "Settling in (~20–40s). Hit ↻ above to refresh your position once it lands."}
         </p>
         <a

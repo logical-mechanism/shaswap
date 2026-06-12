@@ -25,7 +25,7 @@ let signingCount = 0;
 export function PipOverlay({
   show,
   title,
-  subtitle = "Your wallet will ask you to confirm. Pip can’t move your funds — only you can.",
+  subtitle = "Your wallet will ask you to confirm. Pip can’t move your funds, only you can.",
 }: {
   show: boolean;
   title: string;

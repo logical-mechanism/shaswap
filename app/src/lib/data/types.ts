@@ -92,7 +92,7 @@ export interface RouteLeg {
 /**
  * A planned multi-pool route for one swap, produced by the split router (`route.ts`) over
  * the sharded pools for a pair. When `legs.length === 1` it is exactly the single-best-pool
- * behaviour. `amountOut` is the sum across legs and is GUARANTEED ≥ `singleBestOut` (a split
+ * behavior. `amountOut` is the sum across legs and is GUARANTEED ≥ `singleBestOut` (a split
  * is only chosen when it beats the best single pool net of the extra per-leg solver tips).
  */
 export interface Route {
