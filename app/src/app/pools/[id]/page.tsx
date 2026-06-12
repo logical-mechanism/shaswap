@@ -56,7 +56,7 @@ export default function PoolManagePage({
           <Pip size={56} mood="thinking" />
           <p className="mt-3 max-w-xs">
             Pip can’t find this garden yet. If you just planted it, it may still be taking
-            root (~20–40s). Give it a moment, then refresh.
+            root (~20–40s).
           </p>
           <button
             type="button"

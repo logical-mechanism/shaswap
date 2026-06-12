@@ -84,7 +84,7 @@ async function fetchUtxo(
   const res = await fetch(`/api/tx/utxo?tx=${txHash}&index=${index}`);
   if (!res.ok) throw new Error(`utxo resolve request failed (${res.status})`);
   const { utxo } = (await res.json()) as { utxo: UTxO | null };
-  if (!utxo) throw new Error(`${what} UTXO not found — already spent or fulfilled`);
+  if (!utxo) throw new Error(`${what} UTXO not found: already spent or fulfilled`);
   return utxo;
 }
 
@@ -93,7 +93,7 @@ async function fetchPoolUtxo(nftUnit: string): Promise<UTxO> {
   const res = await fetch(`/api/tx/pool-utxo?nft=${nftUnit}`);
   if (!res.ok) throw new Error(`pool utxo resolve request failed (${res.status})`);
   const { utxo } = (await res.json()) as { utxo: UTxO | null };
-  if (!utxo) throw new Error("pool UTXO not found — it may have just moved; refresh and retry");
+  if (!utxo) throw new Error("pool UTXO not found. It may have just moved, so refresh and retry");
   return utxo;
 }
 
@@ -261,7 +261,7 @@ export async function reclaimOrder(
   const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
   const col = collateral[0];
   if (!col) {
-    throw new Error("no collateral in wallet — set a collateral UTXO and retry");
+    throw new Error("no collateral in wallet: set a collateral UTXO and retry");
   }
 
   // The collateral input must be DISJOINT from regular spend inputs (the ledger rejects
@@ -320,7 +320,7 @@ async function spendContext(wallet: IWallet) {
   const { params, costModels } = protocol;
   const col = collateral[0];
   if (!col) {
-    throw new Error("no collateral in wallet — set a collateral UTXO and retry");
+    throw new Error("no collateral in wallet: set a collateral UTXO and retry");
   }
   const fundingUtxos = excludeCollateral(utxos, collateral);
   return { params, costModels, changeAddress, col, fundingUtxos };
@@ -480,7 +480,7 @@ async function lpIntentOwner(wallet: IWallet) {
 /**
  * Build → sign → submit a DEPOSIT intent: a plain payment to the `lp_intent` address with the
  * inline `LpIntentDatum`, funded by the wallet — exactly like `postOrder` (no script runs at
- * creation; the batcher fulfils it later). Gated by `requireLpIntentDeployed()` so a posted
+ * creation; the batcher fulfills it later). Gated by `requireLpIntentDeployed()` so a posted
  * intent is never a fund trap (un-fulfillable AND un-reclaimable) before the path is live.
  */
 export async function postLpIntentDeposit(
@@ -560,7 +560,7 @@ export async function postLpIntentWithdraw(
   }, 0n);
   if (walletLp < args.lpAmount) {
     throw new Error(
-      `wallet holds ${walletLp} LP for this pool — not enough to redeem ${args.lpAmount}`,
+      `wallet holds ${walletLp} LP for this pool, not enough to redeem ${args.lpAmount}`,
     );
   }
 
@@ -611,7 +611,7 @@ export async function reclaimLpIntent(
   const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
   const col = collateral[0];
   if (!col) {
-    throw new Error("no collateral in wallet — set a collateral UTXO and retry");
+    throw new Error("no collateral in wallet: set a collateral UTXO and retry");
   }
   const fundingUtxos = excludeCollateral(utxos, collateral);
 
@@ -693,7 +693,7 @@ export async function createPool(
   const ownerPkh = deserializeAddress(changeAddress).pubKeyHash;
   if (!ownerPkh) {
     throw new Error(
-      "pool creation requires a key-based (VK) wallet — this wallet has a script credential",
+      "pool creation requires a key-based (VK) wallet: this wallet has a script credential",
     );
   }
 
@@ -797,11 +797,11 @@ export async function closePool(
   const heldLp = poolUtxo.output.amount.find((a) => a.unit === lpUnit);
   if (!heldLp || BigInt(heldLp.quantity) !== TOTAL_LP) {
     throw new Error(
-      "pool is not empty — only a never-seeded pool (no liquidity) can be closed",
+      "pool is not empty: only a never-seeded pool (no liquidity) can be closed",
     );
   }
   if (datum.creator.kind !== "key") {
-    throw new Error("pool creator is not a key credential — cannot close");
+    throw new Error("pool creator is not a key credential, so the pool cannot be closed");
   }
 
   const { params, costModels, changeAddress, col, fundingUtxos } =
@@ -913,7 +913,7 @@ export async function withdrawLiquidity(
   }, 0n);
   if (walletLp < args.lpToBurn) {
     throw new Error(
-      `wallet holds ${walletLp} LP for this pool — not enough to burn ${args.lpToBurn}`,
+      `wallet holds ${walletLp} LP for this pool, not enough to burn ${args.lpToBurn}`,
     );
   }
 

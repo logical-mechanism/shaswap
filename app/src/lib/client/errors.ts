@@ -45,7 +45,7 @@ const RULES: { match: RegExp; message: string }[] = [
   {
     match: /badinputsutxo|input.*(not\s*found|does\s*not\s*exist|already|spent)|valuenotconserved/i,
     message:
-      "An input was already spent. The order may have just settled or been reclaimed. Refresh and try again.",
+      "An input was already spent. The order may have settled or been reclaimed, so refresh and try again.",
   },
   {
     match: /insufficient|not\s*enough|balance.*insufficient|min(imum)?\s*ada|outputtoosmall/i,
@@ -54,7 +54,7 @@ const RULES: { match: RegExp; message: string }[] = [
   {
     match: /collateral/i,
     message:
-      "Your wallet has no collateral set — a small ADA buffer it holds aside for smart-contract actions. Add one in your wallet, then retry.",
+      "No collateral set. That's a small ADA buffer your wallet holds for smart-contract actions. Add one, then retry.",
   },
   {
     match: /wrong\s*network|network\s*(mismatch|id)|network\s*magic|networkmagic|different\s*network/i,
@@ -78,7 +78,7 @@ const RULES: { match: RegExp; message: string }[] = [
     // Distinct from a tx error — the chain is fine, the read path is momentarily down.
     match: /\b(429|50[234])\b|too\s*many\s*requests|rate\s*limit|service\s*unavailable|bad\s*gateway|gateway\s*time|timed?\s*out|timeout|network\s*request\s*failed|fetch\s*failed|econnrefused|enotfound/i,
     message:
-      "Pip can’t reach the data service right now. Give it a moment and refresh.",
+      "Pip can’t reach the data service. Give it a moment and refresh.",
   },
 ];
 

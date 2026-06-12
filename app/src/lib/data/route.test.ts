@@ -1,6 +1,6 @@
 /**
  * Tests for the smart split router (`route.ts`). The router decides how to split one swap
- * across the sharded pools for a pair to maximise output, charging one solver tip per leg.
+ * across the sharded pools for a pair to maximize output, charging one solver tip per leg.
  *
  * The load-bearing properties, asserted below:
  *  - CONSERVATION: the legs' inputs sum EXACTLY to the swap amount (no lost/created units).
@@ -411,7 +411,7 @@ test("FUZZ: 200 small configs — gross output matches brute force within the fl
 
 test("FUZZ: 200 small configs — the TIP-GATED leg count is net-optimal (brute force)", () => {
   // The tip=0 optimality test proves the split is optimal GIVEN a leg count; this proves the
-  // router also chooses the right NUMBER of legs — it maximises Σ floor(out) − legs·tip. Sell
+  // router also chooses the right NUMBER of legs — it maximizes Σ floor(out) − legs·tip. Sell
   // TOK→ADA so tokenOut is ADA and the per-leg tip (lovelace) IS the output-unit tip exactly.
   const r = rng(0x712ED);
   for (let i = 0; i < 200; i++) {

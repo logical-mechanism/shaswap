@@ -1,7 +1,7 @@
 /**
  * Smart split router — given the sharded pool set for a pair (BLUEPRINT §5.5: a pair may
  * be `n` independent Pool UTXOs at different fees/depths), work out how to split one swap
- * across pools to maximise the output the user receives.
+ * across pools to maximize the output the user receives.
  *
  * WHY a split and not just "best single pool": ShaSwap orders are pool-bound (each order's
  * datum names one `pool_nft`, §5.1), and a single order draws from exactly one pool's
@@ -10,7 +10,7 @@
  * that must carry its own min-ADA and its own solver tip — and each must independently
  * attract a solver. So the tip is the real marginal cost of an extra leg.
  *
- * The math: total received `Σ outᵢ(xᵢ)` over `Σ xᵢ = amountIn` is maximised when the
+ * The math: total received `Σ outᵢ(xᵢ)` over `Σ xᵢ = amountIn` is maximized when the
  * MARGINAL output is equal across every pool that gets a non-zero allocation (water-fill /
  * KKT on a sum of concave constant-product curves). A deeper or lower-fee shard simply
  * absorbs more before its marginal falls to the common level. We then charge each leg one
@@ -111,7 +111,7 @@ export function planRoute(
 
   const tipOut = tipInTokenOut(tokenInUnit, tokenOutUnit, opts.tipLovelace, cands[0]);
 
-  // Choose the subset of pools (and its optimal split) that maximises
+  // Choose the subset of pools (and its optimal split) that maximizes
   //   net = Σ outᵢ − |subset|·tipOut.
   // Subsets are nested by neither size nor marginal in general (the deepest pool can be
   // the best singleton while a shallower-but-pricier pool joins a 2-split), so for a
@@ -292,8 +292,8 @@ function waterfill(active: Cand[], amt: bigint): bigint[] {
   // The float solve only fixes proportions; everything below is exact BigInt. This finds
   // the marginal-equalising point (the continuous optimum, rounded). NOTE it is not always
   // the exact integer argmax of `Σ floor(outᵢ)`: per-unit marginals are lumpy 0/1 steps so
-  // that objective isn't discretely concave, and a neighbouring split can round more
-  // favourably. The shortfall vs that argmax is at most the leg count (each pool's floor
+  // that objective isn't discretely concave, and a neighboring split can round more
+  // favorably. The shortfall vs that argmax is at most the leg count (each pool's floor
   // loses < 1 base unit) — ≤ N millionths of a token, economically nil. Conservation
   // (Σx == amt) is then EXACT or the function throws (the tripwire below), so a non-
   // conserving split can never reach the caller; planRoute's own subset search separately

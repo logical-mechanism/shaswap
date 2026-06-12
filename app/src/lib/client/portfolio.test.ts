@@ -60,11 +60,11 @@ test("summarizeWalletTokens: an empty / absent wallet → zero", () => {
   });
 });
 
-test("summarizeWalletTokens: counts only recognised, non-ADA, positive holdings", () => {
+test("summarizeWalletTokens: counts only recognized, non-ADA, positive holdings", () => {
   const tokens = [tok("lovelace", "ADA"), tok("u1", "ONE"), tok("u2", "TWO"), tok("u3", "THREE")];
   const assets = [
-    { unit: "u1", quantity: "5" }, // recognised, positive → counted
-    { unit: "u3", quantity: "1" }, // recognised, positive → counted
+    { unit: "u1", quantity: "5" }, // recognized, positive → counted
+    { unit: "u3", quantity: "1" }, // recognized, positive → counted
     { unit: "u_unknown", quantity: "9" }, // not in the registry → other, not named
     { unit: "lovelace", quantity: "1000000" }, // ADA → skipped (shown separately)
     { unit: "u2", quantity: "0" }, // zero quantity → ignored entirely
@@ -76,11 +76,11 @@ test("summarizeWalletTokens: counts only recognised, non-ADA, positive holdings"
   });
 });
 
-test("summarizeWalletTokens: unrecognised holdings (NFTs / unknown tokens) count as 'other'", () => {
+test("summarizeWalletTokens: unrecognized holdings (NFTs / unknown tokens) count as 'other'", () => {
   const tokens = [tok("lovelace", "ADA"), tok("u1", "ONE")];
   const assets = [
-    { unit: "u1", quantity: "5" }, // recognised
-    { unit: "policy.nft", quantity: "1" }, // an NFT — unrecognised
+    { unit: "u1", quantity: "5" }, // recognized
+    { unit: "policy.nft", quantity: "1" }, // an NFT — unrecognized
     { unit: "unknown_ft", quantity: "100" }, // a fungible the registry doesn't name
   ];
   assert.deepEqual(summarizeWalletTokens(assets, tokens), {
@@ -134,9 +134,9 @@ test("summarizeWalletTokens: excluded units (LP tokens) drop out of the tally", 
   const tokens = [tok("u1", "ONE")];
   const lp = lpUnitForPool(pool(P1, "ADA", "TEST").id);
   const assets = [
-    { unit: "u1", quantity: "5" }, // recognised → counted
+    { unit: "u1", quantity: "5" }, // recognized → counted
     { unit: lp, quantity: "100" }, // an LP token → excluded entirely (shown as liquidity)
-    { unit: "an_nft", quantity: "1" }, // genuinely unrecognised → other
+    { unit: "an_nft", quantity: "1" }, // genuinely unrecognized → other
   ];
   assert.deepEqual(summarizeWalletTokens(assets, tokens, new Set([lp])), {
     count: 1,

@@ -47,7 +47,7 @@ export default function PortfolioPage() {
     reload: reloadIntents,
   } = useLpIntents(ownerAddr);
   // Pools are network-wide (not owner-scoped): their LP units are what we match the wallet's
-  // holdings against to surface realised liquidity positions.
+  // holdings against to surface realized liquidity positions.
   const { pools, loading: poolsLoading, error: poolsError, reload: reloadPools } = usePools();
   const { tokens, loading: tokensLoading, error: tokensError } = useTokens();
 
@@ -81,7 +81,7 @@ export default function PortfolioPage() {
     () => (ownerAddr ? countResting(mergeRows(orders, recentOrders, now)) : 0),
     [ownerAddr, orders, recentOrders, now],
   );
-  // Realised liquidity = pools the wallet holds LP for (matched against each pool's LP unit);
+  // Realized liquidity = pools the wallet holds LP for (matched against each pool's LP unit);
   // pending deposit/withdraw intents are a separate, in-flight signal shown as a secondary note.
   const lpPos = useMemo(
     () => (ownerAddr ? lpPositions(pools, assets) : { count: 0, pairs: [], lpUnits: [] }),
@@ -92,7 +92,7 @@ export default function PortfolioPage() {
     [ownerAddr, intents, recentLp, now],
   );
   // LP tokens are surfaced as liquidity positions, so keep them out of the wallet's token tally
-  // (otherwise they'd read as "things Pip doesn't recognise").
+  // (otherwise they'd read as "things Pip doesn't recognize").
   const lpUnitSet = useMemo(() => new Set(lpPos.lpUnits), [lpPos]);
   const walletTokens = useMemo(
     () => summarizeWalletTokens(assets, tokens, lpUnitSet),
@@ -100,13 +100,13 @@ export default function PortfolioPage() {
   );
 
   // The wallet's token line degrades honestly: counting while the registry loads, "showing
-  // ADA only" if it couldn't be read, else the recognised-token tally (a few tickers inline).
-  // When nothing's recognised we only say "just ADA" if there's GENUINELY nothing else — any
-  // unrecognised tokens / NFTs are owned up to rather than papered over.
+  // ADA only" if it couldn't be read, else the recognized-token tally (a few tickers inline).
+  // When nothing's recognized we only say "just ADA" if there's GENUINELY nothing else — any
+  // unrecognized tokens / NFTs are owned up to rather than papered over.
   const walletSummary = tokensLoading
     ? "Counting what else you’re holding…"
     : tokensError
-      ? "Showing ADA — Pip couldn’t reach the token list."
+      ? "Showing ADA only, since Pip couldn’t reach the token list."
       : walletTokens.count > 0
         ? `+ ${walletTokens.count === 1 ? "1 token" : `${walletTokens.count} tokens`}: ${walletTokens.tickers
             .slice(0, 3)
@@ -114,10 +114,10 @@ export default function PortfolioPage() {
         : walletTokens.otherCount > 0
           ? `Plus ${walletTokens.otherCount} ${
               walletTokens.otherCount === 1 ? "thing" : "things"
-            } Pip doesn’t recognise.`
+            } Pip doesn’t recognize.`
           : "Nothing else in here for now.";
 
-  // Liquidity reads as realised positions first (which pairs), with any in-flight deposit /
+  // Liquidity reads as realized positions first (which pairs), with any in-flight deposit /
   // withdraw intents folded in as a secondary "· N in flight" note. The underlying amounts of
   // each position live on the pool's own page (Browse pools → a pool).
   const inFlightNote =
@@ -130,7 +130,7 @@ export default function PortfolioPage() {
       : intentsInFlight > 0
         ? `${
             intentsInFlight === 1 ? "One move" : `${intentsInFlight} moves`
-          } in flight — waiting for a batcher.`
+          } in flight, waiting for a batcher.`
         : "No liquidity yet.";
 
   const showLoading = connected && ownerAddr === undefined && !ownerError;
@@ -146,7 +146,7 @@ export default function PortfolioPage() {
             <h1 className="font-display text-2xl font-extrabold text-ink">Your corner</h1>
           </div>
           <p className="mt-1 text-sm text-muted">
-            Everything Pip’s keeping an eye on — what’s resting, what’s in flight, and what’s
+            Everything Pip’s keeping an eye on: what’s resting, what’s in flight, and what’s
             in your wallet.
           </p>
         </div>
@@ -169,7 +169,7 @@ export default function PortfolioPage() {
       {!connected && (
         <PipEmptyState
           mood="wave"
-          body="Connect a wallet and Pip will show you your corner of the market — what’s resting, what’s in flight, and what’s in your wallet."
+          body="Connect a wallet and Pip will show you your corner of the market: what’s resting, what’s in flight, and what’s in your wallet."
         />
       )}
 
@@ -279,7 +279,7 @@ function SummaryCard({
         ) : error ? (
           <div className="flex items-start gap-1.5 text-sm text-muted">
             <Pip size={18} mood="calm" still />
-            <span>Pip couldn’t reach the chain just now — try Refresh.</span>
+            <span>Pip couldn’t reach the chain just now. Try Refresh.</span>
           </div>
         ) : (
           <>
